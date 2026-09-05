@@ -1,0 +1,351 @@
+import { sqliteTable, text, integer, uniqueIndex, index } from 'drizzle-orm/sqlite-core'
+import { agents, type Env } from './schema.js'
+
+// ---------------------------------------------------------------------------------------------
+// MARKETPLACE (see docs/SPEC-MARKETPLACE.md)
+// ---------------------------------------------------------------------------------------------
+
+export const PRICING_MODELS = ['fixed', 'per_unit', 'quote'] as const
+export type PricingModel = (typeof PRICING_MODELS)[number]
+export const LISTING_STATUSES = ['active', 'paused', 'archived'] as const
+export type ListingStatus = (typeof LISTING_STATUSES)[number]
+
+export type ListingStats = {
+  jobs_completed: number
+  jobs_failed: number
+  distinct_buyers: number
+  rating_avg: number | null
+  rating_count: number
+  median_turnaround_seconds: number | null
+  volume_crd: number
+}
+
+export const listings = sqliteTable(
+  'listings',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    sellerAgentId: text('seller_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    category: text('category').notNull(),
+    tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    pricingModel: text('pricing_model').$type<PricingModel>().notNull(),
+    price: integer('price'),
+    unitName: text('unit_name'),
+    inputSchema: text('input_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
+    outputSchema: text('output_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
+    exampleInput: text('example_input', { mode: 'json' }).$type<unknown>(),
+    exampleOutput: text('example_output', { mode: 'json' }).$type<unknown>(),
+    turnaroundSeconds: integer('turnaround_seconds').notNull().default(3600),
+    acceptTimeoutSeconds: integer('accept_timeout_seconds').notNull().default(3600),
+    maxOpenJobs: integer('max_open_jobs').notNull().default(10),
+    status: text('status').$type<ListingStatus>().notNull().default('active'),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    stats: text('stats', { mode: 'json' }).$type<ListingStats>().notNull(),
+    graduated: integer('graduated', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('listings_seller').on(t.sellerAgentId), index('listings_env_status').on(t.env, t.status, t.category), index('listings_created').on(t.createdAt)],
+)
+
+export const JOB_STATUSES = [
+  'quote_requested',
+  'quoted',
+  'open',
+  'in_progress',
+  'delivered',
+  'completed',
+  'declined',
+  'cancelled',
+  'expired',
+  'disputed',
+  'resolved',
+] as const
+export type JobStatus = (typeof JOB_STATUSES)[number]
+
+export type JobResolution = { buyer_refund: number; seller_payout: number; note: string; by: string }
+
+export const jobs = sqliteTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    listingId: text('listing_id'),
+    bountyId: text('bounty_id'),
+    buyerAgentId: text('buyer_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    sellerAgentId: text('seller_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    title: text('title').notNull(),
+    input: text('input', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    output: text('output', { mode: 'json' }).$type<unknown>(),
+    units: integer('units').notNull().default(1),
+    price: integer('price'),
+    fee: integer('fee'),
+    status: text('status').$type<JobStatus>().notNull(),
+    revisionCount: integer('revision_count').notNull().default(0),
+    maxRevisions: integer('max_revisions').notNull().default(2),
+    quotedPrice: integer('quoted_price'),
+    quoteMessage: text('quote_message'),
+    acceptDeadlineAt: integer('accept_deadline_at'),
+    deadlineAt: integer('deadline_at'),
+    reviewDeadlineAt: integer('review_deadline_at'),
+    cancelReason: text('cancel_reason'),
+    disputeReason: text('dispute_reason'),
+    resolution: text('resolution', { mode: 'json' }).$type<JobResolution>(),
+    threadId: text('thread_id'),
+    escrowTransactionId: text('escrow_transaction_id'),
+    releaseTransactionId: text('release_transaction_id'),
+    refundTransactionId: text('refund_transaction_id'),
+    createdAt: integer('created_at').notNull(),
+    acceptedAt: integer('accepted_at'),
+    deliveredAt: integer('delivered_at'),
+    completedAt: integer('completed_at'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    index('jobs_buyer').on(t.buyerAgentId, t.status),
+    index('jobs_seller').on(t.sellerAgentId, t.status),
+    index('jobs_listing').on(t.listingId),
+    index('jobs_status_deadlines').on(t.status, t.acceptDeadlineAt, t.reviewDeadlineAt),
+  ],
+)
+
+export const jobEvents = sqliteTable(
+  'job_events',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    type: text('type').notNull(),
+    actorAgentId: text('actor_agent_id'),
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('job_events_job').on(t.jobId, t.createdAt)],
+)
+
+export const BOUNTY_STATUSES = ['open', 'awarded', 'closed', 'expired'] as const
+export type BountyStatus = (typeof BOUNTY_STATUSES)[number]
+
+export const bounties = sqliteTable(
+  'bounties',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    buyerAgentId: text('buyer_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    input: text('input', { mode: 'json' }).$type<Record<string, unknown>>(),
+    budgetMax: integer('budget_max').notNull(),
+    category: text('category').notNull(),
+    tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    status: text('status').$type<BountyStatus>().notNull().default('open'),
+    expiresAt: integer('expires_at').notNull(),
+    awardedJobId: text('awarded_job_id'),
+    proposalCount: integer('proposal_count').notNull().default(0),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('bounties_env_status').on(t.env, t.status, t.expiresAt), index('bounties_buyer').on(t.buyerAgentId)],
+)
+
+export const bountyProposals = sqliteTable(
+  'bounty_proposals',
+  {
+    id: text('id').primaryKey(),
+    bountyId: text('bounty_id')
+      .notNull()
+      .references(() => bounties.id),
+    sellerAgentId: text('seller_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    price: integer('price').notNull(),
+    message: text('message'),
+    status: text('status').$type<'pending' | 'accepted' | 'rejected' | 'withdrawn'>().notNull().default('pending'),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('bounty_proposals_unique').on(t.bountyId, t.sellerAgentId), index('bounty_proposals_seller').on(t.sellerAgentId)],
+)
+
+// --- messaging --------------------------------------------------------------------------------
+
+export const threads = sqliteTable(
+  'threads',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    kind: text('kind').$type<'direct' | 'job' | 'bounty'>().notNull(),
+    /** sorted agent ids */
+    participantIds: text('participant_ids', { mode: 'json' }).$type<string[]>().notNull(),
+    /** sorted participant ids joined with a pipe for direct threads (unique per pair), else null */
+    pairKey: text('pair_key'),
+    jobId: text('job_id'),
+    bountyId: text('bounty_id'),
+    lastMessageAt: integer('last_message_at'),
+    messageCount: integer('message_count').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('threads_pair').on(t.env, t.pairKey), index('threads_job').on(t.jobId), index('threads_last').on(t.lastMessageAt)],
+)
+
+export const threadParticipants = sqliteTable(
+  'thread_participants',
+  {
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => threads.id),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    lastReadMessageId: text('last_read_message_id'),
+    unreadCount: integer('unread_count').notNull().default(0),
+  },
+  (t) => [uniqueIndex('thread_participants_pk').on(t.threadId, t.agentId), index('thread_participants_agent').on(t.agentId)],
+)
+
+export const messages = sqliteTable(
+  'messages',
+  {
+    id: text('id').primaryKey(),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => threads.id),
+    senderAgentId: text('sender_agent_id').notNull(),
+    body: text('body').notNull(),
+    data: text('data', { mode: 'json' }).$type<unknown>(),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('messages_thread').on(t.threadId, t.id)],
+)
+
+// --- reviews & reputation ---------------------------------------------------------------------
+
+export const reviews = sqliteTable(
+  'reviews',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    reviewerAgentId: text('reviewer_agent_id').notNull(),
+    subjectAgentId: text('subject_agent_id').notNull(),
+    role: text('role').$type<'buyer' | 'seller'>().notNull(),
+    rating: integer('rating').notNull(),
+    comment: text('comment'),
+    /** price of the underlying job: reviews are weighted by settled value */
+    jobPrice: integer('job_price').notNull(),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('reviews_job_reviewer').on(t.jobId, t.reviewerAgentId), index('reviews_subject').on(t.subjectAgentId, t.createdAt)],
+)
+
+export type ReputationSide = {
+  jobs_completed: number
+  jobs_failed: number
+  jobs_disputed: number
+  jobs_cancelled: number
+  distinct_counterparties: number
+  volume_crd: number
+  rating_avg: number | null
+  rating_count: number
+  on_time_rate: number | null
+}
+
+export const agentReputation = sqliteTable(
+  'agent_reputation',
+  {
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    env: text('env').$type<Env>().notNull(),
+    asSeller: text('as_seller', { mode: 'json' }).$type<ReputationSide>().notNull(),
+    asBuyer: text('as_buyer', { mode: 'json' }).$type<ReputationSide>().notNull(),
+    score: integer('score').notNull().default(0),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('agent_reputation_pk').on(t.agentId, t.env)],
+)
+
+// --- events & webhooks ------------------------------------------------------------------------
+
+export const events = sqliteTable(
+  'events',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    agentId: text('agent_id').notNull(),
+    type: text('type').notNull(),
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('events_agent').on(t.agentId, t.id), index('events_created').on(t.createdAt)],
+)
+
+export const webhooks = sqliteTable(
+  'webhooks',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    url: text('url').notNull(),
+    /** event type filters; ['*'] = all */
+    eventTypes: text('event_types', { mode: 'json' }).$type<string[]>().notNull().default(['*']),
+    /** used to sign payloads (HMAC). Encryption at rest is out of scope for MVP. */
+    secret: text('secret').notNull(),
+    status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('webhooks_agent').on(t.agentId)],
+)
+
+export const webhookDeliveries = sqliteTable(
+  'webhook_deliveries',
+  {
+    id: text('id').primaryKey(),
+    webhookId: text('webhook_id')
+      .notNull()
+      .references(() => webhooks.id),
+    eventId: text('event_id').notNull(),
+    attempt: integer('attempt').notNull().default(0),
+    status: text('status').$type<'pending' | 'delivered' | 'failed'>().notNull().default('pending'),
+    nextAttemptAt: integer('next_attempt_at').notNull(),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('webhook_deliveries_pending').on(t.status, t.nextAttemptAt), index('webhook_deliveries_webhook').on(t.webhookId, t.createdAt)],
+)
+
+/** Public activity feed (word-of-mouth surface). */
+export const feedItems = sqliteTable(
+  'feed_items',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    type: text('type').notNull(),
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('feed_items_env_created').on(t.env, t.createdAt)],
+)

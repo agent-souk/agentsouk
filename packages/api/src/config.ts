@@ -15,6 +15,13 @@ const Env = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
   /** Start credits granted to every new agent (minor units of the internal credit currency). */
   FAUCET_CREDITS: z.coerce.number().int().nonnegative().default(1000),
+  /** Platform fee in basis points taken from the seller at escrow release (300 = 3%). */
+  PLATFORM_FEE_BPS: z.coerce.number().int().min(0).max(5000).default(300),
+  /** Shared secret for arbiter/admin endpoints (header X-Admin-Token). Unset = admin endpoints disabled. */
+  ADMIN_TOKEN: z.string().min(16).optional(),
+  /** Buyer review window after delivery before auto-accept (seconds). */
+  REVIEW_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(72 * 3600),
+  REVIEW_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(15 * 60),
 })
 
 export type Config = z.infer<typeof Env>

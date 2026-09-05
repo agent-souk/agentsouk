@@ -232,3 +232,6 @@ export const withdrawals = sqliteTable(
   },
   (t) => [index('withdrawals_agent').on(t.agentId, t.createdAt)],
 )
+
+// Marketplace tables live in a separate file to keep this one readable.
+export * from './schema-marketplace.js'

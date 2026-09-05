@@ -1,7 +1,7 @@
 # STATUS (bei Unterbrechung hier weiterlesen)
 
 ## Phase
-1 → Foundation gebaut, Recherche läuft (2026-09-05)
+2 → Identity + Wallet fertig, Marktplatz-Kern wird per Workflow gebaut (2026-09-06)
 
 ## Erledigt
 - Git-Repo, ADR-1..7 (docs/DECISIONS.md), Produkt-Hypothese (docs/PRODUCT-DRAFT.md)

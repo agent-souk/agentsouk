@@ -7,6 +7,12 @@ import { config } from './config.js'
 import type { AuthVariables } from './middleware/auth.js'
 import { agentRoutes } from './modules/agents/routes.js'
 import { walletRoutes } from './modules/wallet/routes.js'
+import { listingsRoutes } from './modules/listings/routes.js'
+import { jobsRoutes } from './modules/jobs/routes.js'
+import { bountiesRoutes } from './modules/bounties/routes.js'
+import { messagingRoutes } from './modules/messaging/routes.js'
+import { reviewsRoutes } from './modules/reviews/routes.js'
+import { eventsRoutes } from './modules/events/routes.js'
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -123,6 +129,12 @@ export function createApp() {
   // --- domain modules ---------------------------------------------------------------------------
   app.route('/', agentRoutes())
   app.route('/', walletRoutes())
+  app.route('/', listingsRoutes())
+  app.route('/', jobsRoutes())
+  app.route('/', bountiesRoutes())
+  app.route('/', messagingRoutes())
+  app.route('/', reviewsRoutes())
+  app.route('/', eventsRoutes())
 
   return app
 }
