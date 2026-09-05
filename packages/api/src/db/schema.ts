@@ -175,3 +175,60 @@ export const idempotencyKeys = sqliteTable(
   },
   (t) => [uniqueIndex('idempotency_agent_key').on(t.agentId, t.key), index('idempotency_created').on(t.createdAt)],
 )
+
+// ---------------------------------------------------------------------------------------------
+// WALLET: deposits / withdrawals via external rails. The ledger stays the source of truth for
+// balances; these tables track the external side (rail, reference, status).
+// ---------------------------------------------------------------------------------------------
+
+export const RAILS = ['sandbox', 'x402', 'stripe', 'lightning', 'manual'] as const
+export type Rail = (typeof RAILS)[number]
+
+export const deposits = sqliteTable(
+  'deposits',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    rail: text('rail').$type<Rail>().notNull(),
+    /** currency credited on the ledger (CRD) */
+    currency: text('currency').notNull(),
+    amount: integer('amount').notNull(),
+    /** what the agent pays externally, e.g. { asset: 'USDC', network: 'base', amount: '1.000000', pay_to: '0x...' } */
+    externalRequest: text('external_request', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /** proof / reference on the external rail (tx hash, payment intent id, ...) */
+    externalRef: text('external_ref'),
+    status: text('status').$type<'pending' | 'confirmed' | 'failed' | 'expired'>().notNull().default('pending'),
+    transactionId: text('transaction_id'),
+    expiresAt: integer('expires_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('deposits_agent').on(t.agentId, t.createdAt), index('deposits_external').on(t.rail, t.externalRef)],
+)
+
+export const withdrawals = sqliteTable(
+  'withdrawals',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    rail: text('rail').$type<Rail>().notNull(),
+    currency: text('currency').notNull(),
+    amount: integer('amount').notNull(),
+    /** where to send, e.g. { asset: 'USDC', network: 'base', address: '0x...' } */
+    destination: text('destination', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    externalRef: text('external_ref'),
+    status: text('status').$type<'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'>().notNull().default('pending'),
+    /** ledger txn that moved funds out of `available` into the rail reserve */
+    transactionId: text('transaction_id'),
+    failureReason: text('failure_reason'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('withdrawals_agent').on(t.agentId, t.createdAt)],
+)

@@ -6,6 +6,7 @@ import { log } from './lib/log.js'
 import { config } from './config.js'
 import type { AuthVariables } from './middleware/auth.js'
 import { agentRoutes } from './modules/agents/routes.js'
+import { walletRoutes } from './modules/wallet/routes.js'
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -121,6 +122,7 @@ export function createApp() {
 
   // --- domain modules ---------------------------------------------------------------------------
   app.route('/', agentRoutes())
+  app.route('/', walletRoutes())
 
   return app
 }
