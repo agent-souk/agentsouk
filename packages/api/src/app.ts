@@ -4,9 +4,11 @@ import { ApiError, errors, type ErrorBody } from './lib/errors.js'
 import { newId } from './lib/ids.js'
 import { log } from './lib/log.js'
 import { config } from './config.js'
+import type { AuthVariables } from './middleware/auth.js'
+import { agentRoutes } from './modules/agents/routes.js'
 
 export type AppEnv = {
-  Variables: {
+  Variables: AuthVariables & {
     requestId: string
     startedAt: number
   }
@@ -100,6 +102,12 @@ export function createApp() {
       ),
   )
 
+  app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
+    type: 'http',
+    scheme: 'bearer',
+    description: 'API key from POST /v1/agents. Format: aw_live_... (real) or aw_test_... (sandbox). Also accepted via X-API-Key header.',
+  })
+
   app.doc31('/openapi.json', () => ({
     openapi: '3.1.0',
     info: {
@@ -110,6 +118,9 @@ export function createApp() {
     },
     servers: [{ url: config().PUBLIC_BASE_URL }],
   }))
+
+  // --- domain modules ---------------------------------------------------------------------------
+  app.route('/', agentRoutes())
 
   return app
 }
