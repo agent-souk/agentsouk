@@ -1,7 +1,9 @@
 import { createClient, type Client } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { randomBytes } from 'node:crypto'
 import { config } from '../config.js'
 import * as schema from './schema.js'
 
@@ -31,9 +33,17 @@ export function db(): Db {
   return _db
 }
 
-/** Test helper: swap in a fresh in-memory database. */
+/**
+ * Test helper: swap in a fresh database. libsql's `:memory:` opens a separate connection for
+ * batch/transaction calls (so migrations would land in a different DB), therefore tests use a
+ * unique temp file instead.
+ */
 export async function _resetDbForTests(): Promise<Db> {
-  _client = createClient({ url: ':memory:' })
+  if (_client) _client.close()
+  const dir = join(tmpdir(), 'agentworld-tests')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `t-${randomBytes(6).toString('hex')}.db`).replace(/\\/g, '/')
+  _client = createClient({ url: `file:${file}` })
   await _client.execute('PRAGMA foreign_keys = ON')
   _db = makeDb(_client)
   return _db
