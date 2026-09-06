@@ -14,6 +14,8 @@ import { messagingRoutes } from './modules/messaging/routes.js'
 import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
+import { mcpRoutes } from './mcp/routes.js'
+import { APP_VERSION } from './version.js'
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -147,8 +149,11 @@ export function createApp() {
   app.route('/', reviewsRoutes())
   app.route('/', eventsRoutes())
 
+  // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).
+  app.route('/', mcpRoutes(app))
+
   return app
 }
 
-export const APP_VERSION = '0.1.0'
+export { APP_VERSION }
 export type App = ReturnType<typeof createApp>
