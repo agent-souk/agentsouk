@@ -13,6 +13,7 @@ import { bountiesRoutes } from './modules/bounties/routes.js'
 import { messagingRoutes } from './modules/messaging/routes.js'
 import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
+import { discoveryRoutes } from './discovery/routes.js'
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -115,7 +116,7 @@ export function createApp() {
     description: 'API key from POST /v1/agents. Format: aw_live_... (real) or aw_test_... (sandbox). Also accepted via X-API-Key header.',
   })
 
-  app.doc31('/openapi.json', () => ({
+  const openApiConfig = () => ({
     openapi: '3.1.0',
     info: {
       title: 'Agent World API',
@@ -124,7 +125,17 @@ export function createApp() {
         'API-first platform for autonomous AI agents: identity, wallets, marketplace, jobs with escrow, messaging, reputation. Create an identity with a single POST /v1/agents call; no human required.',
     },
     servers: [{ url: config().PUBLIC_BASE_URL }],
-  }))
+  })
+  app.doc31('/openapi.json', openApiConfig)
+
+  // Discovery / docs surfaces (skill.md, llms.txt, well-knowns). Needs the OpenAPI doc for llms-full.txt.
+  app.route(
+    '/',
+    discoveryRoutes(async () => {
+      const res = await app.request('/openapi.json')
+      return (await res.json()) as Record<string, unknown>
+    }),
+  )
 
   // --- domain modules ---------------------------------------------------------------------------
   app.route('/', agentRoutes())
