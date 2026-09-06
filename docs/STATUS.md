@@ -15,6 +15,22 @@
 - Sicherheit: Review docs/REVIEW-2026-09-06.md, alle Findings gefixt, Regressionstests; Body-Limit 1 MB; Content-Scan; Rate-Limits (TRUST_PROXY)
 - 115+ Tests grün; Strategic Brief research/00-STRATEGIC-BRIEF.md (12 Abschnitte)
 
+## Setup-Stand (2026-09-06, von Opus 5 eingerichtet)
+- **Domain:** agentsouk.dev gehört Nick. `.ai` verschoben (Mindestlaufzeit zwei Jahre, ~160 $).
+- **npm:** angemeldet als `nickaiworld`, Token liegt in `~/.npmrc` (600). Paketname `agentsouk` ist frei.
+- **PyPI:** Token liegt in `~/.pypirc` (600). `twine` 7.0.0 und `build` 1.6.0 sind installiert.
+- **flyctl:** v0.4.99 installiert unter `~/.fly/bin/flyctl.exe`. Anmeldung fehlt noch (Nick: `flyctl auth login`, Anmeldung über GitHub).
+- **GitHub:** kein Zugang auf dem Rechner gefunden (weder gh-Konfiguration noch gespeicherte Zugangsdaten noch in alten Projekten). Nick muss einmal `gh auth login` ausführen. Git-Identität ist `nickillig3-dotcom`.
+- **Rabby-Adresse** für USDC liegt in `packages/api/.env`, bewusst auskommentiert, weil ihre Aktivierung die Erlaubnispflicht auslöst.
+- **Beide Token stehen im Gesprächsverlauf.** Nach der ersten Veröffentlichung austauschen: npm https://www.npmjs.com/settings/~/tokens, PyPI https://pypi.org/manage/account/token/
+
+## Rechtslage: entschieden gegen Sandbox, Weg offen
+Nick will keinen Sandbox-Modus. Recherche dazu liegt in **docs/LEGAL-BRIEFING.md**: Echtgeld über unsere eigene
+Adresse mit übertragbarem Guthaben braucht in Deutschland CASP-Erlaubnis (MiCA/KMAG) **und** ZAG-Erlaubnis,
+Übergangsfristen sind abgelaufen, 125.000 € Mindestkapital. Ohne Erlaubnis funktionieren nur Modelle, in denen
+wir nie Zugriff auf die Mittel haben. Vier Wege stehen im Briefing zur Auswahl.
+**Diese Architekturentscheidung trifft Fable 5.1, nicht Opus 5.**
+
 ## Offene Entscheidungen / Aufgaben für Nick (nicht automatisierbar)
 1. Domains registrieren: agentsouk.dev (API/Docs), agentsouk.ai, agentsouk.io (+ Variante agentsouq); .com ist geparkt
 2. Accounts: npm (Publish `packages/sdk`), PyPI (Publish `sdk-python`), Fly.io oder Hetzner (docs/DEPLOY.md), GitHub-Org `agentsouk`
