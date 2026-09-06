@@ -5,15 +5,19 @@ import { agents, apiKeys, type Env } from '../db/schema.js'
 import { hashSecret } from '../lib/crypto.js'
 import { errors } from '../lib/errors.js'
 import { config } from '../config.js'
+import { verifySignedRequest } from './signatures.js'
 
 export type Agent = typeof agents.$inferSelect
 export type ApiKey = typeof apiKeys.$inferSelect
+export type AuthMethod = 'api_key' | 'signature'
 
 export type AuthVariables = {
   agent?: Agent
+  /** present for API-key auth; absent for signed requests */
   apiKey?: ApiKey
-  /** 'live' | 'test' — derived from the API key used. Every money/marketplace object is scoped by it. */
+  /** 'live' | 'test' — from the API key, or from the X-Env header for signed requests (default live). */
   env?: Env
+  authMethod?: AuthMethod
 }
 
 const TOUCH_INTERVAL_MS = 60_000
@@ -45,41 +49,69 @@ export async function resolveApiKey(raw: string): Promise<{ agent: Agent; apiKey
   return { agent, apiKey: key }
 }
 
-/** Populates agent/apiKey/env if a valid key is present; never fails. */
-export const optionalAuth: MiddlewareHandler<{ Variables: AuthVariables }> = async (c, next) => {
+type Ctx = Parameters<MiddlewareHandler<{ Variables: AuthVariables }>>[0]
+
+async function authenticate(c: Ctx): Promise<{ ok: true } | { ok: false; error?: ReturnType<typeof errors.unauthenticated> }> {
   const raw = extractKey(c.req.header('authorization'), c.req.header('x-api-key'))
   if (raw) {
     const resolved = await resolveApiKey(raw)
-    if (resolved) {
-      c.set('agent', resolved.agent)
-      c.set('apiKey', resolved.apiKey)
-      c.set('env', resolved.apiKey.env)
+    if (!resolved) {
+      return { ok: false, error: errors.unauthenticated('The API key is unknown, revoked or expired. Keys look like aw_live_... or aw_test_.... Lost it? Recover with a signed request to POST /v1/agents/recover, or create a new identity with POST /v1/agents.') }
     }
+    c.set('agent', resolved.agent)
+    c.set('apiKey', resolved.apiKey)
+    c.set('env', resolved.apiKey.env)
+    c.set('authMethod', 'api_key')
+    return { ok: true }
+  }
+  if (c.req.header('signature-input')) {
+    const bodyText = await c.req.raw.clone().text()
+    const { agent } = await verifySignedRequest({ method: c.req.method, url: c.req.url, headers: c.req.raw.headers, bodyText })
+    const envHeader = (c.req.header('x-env') ?? 'live').toLowerCase()
+    if (envHeader !== 'live' && envHeader !== 'test') throw errors.validation('X-Env must be "live" or "test".', 'X-Env')
+    c.set('agent', agent)
+    c.set('env', envHeader)
+    c.set('authMethod', 'signature')
+    const now = Date.now()
+    if (!agent.lastSeenAt || now - agent.lastSeenAt > TOUCH_INTERVAL_MS) await db().update(agents).set({ lastSeenAt: now }).where(eq(agents.id, agent.id))
+    return { ok: true }
+  }
+  return { ok: false }
+}
+
+/** Populates agent/env if valid credentials are present; never fails on missing credentials. */
+export const optionalAuth: MiddlewareHandler<{ Variables: AuthVariables }> = async (c, next) => {
+  try {
+    await authenticate(c)
+  } catch {
+    /* invalid signature: treat as anonymous */
   }
   await next()
 }
 
-/** Requires a valid API key. */
+/** Requires a valid API key or a valid RFC 9421 signature. */
 export const requireAuth: MiddlewareHandler<{ Variables: AuthVariables }> = async (c, next) => {
-  const raw = extractKey(c.req.header('authorization'), c.req.header('x-api-key'))
-  if (!raw) throw errors.unauthenticated()
-  const resolved = await resolveApiKey(raw)
-  if (!resolved) {
-    throw errors.unauthenticated(
-      'The API key is unknown, revoked or expired. Keys look like aw_live_... or aw_test_.... Create a new identity with POST /v1/agents if you lost yours.',
-    )
+  const r = await authenticate(c)
+  if (!r.ok) throw r.error ?? errors.unauthenticated()
+  await next()
+}
+
+/** Requires a signed request specifically (recovery, key rotation). */
+export const requireSignature: MiddlewareHandler<{ Variables: AuthVariables }> = async (c, next) => {
+  if (!c.req.header('signature-input')) {
+    throw errors.unauthenticated('This endpoint requires an RFC 9421 signed request (Signature-Input + Signature headers) made with your Ed25519 secret key. API keys are not accepted here.')
   }
-  c.set('agent', resolved.agent)
-  c.set('apiKey', resolved.apiKey)
-  c.set('env', resolved.apiKey.env)
+  const r = await authenticate(c)
+  if (!r.ok || c.get('authMethod') !== 'signature') throw r.ok ? errors.forbidden('Signed request required.') : (r.error ?? errors.unauthenticated())
   await next()
 }
 
 /** Helper for handlers: guaranteed auth context (throws if middleware missing). */
-export function authOf(c: { get: (k: 'agent' | 'apiKey' | 'env') => unknown }): { agent: Agent; apiKey: ApiKey; env: Env } {
+export function authOf(c: { get: (k: 'agent' | 'apiKey' | 'env' | 'authMethod') => unknown }): { agent: Agent; apiKey?: ApiKey; env: Env; authMethod: AuthMethod } {
   const agent = c.get('agent') as Agent | undefined
   const apiKey = c.get('apiKey') as ApiKey | undefined
   const env = c.get('env') as Env | undefined
-  if (!agent || !apiKey || !env) throw errors.unauthenticated()
-  return { agent, apiKey, env }
+  const authMethod = (c.get('authMethod') as AuthMethod | undefined) ?? 'api_key'
+  if (!agent || !env) throw errors.unauthenticated()
+  return { agent, apiKey, env, authMethod }
 }

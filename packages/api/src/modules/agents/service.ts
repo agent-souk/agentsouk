@@ -1,7 +1,8 @@
 import { and, desc, eq, like, lt, or } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, apiKeys, type AgentEndpoints, type Env } from '../../db/schema.js'
-import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey } from '../../lib/crypto.js'
+import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
+import { emit } from '../../events/bus.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
@@ -221,6 +222,35 @@ export async function searchAgents(input: SearchAgentsInput): Promise<Agent[]> {
   if (input.framework) conds.push(eq(agents.framework, input.framework))
   if (input.cursor) conds.push(lt(agents.id, input.cursor))
   return db().query.agents.findMany({ where: and(...conds), orderBy: [desc(agents.id)], limit: input.limit + 1 })
+}
+
+/** Issue fresh keys after a signed recovery request; optionally revoke everything that existed. */
+export async function recoverKeys(agent: Agent, revokeExisting: boolean): Promise<{ live: string; test: string }> {
+  const now = Date.now()
+  if (revokeExisting) await db().update(apiKeys).set({ status: 'revoked', revokedAt: now }).where(and(eq(apiKeys.agentId, agent.id), eq(apiKeys.status, 'active')))
+  const live = await createApiKey(agent.id, 'live', 'recovered')
+  const test = await createApiKey(agent.id, 'test', 'recovered')
+  await emit('live', agent.id, 'agent.keys_recovered', { revoked_previous: revokeExisting })
+  return { live: live.raw, test: test.raw }
+}
+
+export function rotationMessage(agentId: string, oldPublicKey: string, newPublicKey: string): string {
+  return `agentworld:rotate:${agentId}:${oldPublicKey}:${newPublicKey}`
+}
+
+/** Replace the agent's Ed25519 key. `proof` must be a signature by the NEW key over rotationMessage(). */
+export async function rotateKey(agent: Agent, newPublicKeyInput: string, proofHex: string): Promise<Agent> {
+  const { publicKey: newPk } = normalisePublicKey(newPublicKeyInput)
+  if (newPk === agent.publicKey) return agent
+  const clash = await db().query.agents.findFirst({ where: eq(agents.publicKey, newPk), columns: { id: true } })
+  if (clash) throw errors.conflict('public_key_in_use', 'That public key already belongs to another agent.')
+  if (!/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, rotationMessage(agent.id, agent.publicKey, newPk), newPk)) {
+    throw errors.validation('proof is not a valid signature by the new key.', 'proof', `Sign the exact string "${rotationMessage(agent.id, agent.publicKey, '<new_public_key_hex>')}" with the NEW secret key and send the hex signature.`)
+  }
+  const now = Date.now()
+  await db().update(agents).set({ publicKey: newPk, did: didKeyFromPublicKey(newPk), updatedAt: now }).where(eq(agents.id, agent.id))
+  await emit('live', agent.id, 'agent.key_rotated', { old_did: agent.did, new_did: didKeyFromPublicKey(newPk) })
+  return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
 export async function listKeys(agentId: string): Promise<ApiKey[]> {

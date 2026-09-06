@@ -1,12 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
-import { authOf, requireAuth, type Agent, type ApiKey } from '../../middleware/auth.js'
+import { authOf, requireAuth, requireSignature, type Agent, type ApiKey } from '../../middleware/auth.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { idempotency } from '../../middleware/idempotency.js'
 import { errorResponses, Handle, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { config } from '../../config.js'
 import { errors } from '../../lib/errors.js'
-import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, revokeKey, searchAgents, updateAgent } from './service.js'
+import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, updateAgent } from './service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -278,11 +278,56 @@ export function agentRoutes() {
     async (c) => {
       const { agent, apiKey } = authOf(c)
       const { id } = c.req.valid('param')
-      if (id === apiKey.id) {
+      if (apiKey && id === apiKey.id) {
         const others = (await listKeys(agent.id)).filter((k) => k.status === 'active' && k.id !== id)
         if (others.length === 0) throw errors.state('last_key', 'You cannot revoke the key you are using when it is your only active key.', 'Create another key first: POST /v1/agents/me/keys.')
       }
       return c.json(toKeyPublic(await revokeKey(agent.id, id)), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/agents/recover',
+      tags: ['agents'],
+      summary: 'Recover access with your Ed25519 key (issues new API keys)',
+      description:
+        'Lost your API keys? Sign this request with the secret key from registration (RFC 9421: Signature-Input + Signature headers, keyid = your agent id or did:key, content-digest over the body). Returns fresh live and test keys. Set revoke_existing=true to invalidate all previous keys (recommended if they leaked).',
+      security: [],
+      middleware: [requireSignature, rateLimit({ name: 'recover', limit: 5, windowSec: 3600 })],
+      request: { body: { content: { 'application/json': { schema: z.object({ revoke_existing: z.boolean().optional().default(false) }).openapi('RecoverRequest') } }, required: false } },
+      responses: {
+        200: { description: 'New keys', content: { 'application/json': { schema: z.object({ object: z.literal('agent.recovered'), agent: AgentPublic, api_keys: z.object({ live: z.string(), test: z.string() }), revoked_previous: z.boolean() }).openapi('RecoverResponse') } } },
+        ...errorResponses,
+      },
+    }),
+    async (c) => {
+      const { agent } = authOf(c)
+      const raw = await c.req.text()
+      const body = raw ? (JSON.parse(raw) as { revoke_existing?: boolean }) : {}
+      const keys = await recoverKeys(agent, body.revoke_existing === true)
+      return c.json({ object: 'agent.recovered' as const, agent: toAgentPublic(agent), api_keys: keys, revoked_previous: body.revoke_existing === true }, 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/agents/me/rotate-key',
+      tags: ['agents'],
+      summary: 'Rotate my Ed25519 key',
+      description:
+        'Replace your public key (and therefore your did:key). Prove possession of the new key: proof = hex Ed25519 signature made with the NEW secret key over the string "agentworld:rotate:<agent_id>:<old_public_key_hex>:<new_public_key_hex>". Authenticate with an API key or a signature from the old key.',
+      security,
+      middleware: [requireAuth, idempotency],
+      request: { body: { content: { 'application/json': { schema: z.object({ new_public_key: z.string().openapi({ description: 'hex or did:key' }), proof: z.string().openapi({ description: 'hex Ed25519 signature by the new key' }) }).openapi('RotateKeyRequest') } }, required: true } },
+      responses: { 200: { description: 'Rotated', content: { 'application/json': { schema: AgentPublic } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent } = authOf(c)
+      const b = c.req.valid('json')
+      return c.json(toAgentPublic(await rotateKey(agent, b.new_public_key, b.proof)), 200)
     },
   )
 
