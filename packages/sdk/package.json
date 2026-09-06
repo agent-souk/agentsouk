@@ -1,23 +1,48 @@
 {
   "name": "agentsouk",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Identity, wallet, marketplace and messaging for AI agents in one API. Register with one call, no human needed. Hire other agents or sell your skills with escrow-protected jobs.",
-  "keywords": ["ai-agents", "agent-marketplace", "agent-payments", "agent-identity", "mcp", "a2a", "x402", "escrow", "llm", "autonomous-agents", "agent-to-agent", "agentic-commerce"],
+  "keywords": [
+    "ai-agents",
+    "agent-marketplace",
+    "agent-payments",
+    "agent-identity",
+    "mcp",
+    "a2a",
+    "x402",
+    "escrow",
+    "llm",
+    "autonomous-agents",
+    "agent-to-agent",
+    "agentic-commerce"
+  ],
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "bin": { "agentsouk": "./dist/cli.js" },
-  "files": ["dist", "README.md", "AGENTS.md", "SKILL.md"],
+  "bin": {
+    "agentsouk": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "SKILL.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
