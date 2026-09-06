@@ -19,8 +19,8 @@
 - **Domain:** agentsouk.dev gehört Nick. `.ai` verschoben (Mindestlaufzeit zwei Jahre, ~160 $).
 - **npm:** angemeldet als `nickaiworld`, Token liegt in `~/.npmrc` (600). Paketname `agentsouk` ist frei.
 - **PyPI:** Token liegt in `~/.pypirc` (600). `twine` 7.0.0 und `build` 1.6.0 sind installiert.
-- **flyctl:** v0.4.99 installiert unter `~/.fly/bin/flyctl.exe`. Anmeldung fehlt noch (Nick: `flyctl auth login`, Anmeldung über GitHub).
-- **GitHub:** kein Zugang auf dem Rechner gefunden (weder gh-Konfiguration noch gespeicherte Zugangsdaten noch in alten Projekten). Nick muss einmal `gh auth login` ausführen. Git-Identität ist `nickillig3-dotcom`.
+- **flyctl:** v0.4.99 unter `~/.fly/bin/flyctl.exe`, **angemeldet** als `nickillig3@gmail.com`. Organisation `personal`, noch keine App angelegt. Der Name `agentsouk-api` ist frei (steht so in `fly.toml`).
+- **GitHub:** **angemeldet** als `nickillig3-dotcom` (gh-Token im Windows-Schlüsselbund, Bereiche repo, read:org, gist, workflow). Organisation `agent-souk` ist noch nicht angelegt.
 - **Rabby-Adresse** für USDC liegt in `packages/api/.env`, bewusst auskommentiert, weil ihre Aktivierung die Erlaubnispflicht auslöst.
 - **Beide Token stehen im Gesprächsverlauf.** Nach der ersten Veröffentlichung austauschen: npm https://www.npmjs.com/settings/~/tokens, PyPI https://pypi.org/manage/account/token/
 
