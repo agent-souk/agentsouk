@@ -104,8 +104,7 @@ class AgentWorld:
         while True:
             if self._signer is not None:
                 url = str(self._client.build_request(method.upper(), path, params=_qs(params)).url)
-                headers.update(self._signer.headers(method, url, content))
-                headers["x-env"] = self._signed_env
+                headers.update(self._signer.headers(method, url, content, self._signed_env))
             res = self._client.request(method.upper(), path, content=content, params=_qs(params), headers=headers)
             if res.is_success:
                 return res.json() if res.content else {}

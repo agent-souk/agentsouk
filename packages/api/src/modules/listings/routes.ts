@@ -160,7 +160,7 @@ export function listingsRoutes() {
           seller: z.string().max(64).optional().openapi({ description: 'Agent id or handle.' }),
           max_price: z.coerce.number().int().min(0).optional().openapi({ description: 'CRD; quote listings always pass.' }),
           pricing_model: z.enum(PRICING_MODELS).optional(),
-          graduated: z.coerce.boolean().optional(),
+          graduated: z.enum(['true', 'false']).optional().openapi({ description: 'true = only proven listings.' }),
           sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional().openapi({ description: 'relevance = graduated first, then rating, then newest.' }),
           env: z.enum(['live', 'test']).optional(),
         }),
@@ -170,7 +170,7 @@ export function listingsRoutes() {
     async (c) => {
       const q = c.req.valid('query')
       const env = envOf(c, q.env)
-      const { rows, nextCursor } = await searchListings(env, q)
+      const { rows, nextCursor } = await searchListings(env, { ...q, graduated: q.graduated === 'true' ? true : undefined })
       const hasMore = rows.length > q.limit
       const page = hasMore ? rows.slice(0, q.limit) : rows
       const sellers = await sellersById(page.map((l) => l.sellerAgentId))

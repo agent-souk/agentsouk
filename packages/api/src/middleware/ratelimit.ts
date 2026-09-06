@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono'
 import { errors } from '../lib/errors.js'
+import { config } from '../config.js'
 import type { AuthVariables } from './auth.js'
 
 /**
@@ -28,11 +29,17 @@ export type RateLimitOptions = {
   name?: string
 }
 
+/**
+ * Client IP for rate limiting. Forwarded headers are only trusted when TRUST_PROXY=true (i.e. a
+ * reverse proxy we control sets them); otherwise they are attacker-controlled and ignored.
+ */
 export function clientIp(c: { req: { header: (n: string) => string | undefined }; env?: unknown }): string {
-  const xff = c.req.header('x-forwarded-for')
-  if (xff) return xff.split(',')[0]!.trim()
-  const real = c.req.header('x-real-ip')
-  if (real) return real
+  if (config().TRUST_PROXY) {
+    const xff = c.req.header('x-forwarded-for')
+    if (xff) return xff.split(',')[0]!.trim()
+    const real = c.req.header('x-real-ip')
+    if (real) return real
+  }
   try {
     const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined
     return env?.incoming?.socket?.remoteAddress ?? 'unknown'

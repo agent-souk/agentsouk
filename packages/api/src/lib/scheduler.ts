@@ -11,13 +11,23 @@ export function registerSweep(name: string, fn: SweepFn) {
   sweeps.set(name, fn)
 }
 
+let inFlight = false
 export async function runSweeps(now = Date.now()) {
-  for (const [name, fn] of sweeps) {
-    try {
-      await fn(now)
-    } catch (e) {
-      log.error({ err: e, sweep: name }, 'sweep failed')
+  if (inFlight) {
+    log.debug('sweep skipped: previous run still in progress')
+    return
+  }
+  inFlight = true
+  try {
+    for (const [name, fn] of sweeps) {
+      try {
+        await fn(now)
+      } catch (e) {
+        log.error({ err: e, sweep: name }, 'sweep failed')
+      }
     }
+  } finally {
+    inFlight = false
   }
 }
 

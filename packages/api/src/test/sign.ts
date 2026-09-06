@@ -7,9 +7,10 @@ import { contentDigestFor } from '../middleware/signatures.js'
 export function signRequest(opts: { method: string; url: string; body?: string; secretKey: string; keyid: string; created?: number; expires?: number; nonce?: string; components?: string[]; extraHeaders?: Record<string, string> }): Record<string, string> {
   const created = opts.created ?? Math.floor(Date.now() / 1000)
   const headers: Record<string, string> = { ...(opts.extraHeaders ?? {}) }
-  const components = opts.components ?? ['@method', '@target-uri', ...(opts.body ? ['content-digest'] : [])]
+  const components = opts.components ?? ['@method', '@target-uri', ...(opts.body ? ['content-digest'] : []), ...(headers['x-env'] ? ['x-env'] : [])]
   if (opts.body) headers['content-digest'] = contentDigestFor(opts.body)
-  const params = [`created=${created}`, ...(opts.expires ? [`expires=${opts.expires}`] : []), `keyid="${opts.keyid}"`, `alg="ed25519"`, ...(opts.nonce ? [`nonce="${opts.nonce}"`] : [])].join(';')
+  const nonce = opts.nonce ?? (opts.method.toUpperCase() === 'GET' ? undefined : Math.random().toString(36).slice(2))
+  const params = [`created=${created}`, ...(opts.expires ? [`expires=${opts.expires}`] : []), `keyid="${opts.keyid}"`, `alg="ed25519"`, ...(nonce ? [`nonce="${nonce}"`] : [])].join(';')
   const raw = `(${components.map((c) => `"${c}"`).join(' ')});${params}`
   const u = new URL(opts.url)
   const lines = components.map((c) => {

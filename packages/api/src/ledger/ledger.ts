@@ -68,6 +68,18 @@ export const CURRENCY_DECIMALS: Record<string, number> = {
   SAT: 0,
 }
 
+/**
+ * SQLite/libsql tolerates one writer at a time and interleaved statements inside overlapping
+ * transactions wedge the connection (SQLITE_BUSY "SQL statements in progress"). All ledger writes
+ * therefore run through a process-wide async mutex. Multi-instance deployments need Postgres (ADR-4).
+ */
+let writeChain: Promise<unknown> = Promise.resolve()
+export function withLedgerLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(fn, fn)
+  writeChain = run.catch(() => undefined)
+  return run
+}
+
 export class Ledger {
   constructor(private readonly db: Db) {}
 
@@ -153,19 +165,20 @@ export class Ledger {
     }
 
     const initiator = input.initiatorAgentId ?? ''
-    if (input.idempotencyKey) {
-      const prior = await this.findByIdempotency(input.env, input.initiatorAgentId ?? null, input.idempotencyKey)
-      if (prior) return prior
-    }
+    return withLedgerLock(async () => {
+      if (input.idempotencyKey) {
+        const prior = await this.findByIdempotency(input.env, input.initiatorAgentId ?? null, input.idempotencyKey)
+        if (prior) return prior
+      }
 
-    // Ensure accounts exist before entering the write transaction.
-    const accountRows: (typeof accounts.$inferSelect)[] = []
-    for (const leg of input.legs) accountRows.push(await this.getOrCreateAccount(input.env, leg.account))
+      // Ensure accounts exist before entering the write transaction.
+      const accountRows: (typeof accounts.$inferSelect)[] = []
+      for (const leg of input.legs) accountRows.push(await this.getOrCreateAccount(input.env, leg.account))
 
-    const now = Date.now()
-    const txnId = newId('transaction')
+      const now = Date.now()
+      const txnId = newId('transaction')
 
-    return await this.db.transaction(async (tx) => {
+      return await this.db.transaction(async (tx) => {
       const entries: (typeof ledgerEntries.$inferSelect)[] = []
       // Aggregate deltas per account (a transaction may touch the same account twice).
       const perAccount = new Map<string, { row: typeof accounts.$inferSelect; delta: number }>()
@@ -212,6 +225,7 @@ export class Ledger {
       await tx.insert(transactions).values(txnRow)
       await tx.insert(ledgerEntries).values(entries)
       return { ...(txnRow as typeof transactions.$inferSelect), entries }
+      })
     })
   }
 

@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, inArray, lt, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobEvents, jobs, type Env, type JobResolution, type JobStatus } from '../../db/schema.js'
+import { agents, jobEvents, jobs, listings, type Env, type JobResolution, type JobStatus } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
+import { log } from '../../lib/log.js'
 import { Ledger } from '../../ledger/ledger.js'
 import { agentAccount, escrowAccount, platformAccount, CREDIT_CURRENCY } from '../wallet/service.js'
 import { emitMany, publishFeed } from '../../events/bus.js'
@@ -16,7 +17,12 @@ import type { Agent } from '../../middleware/auth.js'
 
 /**
  * Jobs with escrow (SPEC §2). Every money movement is a balanced ledger post with an idempotency key
- * derived from the job id and action, so a retried transition can never move funds twice.
+ * derived from the job id and action, so a retried transition can never move funds twice. Every
+ * state transition is a CONDITIONAL update (status must still be what we expect), so concurrent
+ * actions and sweeps cannot both "win".
+ *
+ * Agent-authored text (reasons, quote notes) is never embedded in platform "system" messages: it is
+ * posted as a normal message from the agent, so it carries content warnings and its true sender.
  */
 
 export type Job = typeof jobs.$inferSelect
@@ -29,7 +35,7 @@ const ledger = () => new Ledger(db())
 
 export function feeFor(price: number): number {
   if (price <= 0) return 0
-  return Math.max(1, Math.ceil((price * config().PLATFORM_FEE_BPS) / 10000))
+  return Math.min(price, Math.max(1, Math.ceil((price * config().PLATFORM_FEE_BPS) / 10000)))
 }
 
 function reviewWindowMs(env: Env): number {
@@ -47,6 +53,7 @@ export function availableActions(job: Job, role: Role, now = Date.now()): string
   if (role === 'seller') {
     if (s === 'open') return ['accept', 'decline']
     if (s === 'quote_requested') return ['quote', 'decline']
+    if (s === 'quoted') return ['quote', 'decline', 'message']
     if (s === 'in_progress') return ['deliver', 'cancel', 'message']
     if (s === 'delivered') return ['message']
     if (s === 'completed' || s === 'resolved') return ['review']
@@ -85,9 +92,37 @@ async function reload(id: string): Promise<Job> {
   return (await db().query.jobs.findFirst({ where: eq(jobs.id, id) }))!
 }
 
+/** Unconditional update (only for fields that do not change the state machine). */
 async function setJob(id: string, set: Partial<typeof jobs.$inferInsert>): Promise<Job> {
   await db().update(jobs).set({ ...set, updatedAt: Date.now() }).where(eq(jobs.id, id))
   return reload(id)
+}
+
+/** Conditional transition: applies `set` only if the job is still in one of `expected`. Returns null if it was not. */
+async function setJobIf(id: string, expected: JobStatus[], set: Partial<typeof jobs.$inferInsert>): Promise<Job | null> {
+  const r = await db()
+    .update(jobs)
+    .set({ ...set, updatedAt: Date.now() })
+    .where(and(eq(jobs.id, id), inArray(jobs.status, expected)))
+  if ((r.rowsAffected ?? 0) === 0) return null
+  return reload(id)
+}
+
+async function listingOf(job: Job): Promise<Listing | undefined> {
+  return job.listingId ? db().query.listings.findFirst({ where: eq(listings.id, job.listingId) }) : undefined
+}
+
+/** Post the agent's own words as the agent (scanned, attributed), then a neutral platform note. */
+async function note(job: Job, actorId: string | null, text: string | undefined, systemText: string, data: Record<string, unknown>) {
+  if (!job.threadId) return
+  if (actorId && text && text.trim()) {
+    try {
+      await sendMessage(job.env, job.threadId, actorId, text.trim().slice(0, 4000))
+    } catch (e) {
+      log.warn({ err: e, job: job.id }, 'could not post agent note')
+    }
+  }
+  await postSystemMessage(job.threadId, systemText, data)
 }
 
 function validateInput(input: unknown, schema: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -125,8 +160,8 @@ async function releaseEscrow(job: Job): Promise<string> {
   const legs = [
     { account: escrowAccount(job.id), delta: -price },
     { account: agentAccount(job.sellerAgentId), delta: price - fee },
-  ]
-  if (fee > 0) legs.push({ account: platformAccount('fees'), delta: fee })
+    { account: platformAccount('fees'), delta: fee },
+  ].filter((l) => l.delta !== 0)
   const t = await ledger().post({ env: job.env, type: 'escrow_release', currency: CREDIT_CURRENCY, amount: price, legs, initiatorAgentId: job.buyerAgentId, idempotencyKey: `job:${job.id}:release`, referenceType: 'job', referenceId: job.id, memo: `payout for job ${job.id} (fee ${fee})` })
   return t.id
 }
@@ -182,6 +217,7 @@ export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): 
     if (!Number.isInteger(units) || units < 1) throw errors.validation('units must be an integer >= 1 for per-unit listings.', 'units')
   }
   const price = listing.pricingModel === 'quote' ? null : listing.pricingModel === 'per_unit' ? listing.price! * units : listing.price!
+  if (price != null && !Number.isSafeInteger(price)) throw errors.validation('price overflow', 'units')
   const now = Date.now()
   const id = newId('job')
   const status: JobStatus = listing.pricingModel === 'quote' ? 'quote_requested' : 'open'
@@ -311,17 +347,27 @@ function requireRole(role: Role, needed: Role, job: Job, action: string) {
   if (role !== needed) invalid(job, role, action)
 }
 
+/** Conditional transition helper: idempotent if already in `target`, invalid otherwise. */
+async function transition(job: Job, role: Role, action: string, from: JobStatus[], target: JobStatus, set: Partial<typeof jobs.$inferInsert>): Promise<Job> {
+  const updated = await setJobIf(job.id, from, { ...set, status: target })
+  if (updated) return updated
+  const current = await reload(job.id)
+  if (current.status === target) return current
+  invalid(current, role, action)
+}
+
 export async function accept(env: Env, actor: Agent, id: string): Promise<Job> {
   const { job, role } = await getJobForParty(env, actor.id, id)
   requireRole(role, 'seller', job, 'accept')
   if (job.status === 'in_progress') return job
   if (job.status !== 'open') invalid(job, role, 'accept')
   const now = Date.now()
-  const listing = job.listingId ? await db().query.listings.findFirst({ where: eq(sql`id`, job.listingId) }) : undefined
+  const listing = await listingOf(job)
   const turnaround = (listing?.turnaroundSeconds ?? 3600) * 1000
-  const updated = await setJob(id, { status: 'in_progress', acceptedAt: now, deadlineAt: now + turnaround })
+  const updated = await transition(job, role, 'accept', ['open'], 'in_progress', { acceptedAt: now, deadlineAt: now + turnaround })
+  if (updated.acceptedAt !== now) return updated
   await logJobEvent(id, 'accepted', actor.id)
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Seller accepted. Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
+  await note(updated, null, undefined, `Seller accepted. Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
   await notify(updated, 'accepted')
   return updated
 }
@@ -330,14 +376,16 @@ export async function decline(env: Env, actor: Agent, id: string, reason?: strin
   const { job, role } = await getJobForParty(env, actor.id, id)
   requireRole(role, 'seller', job, 'decline')
   if (job.status === 'declined') return job
-  if (job.status !== 'open' && job.status !== 'quote_requested') invalid(job, role, 'decline')
-  const refundTxn = await refundEscrow(job)
-  const updated = await setJob(id, { status: 'declined', cancelReason: reason ? `seller: ${reason}`.slice(0, 500) : 'seller declined', refundTransactionId: refundTxn })
+  if (!['open', 'quote_requested', 'quoted'].includes(job.status)) invalid(job, role, 'decline')
+  const updated = await transition(job, role, 'decline', ['open', 'quote_requested', 'quoted'], 'declined', { cancelReason: 'seller declined' })
+  if (updated.refundTransactionId) return updated
+  const refundTxn = await refundEscrow(updated)
+  const final = refundTxn ? await setJob(id, { refundTransactionId: refundTxn }) : updated
   await logJobEvent(id, 'declined', actor.id, { reason })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Seller declined${reason ? `: ${reason}` : ''}. Escrow refunded.`, { job_id: id, status: 'declined' })
-  await notify(updated, 'declined', { reason })
-  await finalize(updated)
-  return updated
+  await note(final, actor.id, reason, `Seller declined${final.escrowTransactionId ? '. Escrow refunded' : ''}.`, { job_id: id, status: 'declined' })
+  await notify(final, 'declined', { reason })
+  await finalize(final)
+  return final
 }
 
 export async function quote(env: Env, actor: Agent, id: string, price: number, message?: string): Promise<Job> {
@@ -345,11 +393,13 @@ export async function quote(env: Env, actor: Agent, id: string, price: number, m
   requireRole(role, 'seller', job, 'quote')
   if (job.status === 'quoted' && job.quotedPrice === price) return job
   if (job.status !== 'quote_requested' && job.status !== 'quoted') invalid(job, role, 'quote')
-  const listing = job.listingId ? await db().query.listings.findFirst({ where: eq(sql`id`, job.listingId) }) : undefined
+  const listing = await listingOf(job)
   const acceptWindow = (listing?.acceptTimeoutSeconds ?? 3600) * 1000
-  const updated = await setJob(id, { status: 'quoted', quotedPrice: price, quoteMessage: message?.slice(0, 2000) ?? null, acceptDeadlineAt: Date.now() + acceptWindow })
+  // The buyer's window to accept starts with the FIRST quote; re-quoting cannot push it out.
+  const acceptDeadlineAt = job.status === 'quote_requested' || !job.acceptDeadlineAt ? Date.now() + acceptWindow : job.acceptDeadlineAt
+  const updated = await transition(job, role, 'quote', ['quote_requested', 'quoted'], 'quoted', { quotedPrice: price, quoteMessage: message?.slice(0, 2000) ?? null, acceptDeadlineAt })
   await logJobEvent(id, 'quoted', actor.id, { price, message })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Seller quoted ${price} CRD${message ? `: ${message}` : ''}. Buyer: accept with POST /v1/jobs/{id}/accept_quote before ${new Date(updated.acceptDeadlineAt!).toISOString()}.`, { job_id: id, status: 'quoted', price })
+  await note(updated, actor.id, message, `Seller quoted ${price} CRD. Buyer: accept with POST /v1/jobs/{id}/accept_quote before ${new Date(updated.acceptDeadlineAt!).toISOString()}.`, { job_id: id, status: 'quoted', price })
   await notify(updated, 'quoted', { quoted_price: price })
   return updated
 }
@@ -360,12 +410,19 @@ export async function acceptQuote(env: Env, actor: Agent, id: string): Promise<J
   if (job.status === 'in_progress') return job
   if (job.status !== 'quoted' || job.quotedPrice == null) invalid(job, role, 'accept_quote')
   const price = job.quotedPrice
-  const listing = job.listingId ? await db().query.listings.findFirst({ where: eq(sql`id`, job.listingId) }) : undefined
+  const listing = await listingOf(job)
   const escrow = price > 0 ? await lockEscrow(job, price) : null
   const now = Date.now()
-  const updated = await setJob(id, { status: 'in_progress', price, fee: feeFor(price), escrowTransactionId: escrow?.id ?? null, acceptedAt: now, deadlineAt: now + (listing?.turnaroundSeconds ?? 3600) * 1000 })
+  const updated = await setJobIf(id, ['quoted'], { status: 'in_progress', price, fee: feeFor(price), escrowTransactionId: escrow?.id ?? null, acceptedAt: now, deadlineAt: now + (listing?.turnaroundSeconds ?? 3600) * 1000 })
+  if (!updated) {
+    // Lost the race (e.g. expired by the sweep meanwhile): give the money back and explain.
+    if (escrow) await ledger().reverse(escrow.id, { idempotencyKey: `job:${id}:lock:reverse` })
+    const current = await reload(id)
+    if (current.status === 'in_progress') return current
+    invalid(current, role, 'accept_quote')
+  }
   await logJobEvent(id, 'quote_accepted', actor.id, { price })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Buyer accepted the quote. ${price} CRD locked in escrow. Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
+  await note(updated, null, undefined, `Buyer accepted the quote. ${price} CRD locked in escrow. Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
   await notify(updated, 'accepted', { price })
   return updated
 }
@@ -380,12 +437,10 @@ export async function deliver(env: Env, actor: Agent, id: string, output: unknow
   if (size > 512 * 1024) throw errors.validation('output must be at most 512 KB when serialised.', 'output', 'Return a URL or split the deliverable.')
   const scan = scanJson(output)
   const now = Date.now()
-  const updated = await setJob(id, { status: 'delivered', output, deliveredAt: now, reviewDeadlineAt: now + reviewWindowMs(env) })
+  const updated = await transition(job, role, 'deliver', ['in_progress'], 'delivered', { output, deliveredAt: now, reviewDeadlineAt: now + reviewWindowMs(env) })
+  if (updated.deliveredAt !== now) return updated
   await logJobEvent(id, 'delivered', actor.id, { on_time: job.deadlineAt ? now <= job.deadlineAt : true, content_warnings: scan.warnings })
-  if (updated.threadId) {
-    if (message) await sendMessage(env, updated.threadId, actor.id, message)
-    await postSystemMessage(updated.threadId, `Delivered. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.`, { job_id: id, status: 'delivered' })
-  }
+  await note(updated, actor.id, message, `Delivered. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.`, { job_id: id, status: 'delivered' })
   await notify(updated, 'delivered', { content_warnings: scan.warnings })
   return updated
 }
@@ -398,11 +453,18 @@ export async function acceptDelivery(env: Env, actor: Agent, id: string): Promis
   return complete(job, actor.id, 'buyer accepted')
 }
 
-async function complete(job: Job, actorId: string | null, note: string): Promise<Job> {
-  const releaseTxn = await releaseEscrow(job)
-  const updated = await setJob(job.id, { status: 'completed', completedAt: Date.now(), releaseTransactionId: releaseTxn || null, fee: feeFor(job.price ?? 0) })
-  await logJobEvent(job.id, 'completed', actorId, { note, fee: updated.fee })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Completed (${note}). ${(updated.price ?? 0) - (updated.fee ?? 0)} CRD paid to seller, ${updated.fee ?? 0} CRD platform fee. Both sides can now leave a review: POST /v1/jobs/{id}/reviews.`, { job_id: job.id, status: 'completed' })
+async function complete(job: Job, actorId: string | null, noteText: string): Promise<Job> {
+  const flipped = await setJobIf(job.id, ['delivered'], { status: 'completed', completedAt: Date.now(), fee: feeFor(job.price ?? 0) })
+  if (!flipped) {
+    const current = await reload(job.id)
+    if (current.status === 'completed') return current
+    if (actorId) invalid(current, 'buyer', 'accept')
+    return current
+  }
+  const releaseTxn = await releaseEscrow(flipped)
+  const updated = releaseTxn ? await setJob(job.id, { releaseTransactionId: releaseTxn }) : flipped
+  await logJobEvent(job.id, 'completed', actorId, { note: noteText, fee: updated.fee })
+  await note(updated, null, undefined, `Completed (${noteText}). ${(updated.price ?? 0) - (updated.fee ?? 0)} CRD paid to seller, ${updated.fee ?? 0} CRD platform fee. Both sides can now leave a review: POST /v1/jobs/{id}/reviews.`, { job_id: job.id, status: 'completed' })
   await notify(updated, 'completed', { fee: updated.fee })
   await publishFeed(updated.env, 'job.completed', { job_id: updated.id, title: updated.title, price_rounded: Math.round((updated.price ?? 0) / 100) * 100, seller_id: updated.sellerAgentId, buyer_id: updated.buyerAgentId })
   await finalize(updated, 'completed')
@@ -414,14 +476,11 @@ export async function requestRevision(env: Env, actor: Agent, id: string, messag
   requireRole(role, 'buyer', job, 'request_revision')
   if (job.status !== 'delivered') invalid(job, role, 'request_revision')
   if (job.revisionCount >= job.maxRevisions) throw errors.state('revisions_exhausted', `This job allows ${job.maxRevisions} revision(s) and they are used up.`, 'Accept the delivery (POST /v1/jobs/{id}/accept) or open a dispute (POST /v1/jobs/{id}/dispute).')
-  const listing = job.listingId ? await db().query.listings.findFirst({ where: eq(sql`id`, job.listingId) }) : undefined
+  const listing = await listingOf(job)
   const now = Date.now()
-  const updated = await setJob(id, { status: 'in_progress', revisionCount: job.revisionCount + 1, deadlineAt: now + (listing?.turnaroundSeconds ?? 3600) * 1000, reviewDeadlineAt: null })
+  const updated = await transition(job, role, 'request_revision', ['delivered'], 'in_progress', { revisionCount: job.revisionCount + 1, deadlineAt: now + (listing?.turnaroundSeconds ?? 3600) * 1000, reviewDeadlineAt: null })
   await logJobEvent(id, 'revision_requested', actor.id, { message, revision: updated.revisionCount })
-  if (updated.threadId) {
-    await sendMessage(env, updated.threadId, actor.id, message)
-    await postSystemMessage(updated.threadId, `Revision ${updated.revisionCount}/${updated.maxRevisions} requested. Seller: deliver again by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
-  }
+  await note(updated, actor.id, message, `Revision ${updated.revisionCount}/${updated.maxRevisions} requested. Seller: deliver again by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
   await notify(updated, 'revision_requested', { revision: updated.revisionCount })
   return updated
 }
@@ -431,9 +490,9 @@ export async function dispute(env: Env, actor: Agent, id: string, reason: string
   requireRole(role, 'buyer', job, 'dispute')
   if (job.status === 'disputed') return job
   if (job.status !== 'delivered') invalid(job, role, 'dispute')
-  const updated = await setJob(id, { status: 'disputed', disputeReason: reason.slice(0, 2000), reviewDeadlineAt: null })
+  const updated = await transition(job, role, 'dispute', ['delivered'], 'disputed', { disputeReason: reason.slice(0, 2000), reviewDeadlineAt: null })
   await logJobEvent(id, 'disputed', actor.id, { reason })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Buyer opened a dispute: ${reason.slice(0, 500)}. Escrow stays locked until an arbiter resolves it. Both sides: add evidence in this thread.`, { job_id: id, status: 'disputed' })
+  await note(updated, actor.id, reason, 'Buyer opened a dispute. Escrow stays locked until an arbiter resolves it. Both sides: add evidence in this thread.', { job_id: id, status: 'disputed' })
   await notify(updated, 'disputed', { reason })
   await finalize(updated)
   return updated
@@ -444,25 +503,32 @@ export async function cancel(env: Env, actor: Agent, id: string, reason?: string
   if (job.status === 'cancelled') return job
   const now = Date.now()
   let sellerFailure = false
+  let from: JobStatus[]
   if (role === 'buyer') {
     if (job.status === 'in_progress') {
       if (!job.deadlineAt || now <= job.deadlineAt + GRACE_AFTER_DEADLINE_MS) {
         throw errors.state('cannot_cancel_in_progress', 'The seller is working on this job and the deadline has not passed.', `You can cancel after ${job.deadlineAt ? new Date(job.deadlineAt + GRACE_AFTER_DEADLINE_MS).toISOString() : 'the deadline plus one hour'}, or message the seller in thread ${job.threadId}.`)
       }
       sellerFailure = true
-    } else if (!['open', 'quote_requested', 'quoted'].includes(job.status)) invalid(job, role, 'cancel')
+      from = ['in_progress']
+    } else if (['open', 'quote_requested', 'quoted'].includes(job.status)) from = ['open', 'quote_requested', 'quoted']
+    else invalid(job, role, 'cancel')
   } else {
-    if (job.status === 'in_progress') sellerFailure = true
-    else if (job.status === 'open' || job.status === 'quote_requested') return decline(env, actor, id, reason)
+    if (job.status === 'in_progress') {
+      sellerFailure = true
+      from = ['in_progress']
+    } else if (job.status === 'open' || job.status === 'quote_requested' || job.status === 'quoted') return decline(env, actor, id, reason)
     else invalid(job, role, 'cancel')
   }
-  const refundTxn = await refundEscrow(job)
-  const updated = await setJob(id, { status: 'cancelled', cancelReason: `${role}: ${reason ?? 'cancelled'}`.slice(0, 500), refundTransactionId: refundTxn })
+  const updated = await transition(job, role, 'cancel', from, 'cancelled', { cancelReason: `${role}: ${reason ?? 'cancelled'}`.slice(0, 500) })
+  if (updated.refundTransactionId) return updated
+  const refundTxn = await refundEscrow(updated)
+  const final = refundTxn ? await setJob(id, { refundTransactionId: refundTxn }) : updated
   await logJobEvent(id, 'cancelled', actor.id, { reason, seller_failure: sellerFailure })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Cancelled by ${role}${reason ? `: ${reason}` : ''}. Escrow refunded to buyer.`, { job_id: id, status: 'cancelled' })
-  await notify(updated, 'cancelled', { by: role, reason })
-  await finalize(updated, sellerFailure ? 'failed' : undefined)
-  return updated
+  await note(final, actor.id, reason, `Cancelled by ${role}.${final.escrowTransactionId ? ' Escrow refunded to buyer.' : ''}`, { job_id: id, status: 'cancelled' })
+  await notify(final, 'cancelled', { by: role, reason })
+  await finalize(final, sellerFailure ? 'failed' : undefined)
+  return final
 }
 
 export async function resolve(id: string, resolution: { buyer_refund: number; seller_payout: number; note: string; by: string }): Promise<Job> {
@@ -474,19 +540,23 @@ export async function resolve(id: string, resolution: { buyer_refund: number; se
   if (resolution.buyer_refund + resolution.seller_payout !== price) throw errors.validation(`buyer_refund + seller_payout must equal the job price (${price}).`, 'seller_payout')
   if (resolution.buyer_refund < 0 || resolution.seller_payout < 0) throw errors.validation('amounts must be >= 0')
   const fee = feeFor(resolution.seller_payout)
+  const res: JobResolution = { ...resolution }
+  const flipped = await setJobIf(id, ['disputed'], { status: 'resolved', resolution: res, completedAt: Date.now(), fee })
+  if (!flipped) return reload(id)
   let txnId: string | null = null
   if (price > 0) {
-    const legs = [{ account: escrowAccount(job.id), delta: -price }]
-    if (resolution.buyer_refund > 0) legs.push({ account: agentAccount(job.buyerAgentId), delta: resolution.buyer_refund })
-    if (resolution.seller_payout - fee > 0) legs.push({ account: agentAccount(job.sellerAgentId), delta: resolution.seller_payout - fee })
-    if (fee > 0) legs.push({ account: platformAccount('fees'), delta: fee })
+    const legs = [
+      { account: escrowAccount(job.id), delta: -price },
+      { account: agentAccount(job.buyerAgentId), delta: resolution.buyer_refund },
+      { account: agentAccount(job.sellerAgentId), delta: resolution.seller_payout - fee },
+      { account: platformAccount('fees'), delta: fee },
+    ].filter((l) => l.delta !== 0)
     const t = await ledger().post({ env: job.env, type: 'escrow_release', currency: CREDIT_CURRENCY, amount: price, legs, initiatorAgentId: null, idempotencyKey: `job:${job.id}:resolve`, referenceType: 'job', referenceId: job.id, memo: `dispute resolution: ${resolution.note}`.slice(0, 500) })
     txnId = t.id
   }
-  const res: JobResolution = { ...resolution }
-  const updated = await setJob(id, { status: 'resolved', resolution: res, releaseTransactionId: txnId, completedAt: Date.now(), fee })
+  const updated = txnId ? await setJob(id, { releaseTransactionId: txnId }) : flipped
   await logJobEvent(id, 'resolved', null, { ...res })
-  if (updated.threadId) await postSystemMessage(updated.threadId, `Dispute resolved by ${resolution.by}: buyer refunded ${resolution.buyer_refund} CRD, seller paid ${resolution.seller_payout - fee} CRD (fee ${fee}). Note: ${resolution.note}`, { job_id: id, status: 'resolved' })
+  await note(updated, null, undefined, `Dispute resolved by ${resolution.by}: buyer refunded ${resolution.buyer_refund} CRD, seller paid ${resolution.seller_payout - fee} CRD (fee ${fee}). Note: ${resolution.note.slice(0, 500)}`, { job_id: id, status: 'resolved' })
   await notify(updated, 'resolved', { buyer_refund: resolution.buyer_refund, seller_payout: resolution.seller_payout })
   await finalize(updated, resolution.seller_payout > 0 ? 'completed' : 'failed')
   return updated
@@ -494,25 +564,36 @@ export async function resolve(id: string, resolution: { buyer_refund: number; se
 
 // --- sweeps -----------------------------------------------------------------------------------
 
-export async function sweepJobs(now = Date.now()): Promise<{ expired: number; auto_completed: number }> {
-  let expired = 0
-  let autoCompleted = 0
+export async function sweepJobs(now = Date.now()): Promise<{ expired: number; auto_completed: number; errors: number }> {
+  const stats = { expired: 0, auto_completed: 0, errors: 0 }
   const toExpire = await db().query.jobs.findMany({ where: and(inArray(jobs.status, ['open', 'quote_requested', 'quoted']), lt(jobs.acceptDeadlineAt, now)), limit: 200 })
   for (const job of toExpire) {
-    const refundTxn = await refundEscrow(job)
-    const updated = await setJob(job.id, { status: 'expired', refundTransactionId: refundTxn })
-    await logJobEvent(job.id, 'expired', null)
-    if (updated.threadId) await postSystemMessage(updated.threadId, 'Expired: no response in time. Escrow refunded.', { job_id: job.id, status: 'expired' })
-    await notify(updated, 'expired')
-    await finalize(updated)
-    expired++
+    try {
+      const flipped = await setJobIf(job.id, ['open', 'quote_requested', 'quoted'], { status: 'expired' })
+      if (!flipped) continue
+      const refundTxn = await refundEscrow(flipped)
+      const updated = refundTxn ? await setJob(job.id, { refundTransactionId: refundTxn }) : flipped
+      await logJobEvent(job.id, 'expired', null)
+      await note(updated, null, undefined, `Expired: no response in time.${updated.escrowTransactionId ? ' Escrow refunded.' : ''}`, { job_id: job.id, status: 'expired' })
+      await notify(updated, 'expired')
+      await finalize(updated)
+      stats.expired++
+    } catch (e) {
+      stats.errors++
+      log.error({ err: e, job: job.id }, 'sweep: expiry failed')
+    }
   }
   const toComplete = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'delivered'), lt(jobs.reviewDeadlineAt, now)), limit: 200 })
   for (const job of toComplete) {
-    await complete(job, null, 'auto-accepted after review window')
-    autoCompleted++
+    try {
+      await complete(job, null, 'auto-accepted after review window')
+      stats.auto_completed++
+    } catch (e) {
+      stats.errors++
+      log.error({ err: e, job: job.id }, 'sweep: auto-complete failed')
+    }
   }
-  return { expired, auto_completed: autoCompleted }
+  return stats
 }
 
 registerSweep('jobs', async (now) => {

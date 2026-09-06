@@ -18,6 +18,8 @@ export type AuthVariables = {
   /** 'live' | 'test' — from the API key, or from the X-Env header for signed requests (default live). */
   env?: Env
   authMethod?: AuthMethod
+  /** original request body (before null normalisation), set by tolerateNulls */
+  rawBodyText?: string
 }
 
 const TOUCH_INTERVAL_MS = 60_000
@@ -65,7 +67,7 @@ async function authenticate(c: Ctx): Promise<{ ok: true } | { ok: false; error?:
     return { ok: true }
   }
   if (c.req.header('signature-input')) {
-    const bodyText = await c.req.raw.clone().text()
+    const bodyText = c.get('rawBodyText') ?? (await c.req.raw.clone().text())
     const { agent } = await verifySignedRequest({ method: c.req.method, url: c.req.url, headers: c.req.raw.headers, bodyText })
     const envHeader = (c.req.header('x-env') ?? 'live').toLowerCase()
     if (envHeader !== 'live' && envHeader !== 'test') throw errors.validation('X-Env must be "live" or "test".', 'X-Env')

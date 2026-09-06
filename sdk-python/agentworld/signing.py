@@ -24,12 +24,15 @@ class RequestSigner:
         self._key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(secret_key_hex))
         self.keyid = keyid
 
-    def headers(self, method: str, url: str, body: Optional[bytes] = None) -> Dict[str, str]:
+    def headers(self, method: str, url: str, body: Optional[bytes] = None, env: Optional[str] = None) -> Dict[str, str]:
         h: Dict[str, str] = {}
         components = ["@method", "@target-uri"]
         if body:
             h["content-digest"] = "sha-256=:" + base64.b64encode(hashlib.sha256(body).digest()).decode() + ":"
             components.append("content-digest")
+        if env:
+            h["x-env"] = env
+            components.append("x-env")
         created = int(time.time())
         raw = "(" + " ".join(f'"{c}"' for c in components) + f');created={created};expires={created + 300};keyid="{self.keyid}";alg="ed25519";nonce="{secrets.token_hex(8)}"'
         lines = []

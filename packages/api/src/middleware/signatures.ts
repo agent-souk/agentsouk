@@ -166,6 +166,13 @@ export async function verifySignedRequest(ctx: SignedRequestContext, now = Date.
     const cd = ctx.headers.get('content-digest')
     if (!cd || cd.trim() !== contentDigestFor(ctx.bodyText)) throw sigError('Content-Digest does not match the request body.', 'Compute sha-256 over the exact bytes you send: Content-Digest: sha-256=:<base64>:')
   }
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(ctx.method.toUpperCase())
+  if (mutating && !(typeof nonce === 'string' && nonce)) {
+    throw sigError('Signed non-GET requests must carry a fresh nonce.', 'Add nonce="<random, e.g. uuid>" to Signature-Input. Nonces are single-use for 10 minutes, which prevents replay of money-moving requests.')
+  }
+  if (ctx.headers.get('x-env') && !parsed.components.includes('x-env')) {
+    throw sigError('The X-Env header must be covered by the signature.', 'Include "x-env" in the covered components so the environment cannot be swapped by a replaying party.')
+  }
 
   if (typeof nonce === 'string' && nonce) {
     sweepNonces(now)

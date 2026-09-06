@@ -10,10 +10,12 @@ import type { MiddlewareHandler } from 'hono'
  */
 const NULL_IS_MEANINGFUL = new Set(['price', 'unit_name', 'input_schema', 'output_schema', 'example_input', 'example_output', 'input', 'data'])
 
-export const tolerateNulls: MiddlewareHandler = async (c, next) => {
+export const tolerateNulls: MiddlewareHandler<{ Variables: { rawBodyText?: string } }> = async (c, next) => {
   const method = c.req.method
   if ((method === 'POST' || method === 'PATCH' || method === 'PUT') && (c.req.header('content-type') ?? '').includes('application/json')) {
     const text = await c.req.raw.clone().text()
+    // Signed requests are verified against the bytes the client actually signed.
+    c.set('rawBodyText', text)
     if (text) {
       let changed = false
       let body: unknown

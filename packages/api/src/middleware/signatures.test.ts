@@ -20,9 +20,8 @@ beforeEach(async () => {
 
 async function signed(method: string, path: string, opts: { body?: unknown; secretKey?: string; keyid?: string; env?: string; created?: number; nonce?: string; tamper?: (h: Record<string, string>) => void; components?: string[] } = {}) {
   const bodyText = opts.body !== undefined ? JSON.stringify(opts.body) : undefined
-  const headers = signRequest({ method, url: `${BASE}${path}`, body: bodyText, secretKey: opts.secretKey ?? a.keypair!.secret_key, keyid: opts.keyid ?? a.agent.id, created: opts.created, nonce: opts.nonce, components: opts.components })
+  const headers = signRequest({ method, url: `${BASE}${path}`, body: bodyText, secretKey: opts.secretKey ?? a.keypair!.secret_key, keyid: opts.keyid ?? a.agent.id, created: opts.created, nonce: opts.nonce, components: opts.components, extraHeaders: opts.env ? { 'x-env': opts.env } : undefined })
   if (bodyText) headers['content-type'] = 'application/json'
-  if (opts.env) headers['x-env'] = opts.env
   opts.tamper?.(headers)
   const res = await app.request(path, { method, headers, body: bodyText })
   return { status: res.status, body: (await res.json()) as any }
@@ -60,9 +59,16 @@ describe('RFC 9421 signed requests', () => {
     const replay = await signed('GET', '/v1/agents/me', { nonce: 'n1' })
     expect(replay.status).toBe(401)
     expect(replay.body.error.message).toContain('Nonce')
-    const noDigest = await signed('POST', '/v1/listings', { env: 'test', body: { title: 'x' }, components: ['@method', '@target-uri'] })
+    const noDigest = await signed('POST', '/v1/listings', { env: 'test', body: { title: 'x' }, components: ['@method', '@target-uri', 'x-env'] })
     expect(noDigest.status).toBe(401)
     expect(noDigest.body.error.message).toContain('content-digest')
+    const noNonce = await signed('POST', '/v1/listings', { env: 'test', body: { title: 'x' }, nonce: '', tamper: (h) => (h['signature-input'] = h['signature-input']!.replace(/;nonce="[^"]*"/, '')) })
+    expect(noNonce.status).toBe(401)
+    const envUncovered = await signed('GET', '/v1/agents/me', { tamper: (h) => (h['x-env'] = 'test') })
+    expect(envUncovered.status).toBe(401)
+    expect(envUncovered.body.error.message).toContain('X-Env')
+    const envSwap = await signed('GET', '/v1/agents/me', { env: 'test', tamper: (h) => (h['x-env'] = 'live') })
+    expect(envSwap.status).toBe(401)
     const unknown = await signed('GET', '/v1/agents/me', { keyid: 'agt_nope' })
     expect(unknown.status).toBe(401)
     const wrongMethod = await signed('GET', '/v1/agents/me', { tamper: (h) => (h['signature-input'] = h['signature-input']!.replace('"@method"', '"@path"')) })
@@ -90,13 +96,15 @@ describe('recovery and rotation', () => {
     expect(events.body.data).toHaveLength(1)
   })
 
-  it('rotates the key with a proof from the new key; old key stops working', async () => {
+  it('rotates the key only via a signed request with a proof from the new key; old key stops working', async () => {
     const next = generateKeyPair()
-    const bad = await call(app, 'POST', '/v1/agents/me/rotate-key', { key: a.api_keys.test, body: { new_public_key: next.publicKey, proof: 'ab'.repeat(64) } })
+    const viaApiKey = await call(app, 'POST', '/v1/agents/me/rotate-key', { key: a.api_keys.test, body: { new_public_key: next.publicKey, proof: 'ab'.repeat(64) } })
+    expect(viaApiKey.status).toBe(401)
+    const bad = await signed('POST', '/v1/agents/me/rotate-key', { body: { new_public_key: next.publicKey, proof: 'ab'.repeat(64) } })
     expect(bad.status).toBe(400)
     expect(bad.body.error.hint).toContain('agentworld:rotate:')
     const proof = sign(rotationMessage(a.agent.id, a.keypair!.public_key, next.publicKey), next.secretKey)
-    const ok = await call(app, 'POST', '/v1/agents/me/rotate-key', { key: a.api_keys.test, body: { new_public_key: didKeyFromPublicKey(next.publicKey), proof } })
+    const ok = await signed('POST', '/v1/agents/me/rotate-key', { body: { new_public_key: didKeyFromPublicKey(next.publicKey), proof } })
     expect(ok.status, JSON.stringify(ok.body)).toBe(200)
     expect(ok.body.public_key).toBe(next.publicKey)
     expect(ok.body.did).toBe(didKeyFromPublicKey(next.publicKey))

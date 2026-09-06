@@ -8,6 +8,8 @@ import { ApiError } from '../lib/errors.js'
 import type { AuthVariables } from './auth.js'
 
 const TTL_MS = 24 * 60 * 60 * 1000
+/** An in-flight marker older than this is considered abandoned (process crash) and is replaced. */
+const IN_FLIGHT_STALE_MS = 120_000
 let lastSweep = 0
 
 /**
@@ -15,14 +17,16 @@ let lastSweep = 0
  * - Same key + same request → the stored response is replayed (header `Idempotent-Replayed: true`).
  * - Same key + different request → 409 `idempotency_key_reused`.
  * - Same key while the first request is still running → 409 `idempotency_in_progress`.
- * Keys are scoped per agent and expire after 24h.
+ * Keys are scoped per agent AND environment, and expire after 24h.
  */
 export const idempotency: MiddlewareHandler<{ Variables: AuthVariables & { requestId: string } }> = async (c, next) => {
-  const key = c.req.header('idempotency-key')
+  const header = c.req.header('idempotency-key')
   const agent = c.get('agent')
+  const env = c.get('env') ?? 'live'
   const method = c.req.method.toUpperCase()
-  if (!key || !agent || !['POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) return next()
-  if (key.length > 255) throw new ApiError('validation_error', 'invalid_idempotency_key', 'Idempotency-Key must be at most 255 characters.')
+  if (!header || !agent || !['POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) return next()
+  if (header.length > 255) throw new ApiError('validation_error', 'invalid_idempotency_key', 'Idempotency-Key must be at most 255 characters.')
+  const key = `${env}:${header}`
 
   const now = Date.now()
   if (now - lastSweep > 10 * 60_000) {
@@ -41,16 +45,27 @@ export const idempotency: MiddlewareHandler<{ Variables: AuthVariables & { reque
       })
     }
     if (existing.status == null) {
-      throw new ApiError('conflict', 'idempotency_in_progress', 'A request with this Idempotency-Key is still being processed.', {
-        hint: 'Wait a moment and retry with the same key to receive the stored result.',
-      })
+      if (now - existing.createdAt < IN_FLIGHT_STALE_MS) {
+        throw new ApiError('conflict', 'idempotency_in_progress', 'A request with this Idempotency-Key is still being processed.', {
+          hint: 'Wait a moment and retry with the same key to receive the stored result.',
+        })
+      }
+      await db().delete(idempotencyKeys).where(eq(idempotencyKeys.id, existing.id))
+    } else {
+      c.header('Idempotent-Replayed', 'true')
+      return c.body(existing.responseBody ?? '', existing.status as 200, { 'content-type': 'application/json' })
     }
-    c.header('Idempotent-Replayed', 'true')
-    return c.body(existing.responseBody ?? '', existing.status as 200, { 'content-type': 'application/json' })
   }
 
   const id = newId('request')
-  await db().insert(idempotencyKeys).values({ id, agentId: agent.id, key, method, path: c.req.path, requestHash, createdAt: now })
+  try {
+    await db().insert(idempotencyKeys).values({ id, agentId: agent.id, key, method, path: c.req.path, requestHash, createdAt: now })
+  } catch {
+    // Lost a race with a concurrent request carrying the same key.
+    throw new ApiError('conflict', 'idempotency_in_progress', 'A request with this Idempotency-Key is still being processed.', {
+      hint: 'Wait a moment and retry with the same key to receive the stored result.',
+    })
+  }
 
   try {
     await next()

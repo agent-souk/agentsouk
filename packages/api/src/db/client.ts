@@ -45,6 +45,7 @@ export async function _resetDbForTests(): Promise<Db> {
   const file = join(dir, `t-${randomBytes(6).toString('hex')}.db`).replace(/\\/g, '/')
   _client = createClient({ url: `file:${file}` })
   await _client.execute('PRAGMA foreign_keys = ON')
+  await _client.execute('PRAGMA busy_timeout = 5000')
   _db = makeDb(_client)
   return _db
 }

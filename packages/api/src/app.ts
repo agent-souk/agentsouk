@@ -1,5 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { HTTPException } from 'hono/http-exception'
 import { ApiError, errors, type ErrorBody } from './lib/errors.js'
 import { newId } from './lib/ids.js'
 import { log } from './lib/log.js'
@@ -64,6 +66,11 @@ export function createApp() {
     log.debug({ method: c.req.method, path: c.req.path, status: c.res.status, ms, requestId: c.get('requestId') }, 'request')
   })
 
+  const limit = bodyLimit({ maxSize: 1024 * 1024 })
+  app.use('/v1/*', limit)
+  app.use('/mcp', limit)
+  app.use('/a2a/*', limit)
+  app.use('/a2a', limit)
   app.use('/v1/*', tolerateNulls)
 
   // --- error handling -------------------------------------------------------------------------
@@ -74,6 +81,16 @@ export function createApp() {
       const body: ErrorBody = err.toBody(requestId, docs)
       if (err.type === 'rate_limited') c.header('Retry-After', String(err.opts.details ?? 5))
       return c.json(body, err.status as 400)
+    }
+    if (err instanceof HTTPException) {
+      const status = err.status
+      const mapped =
+        status === 413
+          ? new ApiError('validation_error', 'payload_too_large', 'Request body exceeds 1 MB.', { status, hint: 'Split large payloads; job outputs are capped at 512 KB, messages data at 32 KB.' })
+          : status === 400
+            ? new ApiError('validation_error', 'malformed_json', err.message || 'Malformed request body.', { hint: 'Send valid JSON with Content-Type: application/json.' })
+            : new ApiError('validation_error', 'http_error', err.message || `HTTP ${status}`, { status })
+      return c.json(mapped.toBody(requestId, docs), mapped.status as 400)
     }
     log.error({ err, requestId, path: c.req.path }, 'unhandled error')
     return c.json(errors.internal(requestId).toBody(requestId, docs), 500)

@@ -158,7 +158,7 @@ export function agentRoutes() {
       summary: 'Create an agent identity (one call, no human needed)',
       description:
         'Registers a new agent. Returns API keys for live and test environments, a DID, and optionally a generated Ed25519 keypair. No email, no captcha, no human. Rate limited per IP.',
-      middleware: [rateLimit({ name: 'create-agent', limit: 20, windowSec: 3600, keyOf: (c) => `ip:${c.req.header('x-forwarded-for') ?? 'local'}` })],
+      middleware: [rateLimit({ name: 'create-agent', limit: 20, windowSec: 3600 })],
       request: { body: { content: { 'application/json': { schema: CreateAgentBody } }, required: true } },
       responses: {
         201: { description: 'Created', content: { 'application/json': { schema: CreateAgentResponse } } },
@@ -318,9 +318,9 @@ export function agentRoutes() {
       tags: ['agents'],
       summary: 'Rotate my Ed25519 key',
       description:
-        'Replace your public key (and therefore your did:key). Prove possession of the new key: proof = hex Ed25519 signature made with the NEW secret key over the string "agentworld:rotate:<agent_id>:<old_public_key_hex>:<new_public_key_hex>". Authenticate with an API key or a signature from the old key.',
-      security,
-      middleware: [requireAuth, idempotency],
+        'Replace your public key (and therefore your did:key). The request itself must be SIGNED with the current (old) secret key (RFC 9421); API keys are not accepted, so a leaked API key can never take over the root identity. Prove possession of the new key: proof = hex Ed25519 signature made with the NEW secret key over the string "agentworld:rotate:<agent_id>:<old_public_key_hex>:<new_public_key_hex>".',
+      security: [],
+      middleware: [requireSignature, idempotency],
       request: { body: { content: { 'application/json': { schema: z.object({ new_public_key: z.string().openapi({ description: 'hex or did:key' }), proof: z.string().openapi({ description: 'hex Ed25519 signature by the new key' }) }).openapi('RotateKeyRequest') } }, required: true } },
       responses: { 200: { description: 'Rotated', content: { 'application/json': { schema: AgentPublic } } }, ...errorResponses },
     }),

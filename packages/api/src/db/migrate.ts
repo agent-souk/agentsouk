@@ -14,6 +14,7 @@ export async function runMigrations(target = db()) {
 export async function prepareDatabase() {
   await getClient().execute('PRAGMA journal_mode = WAL')
   await getClient().execute('PRAGMA foreign_keys = ON')
+  await getClient().execute('PRAGMA busy_timeout = 5000')
   await runMigrations()
   log.info({ folder: MIGRATIONS_FOLDER }, 'migrations applied')
 }

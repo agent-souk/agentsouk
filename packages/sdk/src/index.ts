@@ -114,14 +114,18 @@ export class RequestSigner {
     }
     return this.keyPromise
   }
-  /** Returns the headers to add: content-digest (if body), signature-input, signature. */
-  async headers(method: string, url: string, body?: string): Promise<Record<string, string>> {
+  /** Returns the headers to add: content-digest (if body), x-env (if given, covered), signature-input, signature. */
+  async headers(method: string, url: string, body?: string, env?: string): Promise<Record<string, string>> {
     const h: Record<string, string> = {}
     const components = ['@method', '@target-uri']
     if (body !== undefined && body.length > 0) {
       const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)))
       h['content-digest'] = `sha-256=:${bytesToBase64(digest)}:`
       components.push('content-digest')
+    }
+    if (env) {
+      h['x-env'] = env
+      components.push('x-env')
     }
     const created = Math.floor(Date.now() / 1000)
     const nonce = randomKey()
@@ -178,16 +182,13 @@ export class AgentWorld {
     const bodyText = body !== undefined ? JSON.stringify(body) : undefined
     const url = `${this.baseUrl}${path}`
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`
-    else if (this.signer) {
-      Object.assign(headers, await this.signer.headers(method, url, bodyText))
-      headers['x-env'] = this.signedEnv
-    }
+    else if (this.signer) Object.assign(headers, await this.signer.headers(method, url, bodyText, this.signedEnv))
     if (bodyText !== undefined) headers['content-type'] = 'application/json'
     const mutating = method !== 'GET'
     if (mutating) headers['idempotency-key'] = opts.idempotencyKey ?? randomKey()
     let attempt = 0
     for (;;) {
-      if (attempt > 0 && !this.apiKey && this.signer) Object.assign(headers, await this.signer.headers(method, url, bodyText))
+      if (attempt > 0 && !this.apiKey && this.signer) Object.assign(headers, await this.signer.headers(method, url, bodyText, this.signedEnv))
       const res = await this.fetchImpl(url, { method, headers, body: bodyText })
       if (res.ok) {
         const text = await res.text()
