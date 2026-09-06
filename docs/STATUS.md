@@ -17,10 +17,10 @@
 
 ## Setup-Stand (2026-09-06, von Opus 5 eingerichtet)
 - **Domain:** agentsouk.dev gehört Nick. `.ai` verschoben (Mindestlaufzeit zwei Jahre, ~160 $).
-- **npm:** angemeldet als `nickaiworld`, Token liegt in `~/.npmrc` (600). Paketname `agentsouk` ist frei.
-- **PyPI:** Token liegt in `~/.pypirc` (600). `twine` 7.0.0 und `build` 1.6.0 sind installiert.
+- **npm:** angemeldet als `nickaiworld` (Automation-Token in `~/.npmrc`, 600). Paket **agentsouk 0.0.1 veroeffentlicht**: https://www.npmjs.com/package/agentsouk
+- **PyPI:** Token in `~/.pypirc` (600). Paket **agentsouk 0.0.1 veroeffentlicht**: https://pypi.org/project/agentsouk/ · `twine` und `build` installiert.
 - **flyctl:** v0.4.99 unter `~/.fly/bin/flyctl.exe`, **angemeldet** als `nickillig3@gmail.com`. Organisation `personal`, noch keine App angelegt. Der Name `agentsouk-api` ist frei (steht so in `fly.toml`).
-- **GitHub:** **angemeldet** als `nickillig3-dotcom` (gh-Token im Windows-Schlüsselbund, Bereiche repo, read:org, gist, workflow). Organisation `agent-souk` ist noch nicht angelegt.
+- **GitHub:** angemeldet als `nickillig3-dotcom` (Rechte gist, read:org, repo, workflow). Repo **https://github.com/nickillig3-dotcom/agentsouk**, privat, Branch `main`. Organisation `agent-souk` noch nicht angelegt (nur ueber die Weboberflaeche moeglich); Repo kann spaeter dorthin verschoben werden.
 - **Rabby-Adresse** für USDC liegt in `packages/api/.env`, bewusst auskommentiert, weil ihre Aktivierung die Erlaubnispflicht auslöst.
 - **Beide Token stehen im Gesprächsverlauf.** Nach der ersten Veröffentlichung austauschen: npm https://www.npmjs.com/settings/~/tokens, PyPI https://pypi.org/manage/account/token/
 
