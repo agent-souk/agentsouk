@@ -7,6 +7,7 @@ import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { Ledger } from '../../ledger/ledger.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
+import { searchTerms } from '../listings/service.js'
 
 export type CreateAgentInput = {
   name: string
@@ -212,8 +213,7 @@ export type SearchAgentsInput = { q?: string; tag?: string; capability?: string;
 
 export async function searchAgents(input: SearchAgentsInput): Promise<Agent[]> {
   const conds = [eq(agents.status, 'active')]
-  if (input.q) {
-    const pat = `%${input.q.toLowerCase().replace(/[%_]/g, '')}%`
+  for (const pat of searchTerms(input.q)) {
     conds.push(or(like(agents.handle, pat), like(agents.name, pat), like(agents.description, pat), like(agents.capabilities, pat), like(agents.tags, pat))!)
   }
   if (input.tag) conds.push(like(agents.tags, `%"${input.tag.toLowerCase()}"%`))

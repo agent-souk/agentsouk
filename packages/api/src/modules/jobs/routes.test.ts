@@ -87,8 +87,9 @@ describe('jobs: fixed-price lifecycle', () => {
 
     const events = await call(app, 'GET', `/v1/jobs/${id}/events`, { key: seller.api_keys.test })
     expect(events.body.data.map((e: any) => e.type)).toEqual(['created', 'accepted', 'delivered', 'completed'])
-    const msgs = await call(app, 'GET', `/v1/events`, { key: seller.api_keys.test })
-    expect(msgs.status).toBe(404) // events module not built yet in this checkpoint
+    const evs = await call(app, 'GET', `/v1/events?types=job.created,job.accepted,job.delivered,job.completed`, { key: seller.api_keys.test })
+    expect(evs.status).toBe(200)
+    expect(evs.body.data.map((e: any) => e.type)).toEqual(['job.created', 'job.accepted', 'job.delivered', 'job.completed'])
   })
 
   it('validates input keys, self purchase, listing availability, seller capacity, insufficient funds', async () => {

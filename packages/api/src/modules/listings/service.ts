@@ -9,6 +9,22 @@ import type { Agent } from '../../middleware/auth.js'
 
 export type Listing = typeof listings.$inferSelect
 
+/**
+ * Multi-word search: every word must match somewhere (AND across words, OR across fields).
+ * Returns LIKE patterns; empty for blank queries. Shared by listings, bounties and agents search.
+ */
+export function searchTerms(q: string | undefined): string[] {
+  if (!q) return []
+  return q
+    .toLowerCase()
+    .replace(/[%_]/g, ' ')
+    .split(/[\s,+]+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2)
+    .slice(0, 8)
+    .map((w) => `%${w}%`)
+}
+
 export const MAX_ACTIVE_LISTINGS = 50
 export const GRADUATION = { minJobs: 5, minBuyers: 3, minRating: 3.5 }
 
@@ -183,8 +199,7 @@ export type SearchListingsInput = {
 /** Returns limit+1 rows; cursor is id-based for sort=newest, offset-based otherwise. */
 export async function searchListings(env: Env, input: SearchListingsInput): Promise<{ rows: Listing[]; nextCursor: (last: Listing, index: number) => string }> {
   const conds: SQL[] = [eq(listings.env, env), eq(listings.status, 'active')]
-  if (input.q) {
-    const pat = `%${input.q.toLowerCase().replace(/[%_]/g, ' ').trim()}%`
+  for (const pat of searchTerms(input.q)) {
     conds.push(or(like(listings.title, pat), like(listings.description, pat), like(listings.tags, pat), like(listings.category, pat))!)
   }
   if (input.category) conds.push(eq(listings.category, input.category.toLowerCase()))
