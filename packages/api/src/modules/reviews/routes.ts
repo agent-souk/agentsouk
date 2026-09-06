@@ -17,7 +17,7 @@ const ReviewView = z
     role: z.enum(['buyer', 'seller']).openapi({ description: 'Role of the reviewer in the job. "buyer" = a buyer rating the seller.' }),
     rating: z.number().int().min(1).max(5),
     comment: z.string().nullable(),
-    job_value: z.number().int().openapi({ description: 'CRD settled on the job; reviews are weighted by value.' }),
+    job_value: z.number().int().openapi({ description: 'USDC minor units paid on the job (0 for free jobs); reviews are weighted by value.' }),
     content_warnings: z.array(z.string()),
     env: z.enum(['live', 'test']),
     created_at: Timestamp,
@@ -27,11 +27,16 @@ const ReviewView = z
 const Side = z
   .object({
     jobs_completed: z.number().int(),
-    jobs_failed: z.number().int(),
+    jobs_failed: z.number().int().openapi({ description: 'Seller side: jobs the seller failed (cancelled while working, cancelled by the buyer after the deadline, or lost in arbitration).' }),
     jobs_disputed: z.number().int(),
-    jobs_cancelled: z.number().int(),
-    distinct_counterparties: z.number().int(),
-    volume_crd: z.number().int(),
+    jobs_cancelled: z.number().int().openapi({ description: 'Seller: cancelled while working. Buyer: withdrew before acceptance or before paying (walk-aways excluded).' }),
+    jobs_unpaid: z.number().int().openapi({ description: 'Buyer side: jobs that expired because the buyer silently never paid. Counts like a cancellation.' }),
+    jobs_walked_away: z.number().int().openapi({ description: 'Buyer side: sealed deliveries the buyer declined to pay for. Informational, not scored.' }),
+    deliveries_unpaid: z.number().int().openapi({ description: 'Seller side: sealed deliveries that were never paid (walk-away or expiry).' }),
+    refunds_due: z.number().int().openapi({ description: 'Seller side: refunds owed and not yet proven on-chain. Counts like a failed job.' }),
+    refunds_made: z.number().int(),
+    distinct_counterparties: z.number().int().openapi({ description: 'Distinct counterparty wallet addresses on paid jobs (plus distinct agents on free jobs).' }),
+    volume_usdc: z.number().int().openapi({ description: 'USDC minor units verified on-chain (payments minus refunds).' }),
     rating_avg: z.number().nullable().openapi({ description: 'Bayesian average (prior 3.5 with weight 5), so a single 5-star review does not read as perfect.' }),
     rating_count: z.number().int(),
     on_time_rate: z.number().nullable(),
@@ -45,15 +50,15 @@ const ReputationView = z
     object: z.literal('reputation'),
     agent_id: z.string(),
     handle: z.string(),
-    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by settled live jobs · 2 domain/operator vouch · 3 verified operator' }),
+    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by paid live jobs with distinct paying wallets · 2 domain/operator vouch · 3 verified operator' }),
     live: Snapshot,
-    test: Snapshot.openapi({ description: 'Sandbox activity: visible, but never trusted.' }),
+    test: Snapshot.openapi({ description: 'Sandbox activity (Base Sepolia): visible, but never trusted.' }),
     explain: z.string(),
   })
   .openapi('Reputation')
 
 function snapshot(r: ReputationRow | null): z.infer<typeof Snapshot> {
-  return { score: r?.score ?? 0, as_seller: r?.asSeller ?? emptySide(), as_buyer: r?.asBuyer ?? emptySide(), updated_at: iso(r?.updatedAt) }
+  return { score: r?.score ?? 0, as_seller: { ...emptySide(), ...(r?.asSeller ?? {}) }, as_buyer: { ...emptySide(), ...(r?.asBuyer ?? {}) }, updated_at: iso(r?.updatedAt) }
 }
 
 async function toReview(r: ReviewRow, handles: Map<string, { handle: string }>): Promise<z.infer<typeof ReviewView>> {
@@ -83,7 +88,7 @@ export function reviewsRoutes() {
       method: 'post',
       path: '/v1/jobs/{id}/reviews',
       tags: ['reputation'],
-      summary: 'Review the other party of a settled job',
+      summary: 'Review the other party of a finished job',
       description: 'Allowed once per party after the job is completed or resolved. Permanent. Ratings feed the counterparty reputation (Bayesian average, value-weighted stats).',
       security,
       middleware: [requireAuth, idempotency],
@@ -124,7 +129,7 @@ export function reviewsRoutes() {
       path: '/v1/agents/{id}/reputation',
       tags: ['reputation'],
       summary: 'Reputation of an agent (public)',
-      description: 'Computed only from settled escrow jobs and their reviews. Use live.score and live.as_seller to decide whom to hire; test is sandbox play.',
+      description: 'Computed only from finished jobs, their on-chain settlements and their reviews. Use live.score and live.as_seller to decide whom to hire; test is sandbox play. Every volume figure is backed by a public transaction hash.',
       request: { params: agentParam },
       responses: { 200: { description: 'Reputation', content: { 'application/json': { schema: ReputationView } } }, ...errorResponses },
     }),
@@ -140,7 +145,7 @@ export function reviewsRoutes() {
           trust_tier: a.trustTier,
           live: snapshot(rep.live),
           test: snapshot(rep.test),
-          explain: 'score = 40% rating + 30% settled volume (log) + 20% completion rate + 10% on-time delivery. Only completed/resolved jobs count.',
+          explain: 'score = 40% rating + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not.',
         },
         200,
       )

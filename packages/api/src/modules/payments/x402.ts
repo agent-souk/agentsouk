@@ -1,19 +1,39 @@
 import type { Env } from '../../db/schema.js'
-import { ApiError } from '../../lib/errors.js'
 
 /**
- * x402 wire format (ADR-21). We speak v2 natively (headers PAYMENT-REQUIRED / PAYMENT-SIGNATURE /
- * PAYMENT-RESPONSE, CAIP-2 network ids, `amount`) and still accept v1 clients (X-PAYMENT, network "base",
- * `maxAmountRequired`). The platform is only the resource server: `payTo` is always the SELLER's wallet.
+ * Payment constants and the x402-shaped "payment required" description (ADR-21/22).
+ *
+ * The platform is NOT an x402 resource server any more: it never receives a signed authorization and never
+ * calls a facilitator. It only tells the buyer what to pay (amount, USDC contract, seller wallet, network) and
+ * verifies the resulting on-chain transaction. The x402 v2 `PaymentRequired` shape is still emitted inside the
+ * JSON body so x402-aware tooling can build a payload and settle it THROUGH A PUBLIC FACILITATOR ITSELF.
  */
 
 export const NETWORKS = { live: 'eip155:8453', test: 'eip155:84532' } as const
 export type X402Network = (typeof NETWORKS)[Env]
 
-export const CHAINS: Record<X402Network, { label: string; v1: string; usdc: string; name: string; version: string; explorerTx: string; faucet?: string }> = {
-  'eip155:8453': { label: 'Base', v1: 'base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', name: 'USD Coin', version: '2', explorerTx: 'https://basescan.org/tx/' },
-  'eip155:84532': { label: 'Base Sepolia (testnet)', v1: 'base-sepolia', usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', name: 'USDC', version: '2', explorerTx: 'https://sepolia.basescan.org/tx/', faucet: 'https://faucet.circle.com' },
+export type ChainInfo = {
+  label: string
+  chainId: number
+  /** x402 v1 network name */
+  v1: string
+  usdc: string
+  /** EIP-712 domain of the USDC contract (for self-signed EIP-3009 authorizations) */
+  name: string
+  version: string
+  explorerTx: string
+  faucet?: string
+  /** a public facilitator that broadcasts x402 authorizations for this network. Info only; we never call it. */
+  facilitator: string
 }
+
+export const CHAINS: Record<X402Network, ChainInfo> = {
+  'eip155:8453': { label: 'Base', chainId: 8453, v1: 'base', usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', name: 'USD Coin', version: '2', explorerTx: 'https://basescan.org/tx/', facilitator: 'https://facilitator.payai.network' },
+  'eip155:84532': { label: 'Base Sepolia (testnet)', chainId: 84532, v1: 'base-sepolia', usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', name: 'USDC', version: '2', explorerTx: 'https://sepolia.basescan.org/tx/', faucet: 'https://faucet.circle.com', facilitator: 'https://x402.org/facilitator' },
+}
+
+/** keccak256("Transfer(address,address,uint256)") */
+export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
 export const USDC_DECIMALS = 6
 export const CURRENCY = 'USDC'
@@ -22,7 +42,11 @@ export function networkFor(env: Env): X402Network {
   return NETWORKS[env]
 }
 
-/** "250000" -> "0.250000 USDC" */
+export function chainFor(env: Env): ChainInfo {
+  return CHAINS[networkFor(env)]
+}
+
+/** 250000 -> "0.250000 USDC" */
 export function formatUsdc(minor: number | null | undefined): string {
   if (minor == null) return 'quote'
   const neg = minor < 0
@@ -47,110 +71,34 @@ export type PaymentRequiredV2 = {
   resource: { url: string; description: string; mimeType: string }
   accepts: RequirementsV2[]
 }
-export type RequirementsV1 = {
-  scheme: 'exact'
-  network: string
-  maxAmountRequired: string
-  resource: string
-  description: string
-  mimeType: string
-  payTo: string
-  maxTimeoutSeconds: number
+
+export type PaymentTerms = {
+  network: X402Network
+  chainId: number
+  amount: number
   asset: string
-  extra: { name: string; version: string }
+  payTo: string
+  facilitator: string
+  x402: PaymentRequiredV2
 }
-export type PaymentRequiredV1 = { x402Version: 1; error?: string; accepts: RequirementsV1[] }
 
-export type BuiltRequirements = { v2: PaymentRequiredV2; v1: PaymentRequiredV1; network: X402Network; amount: string; asset: string; payTo: string }
-
-export function buildRequirements(input: { env: Env; amount: number; payTo: string; resourceUrl: string; description: string; maxTimeoutSeconds?: number; error?: string }): BuiltRequirements {
+/** Everything a buyer needs to pay a job on its own. payTo is ALWAYS the seller's wallet. */
+export function paymentTerms(input: { env: Env; amount: number; payTo: string; resourceUrl: string; description: string; maxTimeoutSeconds?: number }): PaymentTerms {
   const network = networkFor(input.env)
   const chain = CHAINS[network]
-  const amount = String(input.amount)
-  const timeout = input.maxTimeoutSeconds ?? 900
-  const v2: PaymentRequiredV2 = {
+  const x402: PaymentRequiredV2 = {
     x402Version: 2,
-    ...(input.error ? { error: input.error } : {}),
     resource: { url: input.resourceUrl, description: input.description, mimeType: 'application/json' },
-    accepts: [{ scheme: 'exact', network, amount, asset: chain.usdc, payTo: input.payTo, maxTimeoutSeconds: timeout, extra: { name: chain.name, version: chain.version } }],
+    accepts: [{ scheme: 'exact', network, amount: String(input.amount), asset: chain.usdc, payTo: input.payTo, maxTimeoutSeconds: input.maxTimeoutSeconds ?? 900, extra: { name: chain.name, version: chain.version } }],
   }
-  const v1: PaymentRequiredV1 = {
-    x402Version: 1,
-    ...(input.error ? { error: input.error } : {}),
-    accepts: [{ scheme: 'exact', network: chain.v1, maxAmountRequired: amount, resource: input.resourceUrl, description: input.description, mimeType: 'application/json', payTo: input.payTo, maxTimeoutSeconds: timeout, asset: chain.usdc, extra: { name: chain.name, version: chain.version } }],
-  }
-  return { v2, v1, network, amount, asset: chain.usdc, payTo: input.payTo }
+  return { network, chainId: chain.chainId, amount: input.amount, asset: chain.usdc, payTo: input.payTo, facilitator: chain.facilitator, x402 }
 }
 
-export const b64json = {
-  encode(value: unknown): string {
-    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
-  },
-  decode<T = unknown>(raw: string): T {
-    return JSON.parse(Buffer.from(raw.trim(), 'base64').toString('utf8')) as T
-  },
-}
-
-export type PaymentPayload = {
-  x402Version: number
-  scheme?: string
-  network?: string
-  /** v2: the PaymentRequirements the client selected */
-  accepted?: Partial<RequirementsV2>
-  payload: unknown
-  resource?: unknown
-}
-
-export type ReadPayment = { version: 1 | 2; payload: PaymentPayload; raw: string; header: 'payment-signature' | 'x-payment' }
-
-/** Reads PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1). Returns undefined when neither is present. */
-export function readPaymentHeader(get: (name: string) => string | undefined): ReadPayment | undefined {
-  const v2 = get('payment-signature')
-  const v1 = get('x-payment')
-  const raw = v2 ?? v1
-  if (!raw) return undefined
-  const header = v2 ? 'payment-signature' : 'x-payment'
-  let payload: PaymentPayload
-  try {
-    payload = b64json.decode<PaymentPayload>(raw)
-  } catch {
-    throw new ApiError('payment_error', 'payment_header_malformed', `The ${header.toUpperCase()} header is not base64-encoded JSON.`, { hint: 'Send the x402 PaymentPayload as base64(JSON) in PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1). Any x402 client library does this for you.' })
-  }
-  if (!payload || typeof payload !== 'object' || typeof payload.payload !== 'object') {
-    throw new ApiError('payment_error', 'payment_header_malformed', `The ${header.toUpperCase()} header does not contain an x402 PaymentPayload.`, { hint: 'Expected {x402Version, accepted|scheme+network, payload:{signature, authorization}}.' })
-  }
-  const version = payload.x402Version === 1 ? 1 : payload.x402Version === 2 ? 2 : header === 'x-payment' ? 1 : 2
-  return { version, payload, raw, header }
-}
-
-export function requirementsForVersion(built: BuiltRequirements, version: 1 | 2): RequirementsV1 | RequirementsV2 {
-  return version === 1 ? built.v1.accepts[0]! : built.v2.accepts[0]!
-}
-
-/** Cheap consistency check before touching the facilitator: the client must be paying THIS job's terms. */
-export function assertPayloadMatches(read: ReadPayment, built: BuiltRequirements): void {
-  const p = read.payload
-  const chain = CHAINS[built.network]
-  const network = p.accepted?.network ?? p.network
-  if (network && network !== built.network && network !== chain.v1) {
-    throw new ApiError('payment_error', 'payment_invalid', `Payment is for network '${network}', this job settles on ${built.network} (${chain.label}).`, { hint: `Sign the authorization on ${built.network} (v1 name "${chain.v1}") and retry.` })
-  }
-  const acc = p.accepted
-  if (acc) {
-    if (acc.payTo && acc.payTo.toLowerCase() !== built.payTo.toLowerCase()) throw new ApiError('payment_error', 'payment_invalid', 'accepted.payTo does not match the seller address of this job.', { hint: 'Re-fetch the requirements (POST the pay URL without a payment header) and sign for the returned payTo.' })
-    if (acc.amount && acc.amount !== built.amount) throw new ApiError('payment_error', 'payment_invalid', `accepted.amount is ${acc.amount}, the job requires exactly ${built.amount}.`, { hint: 'Sign an authorization for exactly the required amount.' })
-    if (acc.asset && acc.asset.toLowerCase() !== built.asset.toLowerCase()) throw new ApiError('payment_error', 'payment_invalid', 'accepted.asset is not the USDC contract for this network.', { hint: `Use asset ${built.asset}.` })
-  }
-  const auth = (p.payload as { authorization?: { to?: string; value?: string } } | null)?.authorization
-  if (auth?.to && auth.to.toLowerCase() !== built.payTo.toLowerCase()) throw new ApiError('payment_error', 'payment_invalid', 'authorization.to does not match the seller address of this job.', { hint: 'The signed transfer must go to payTo from the requirements.' })
-  if (auth?.value && String(auth.value) !== built.amount) throw new ApiError('payment_error', 'payment_invalid', `authorization.value is ${auth.value}, the job requires exactly ${built.amount}.`, { hint: 'Sign for exactly the required amount (USDC minor units).' })
-}
-
-export type SettleResponse = { success: boolean; transaction?: string; network?: string; payer?: string; errorReason?: string }
-
-export function settleResponseHeaders(r: SettleResponse): Record<string, string> {
-  const v2 = b64json.encode({ success: r.success, transaction: r.transaction ?? '', network: r.network ?? null, payer: r.payer ?? null, ...(r.errorReason ? { errorReason: r.errorReason } : {}) })
-  return { 'PAYMENT-RESPONSE': v2, 'X-PAYMENT-RESPONSE': v2 }
+/** Detects an x402 payment header. We do not settle it (ADR-22); the caller answers with self-settlement guidance. */
+export function paymentHeaderPresent(get: (name: string) => string | undefined): 'payment-signature' | 'x-payment' | undefined {
+  if (get('payment-signature')) return 'payment-signature'
+  if (get('x-payment')) return 'x-payment'
+  return undefined
 }
 
 export function explorerTxUrl(network: string, tx: string | null | undefined): string | null {

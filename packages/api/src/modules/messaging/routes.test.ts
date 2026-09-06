@@ -77,7 +77,7 @@ describe('messaging', () => {
     expect(inboxB.body.unread_threads[0].kind).toBe('job')
     const msgs = await call(app, 'GET', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test })
     expect(msgs.body.data[0].sender.id).toBe('system')
-    expect(msgs.body.data[0].body).toContain('escrow')
+    expect(msgs.body.data[0].body).toContain('sealed')
     const reply = await call(app, 'POST', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test, body: { body: 'on it' } })
     expect(reply.status).toBe(201)
     const inboxA = await call(app, 'GET', '/v1/inbox', { key: a.api_keys.test })

@@ -1,16 +1,18 @@
 import { and, desc, eq, gt, gte, like, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, bounties, bountyProposals, type Env } from '../../db/schema.js'
+import { agents, bounties, bountyProposals, type Env, type PaymentTiming } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { scanFields, scanJson } from '../../lib/content-safety.js'
+import { searchTerms } from '../../lib/search.js'
 import { emit, publishFeed } from '../../events/bus.js'
 import { registerSweep } from '../../lib/scheduler.js'
 import { createJobFromBountyAward, type Job } from '../jobs/service.js'
-import { searchTerms } from '../listings/service.js'
+import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
+import { sameAddress } from '../payments/address.js'
 import type { Agent } from '../../middleware/auth.js'
 
-/** Bounties: the reverse marketplace (SPEC §3). Buyer posts a need; sellers propose; award creates an escrowed job. */
+/** Bounties: the reverse marketplace (SPEC §3). Buyer posts a need; sellers propose; award starts a job paid wallet-to-wallet. */
 
 export type Bounty = typeof bounties.$inferSelect
 export type Proposal = typeof bountyProposals.$inferSelect
@@ -49,7 +51,7 @@ export async function createBounty(env: Env, buyer: Agent, input: CreateBountyIn
     updatedAt: now,
   }
   await db().insert(bounties).values(row)
-  await publishFeed(env, 'bounty.created', { bounty_id: row.id, title: row.title, category: row.category, budget_max: row.budgetMax, buyer_handle: buyer.handle })
+  await publishFeed(env, 'bounty.created', { bounty_id: row.id, title: row.title, category: row.category, budget_max: row.budgetMax, currency: 'USDC', buyer_handle: buyer.handle })
   return row as Bounty
 }
 
@@ -83,27 +85,29 @@ function assertOpen(b: Bounty, now = Date.now()) {
   if (b.status !== 'open' || b.expiresAt <= now) throw errors.state('bounty_closed', `Bounty '${b.id}' is ${b.status === 'open' ? 'expired' : b.status}.`, 'Find open bounties with GET /v1/bounties.')
 }
 
-export async function createProposal(env: Env, seller: Agent, bountyId: string, price: number, message?: string): Promise<{ proposal: Proposal; updated: boolean }> {
+export async function createProposal(env: Env, seller: Agent, bountyId: string, price: number, message?: string, payment: PaymentTiming = 'on_delivery'): Promise<{ proposal: Proposal; updated: boolean }> {
   const b = await getBounty(env, bountyId)
   assertOpen(b)
   if (b.buyerAgentId === seller.id) throw errors.validation('You cannot propose on your own bounty.', 'bounty_id')
-  if (price > b.budgetMax) throw errors.validation(`price exceeds the bounty budget (max ${b.budgetMax} CRD).`, 'price', 'Propose at or below budget_max, or message the buyer to discuss scope.')
+  if (price > b.budgetMax) throw errors.validation(`price exceeds the bounty budget (max ${b.budgetMax} USDC minor units).`, 'price', 'Propose at or below budget_max, or message the buyer to discuss scope.')
+  if (price > 0) assertWalletAddress(seller, 'propose a paid price (the buyer pays USDC to it)')
+  assertUpfrontAllowed(seller, env, payment)
   const scan = scanFields(message)
   rejectHigh(scan, 'message')
   const now = Date.now()
   const existing = await db().query.bountyProposals.findFirst({ where: and(eq(bountyProposals.bountyId, b.id), eq(bountyProposals.sellerAgentId, seller.id)) })
   if (existing) {
     if (existing.status !== 'pending' && existing.status !== 'withdrawn') throw errors.state('proposal_final', `Your proposal is already ${existing.status}.`)
-    await db().update(bountyProposals).set({ price, message: message?.trim().slice(0, 2000) ?? null, status: 'pending', contentWarnings: scan.warnings, updatedAt: now }).where(eq(bountyProposals.id, existing.id))
+    await db().update(bountyProposals).set({ price, payment, message: message?.trim().slice(0, 2000) ?? null, status: 'pending', contentWarnings: scan.warnings, updatedAt: now }).where(eq(bountyProposals.id, existing.id))
     if (existing.status === 'withdrawn') await db().update(bounties).set({ proposalCount: sql`${bounties.proposalCount} + 1`, updatedAt: now }).where(eq(bounties.id, b.id))
     const proposal = (await db().query.bountyProposals.findFirst({ where: eq(bountyProposals.id, existing.id) }))!
-    await emit(env, b.buyerAgentId, 'bounty.proposal_received', { bounty_id: b.id, proposal_id: proposal.id, seller_id: seller.id, seller_handle: seller.handle, price, updated: true })
+    await emit(env, b.buyerAgentId, 'bounty.proposal_received', { bounty_id: b.id, proposal_id: proposal.id, seller_id: seller.id, seller_handle: seller.handle, price, payment, updated: true })
     return { proposal, updated: true }
   }
-  const row: typeof bountyProposals.$inferInsert = { id: newId('request'), bountyId: b.id, sellerAgentId: seller.id, price, message: message?.trim().slice(0, 2000) ?? null, status: 'pending', contentWarnings: scan.warnings, createdAt: now, updatedAt: now }
+  const row: typeof bountyProposals.$inferInsert = { id: newId('request'), bountyId: b.id, sellerAgentId: seller.id, price, payment, message: message?.trim().slice(0, 2000) ?? null, status: 'pending', contentWarnings: scan.warnings, createdAt: now, updatedAt: now }
   await db().insert(bountyProposals).values(row)
   await db().update(bounties).set({ proposalCount: sql`${bounties.proposalCount} + 1`, updatedAt: now }).where(eq(bounties.id, b.id))
-  await emit(env, b.buyerAgentId, 'bounty.proposal_received', { bounty_id: b.id, proposal_id: row.id, seller_id: seller.id, seller_handle: seller.handle, price, message: row.message, content_warnings: scan.warnings, updated: false })
+  await emit(env, b.buyerAgentId, 'bounty.proposal_received', { bounty_id: b.id, proposal_id: row.id, seller_id: seller.id, seller_handle: seller.handle, price, payment, message: row.message, content_warnings: scan.warnings, updated: false })
   return { proposal: row as Proposal, updated: false }
 }
 
@@ -137,12 +141,14 @@ export async function awardBounty(env: Env, buyer: Agent, bountyId: string, prop
   if (p.status !== 'pending') throw errors.state('proposal_not_pending', `Proposal is ${p.status}.`)
   const seller = await db().query.agents.findFirst({ where: eq(agents.id, p.sellerAgentId) })
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The proposing agent is no longer active.')
-  const job = await createJobFromBountyAward({ env, bountyId: b.id, buyerAgentId: buyer.id, sellerAgentId: p.sellerAgentId, title: b.title, input: { ...(b.input ?? {}), bounty_description: b.description }, price: p.price, turnaroundSeconds })
+  if (p.price > 0 && !seller.walletAddress) throw errors.state('seller_has_no_wallet_address', 'The proposing agent has no wallet address, so it cannot be paid.', 'Ask the seller to set one (POST /v1/agents/me/wallet-address) or award another proposal.')
+  if (p.price > 0 && buyer.walletAddress && seller.walletAddress && sameAddress(buyer.walletAddress, seller.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'proposal_id', 'Self-dealing does not build reputation.')
+  const job = await createJobFromBountyAward({ env, bountyId: b.id, buyerAgentId: buyer.id, sellerAgentId: p.sellerAgentId, title: b.title, input: { ...(b.input ?? {}), bounty_description: b.description }, price: p.price, payment: p.payment, turnaroundSeconds })
   const now = Date.now()
   await db().update(bountyProposals).set({ status: 'accepted', updatedAt: now }).where(eq(bountyProposals.id, p.id))
   await db().update(bountyProposals).set({ status: 'rejected', updatedAt: now }).where(and(eq(bountyProposals.bountyId, b.id), eq(bountyProposals.status, 'pending')))
   await db().update(bounties).set({ status: 'awarded', awardedJobId: job.id, updatedAt: now }).where(eq(bounties.id, b.id))
-  await emit(env, p.sellerAgentId, 'bounty.awarded', { bounty_id: b.id, proposal_id: p.id, job_id: job.id, price: p.price, buyer_id: buyer.id })
+  await emit(env, p.sellerAgentId, 'bounty.awarded', { bounty_id: b.id, proposal_id: p.id, job_id: job.id, price: p.price, payment: p.payment, buyer_id: buyer.id })
   return { bounty: (await db().query.bounties.findFirst({ where: eq(bounties.id, b.id) }))!, job }
 }
 

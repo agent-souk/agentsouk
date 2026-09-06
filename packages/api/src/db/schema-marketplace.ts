@@ -77,6 +77,10 @@ export type JobStatus = (typeof JOB_STATUSES)[number]
 /** Arbiter verdict (ADR-21): reputational only, no money moves. */
 export type JobResolution = { outcome: 'buyer' | 'seller' | 'split'; note: string; by: string }
 
+/** Why a job was cancelled; drives reputation (buyer_walked_away is not a mark, seller_failed / buyer_after_deadline are seller failures). */
+export const CANCEL_KINDS = ['buyer_withdrew', 'buyer_walked_away', 'buyer_after_deadline', 'seller_failed'] as const
+export type CancelKind = (typeof CANCEL_KINDS)[number]
+
 export const jobs = sqliteTable(
   'jobs',
   {
@@ -118,7 +122,12 @@ export const jobs = sqliteTable(
     outputPreview: text('output_preview', { mode: 'json' }).$type<unknown>(),
     /** true when the job expired because the buyer never paid */
     unpaid: integer('unpaid', { mode: 'boolean' }).notNull().default(false),
+    /** the seller owes the buyer a refund (seller failure after payment, arbiter verdict, orphaned payment) */
+    refundDue: integer('refund_due', { mode: 'boolean' }).notNull().default(false),
+    refundSettlementId: text('refund_settlement_id'),
+    refundedAt: integer('refunded_at'),
     cancelReason: text('cancel_reason'),
+    cancelKind: text('cancel_kind').$type<CancelKind>(),
     disputeReason: text('dispute_reason'),
     resolution: text('resolution', { mode: 'json' }).$type<JobResolution>(),
     threadId: text('thread_id'),
@@ -137,11 +146,12 @@ export const jobs = sqliteTable(
   ],
 )
 
-// --- settlements (ADR-21): the only money record. One row per on-chain payment the platform witnessed. -----
+// --- settlements (ADR-21/22): the only money record. One row per on-chain transfer the platform verified. ---
 
 export const SETTLEMENT_KINDS = ['payment', 'refund'] as const
 export type SettlementKind = (typeof SETTLEMENT_KINDS)[number]
-export type SettlementStatus = 'pending' | 'settled' | 'failed'
+/** settled = applied to the job; orphaned = valid transfer for a job that was no longer payable (refund due) */
+export type SettlementStatus = 'settled' | 'orphaned'
 
 export const settlements = sqliteTable(
   'settlements',
@@ -154,26 +164,26 @@ export const settlements = sqliteTable(
     kind: text('kind').$type<SettlementKind>().notNull(),
     payerAgentId: text('payer_agent_id').notNull(),
     payeeAgentId: text('payee_agent_id').notNull(),
-    /** payer wallet as reported by the facilitator */
-    payerAddress: text('payer_address'),
+    /** sender wallet as seen in the on-chain Transfer log */
+    payerAddress: text('payer_address').notNull(),
     payTo: text('pay_to').notNull(),
-    /** USDC minor units */
+    /** USDC minor units actually transferred */
     amount: integer('amount').notNull(),
+    /** USDC minor units the job asked for */
+    expectedAmount: integer('expected_amount').notNull(),
     /** token contract */
     asset: text('asset').notNull(),
     /** CAIP-2, e.g. eip155:8453 */
     network: text('network').notNull(),
-    scheme: text('scheme').notNull(),
-    x402Version: integer('x402_version').notNull(),
-    facilitator: text('facilitator').notNull(),
-    /** on-chain transaction hash once settled */
-    transaction: text('transaction'),
-    status: text('status').$type<SettlementStatus>().notNull().default('pending'),
-    error: text('error'),
+    /** on-chain transaction hash; one hash can only ever pay one thing */
+    transaction: text('transaction').notNull(),
+    blockNumber: integer('block_number').notNull(),
+    blockTimestamp: integer('block_timestamp').notNull(),
+    status: text('status').$type<SettlementStatus>().notNull().default('settled'),
     createdAt: integer('created_at').notNull(),
-    settledAt: integer('settled_at'),
+    settledAt: integer('settled_at').notNull(),
   },
-  (t) => [index('settlements_job').on(t.jobId), index('settlements_payer').on(t.payerAgentId, t.id), index('settlements_payee').on(t.payeeAgentId, t.id), index('settlements_tx').on(t.transaction)],
+  (t) => [uniqueIndex('settlements_tx').on(t.transaction), index('settlements_job').on(t.jobId), index('settlements_payer').on(t.payerAgentId, t.id), index('settlements_payee').on(t.payeeAgentId, t.id)],
 )
 
 export const jobEvents = sqliteTable(
@@ -321,10 +331,19 @@ export type ReputationSide = {
   jobs_failed: number
   jobs_disputed: number
   jobs_cancelled: number
-  /** buyer side only: jobs that expired because this agent never paid */
+  /** buyer: jobs that expired because this agent never paid (counts like a cancellation) */
   jobs_unpaid: number
+  /** buyer: sealed deliveries this agent declined to pay for (informational, not scored) */
+  jobs_walked_away: number
+  /** seller: sealed deliveries that were never paid (walk-away or expiry) */
+  deliveries_unpaid: number
+  /** seller: refunds owed and not yet made on-chain (counts like a failed job) */
+  refunds_due: number
+  /** seller: refunds made on-chain */
+  refunds_made: number
+  /** distinct counterparty wallet addresses (paid jobs) plus distinct agent ids (free jobs) */
   distinct_counterparties: number
-  /** USDC minor units settled on-chain */
+  /** USDC minor units settled on-chain (payments minus refunds) */
   volume_usdc: number
   rating_avg: number | null
   rating_count: number

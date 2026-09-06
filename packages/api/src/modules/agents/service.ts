@@ -8,7 +8,7 @@ import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { normalizeEvmAddress } from '../payments/address.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
-import { searchTerms } from '../listings/service.js'
+import { searchTerms } from '../../lib/search.js'
 
 export type CreateAgentInput = {
   name: string
@@ -21,8 +21,8 @@ export type CreateAgentInput = {
   framework?: string
   referred_by?: string
   metadata?: Record<string, unknown>
-  /** EVM address that receives USDC for this agent's sales (ADR-21). */
-  payout_address?: string
+  /** The agent's EVM wallet: receives USDC as seller, pays from it as buyer (ADR-22). */
+  wallet_address?: string
 }
 
 export type CreateAgentResult = {
@@ -31,11 +31,11 @@ export type CreateAgentResult = {
   keypair?: { public_key: string; secret_key: string }
 }
 
-/** Validates and checksums a payout address; throws an agent-friendly error otherwise. */
-export function requirePayoutAddress(input: unknown): string {
+/** Validates and checksums a wallet address; throws an agent-friendly error otherwise. */
+export function requireWalletAddress(input: unknown): string {
   const addr = normalizeEvmAddress(input)
   if (!addr) {
-    throw errors.validation('payout_address must be an EVM address: 0x followed by 40 hex characters (all-lowercase or with a valid EIP-55 checksum).', 'payout_address', 'This is where USDC for your sales is sent (Base mainnet for live keys, Base Sepolia for test keys). Use an address you control; the platform never holds funds.')
+    throw errors.validation('wallet_address must be an EVM address: 0x followed by 40 hex characters (all-lowercase or with a valid EIP-55 checksum).', 'wallet_address', 'This is the wallet you receive USDC in as a seller and pay from as a buyer (Base for live keys, Base Sepolia for test keys). Use an address you control; the platform never holds funds.')
   }
   return addr
 }
@@ -147,7 +147,7 @@ export async function createAgent(input: CreateAgentInput): Promise<CreateAgentR
     did: didKeyFromPublicKey(publicKey),
     endpoints: input.endpoints ?? {},
     framework: input.framework ?? null,
-    payoutAddress: input.payout_address !== undefined && input.payout_address !== null ? requirePayoutAddress(input.payout_address) : null,
+    walletAddress: input.wallet_address !== undefined && input.wallet_address !== null ? requireWalletAddress(input.wallet_address) : null,
     trustTier: 0,
     status: 'active',
     referredBy,
@@ -243,27 +243,42 @@ export async function rotateKey(agent: Agent, newPublicKeyInput: string, proofHe
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
-export function payoutMessage(agentId: string, address: string): string {
-  return `agentsouk:payout:${agentId}:${address.toLowerCase()}`
+export function walletMessage(agentId: string, address: string): string {
+  return `agentsouk:wallet:${agentId}:${address.toLowerCase()}`
 }
 
 /**
- * Set or change the payout address (ADR-21 §2). Changing an existing address needs a proof signed by the
+ * Set or change the wallet address (ADR-22 §2). Changing an existing address needs a proof signed by the
  * agent's Ed25519 secret key, so a leaked API key can never redirect payments. First-time set is allowed
  * with the API key alone (bootstrap).
  */
-export async function setPayoutAddress(agent: Agent, addressInput: unknown, proofHex: string | undefined): Promise<Agent> {
-  const address = requirePayoutAddress(addressInput)
-  if (agent.payoutAddress && agent.payoutAddress.toLowerCase() === address.toLowerCase()) return agent
-  if (agent.payoutAddress) {
-    if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, payoutMessage(agent.id, address), agent.publicKey)) {
-      throw errors.validation('proof is required to change an existing payout address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${payoutMessage(agent.id, address)}" with your secret key (hex Ed25519 signature) and send it as proof. This protects your income if an API key leaks.`)
+export async function setWalletAddress(agent: Agent, addressInput: unknown, proofHex: string | undefined): Promise<Agent> {
+  const address = requireWalletAddress(addressInput)
+  if (agent.walletAddress && agent.walletAddress.toLowerCase() === address.toLowerCase()) return agent
+  if (agent.walletAddress) {
+    if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, walletMessage(agent.id, address), agent.publicKey)) {
+      throw errors.validation('proof is required to change an existing wallet address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${walletMessage(agent.id, address)}" with your secret key (hex Ed25519 signature) and send it as proof. This protects your income if an API key leaks.`)
     }
   }
   const now = Date.now()
-  await db().update(agents).set({ payoutAddress: address, updatedAt: now }).where(eq(agents.id, agent.id))
-  await emit('live', agent.id, 'agent.payout_address_changed', { previous: agent.payoutAddress, address, hint: 'If you did not do this, rotate your key (POST /v1/agents/me/rotate-key) and set the address again.' })
+  await db().update(agents).set({ walletAddress: address, updatedAt: now }).where(eq(agents.id, agent.id))
+  await emit('live', agent.id, 'agent.wallet_address_changed', { previous: agent.walletAddress, address, hint: 'If you did not do this, rotate your key (POST /v1/agents/me/rotate-key) and set the address again.' })
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
+}
+
+/** 409 with a hint when an agent needs a wallet for what it is about to do. Returns the address. */
+export function assertWalletAddress(agent: Pick<Agent, 'walletAddress'>, purpose: string): string {
+  if (!agent.walletAddress) {
+    throw errors.state('wallet_address_required', `You need a wallet_address to ${purpose}.`, 'Set the EVM address you control (receives USDC as seller, pays from it as buyer): POST /v1/agents/me/wallet-address {"address":"0x..."}. Details: GET /v1/payments.')
+  }
+  return agent.walletAddress
+}
+
+/** upfront payment (buyer pays before delivery) is reserved for proven sellers in the live environment (ADR-22 §7). */
+export function assertUpfrontAllowed(agent: Pick<Agent, 'trustTier'>, env: Env, payment: string | undefined): void {
+  if (payment === 'upfront' && env === 'live' && agent.trustTier < 1) {
+    throw errors.state('upfront_requires_trust', 'upfront payment is only available to sellers with trust tier 1 or higher in the live environment.', 'Use payment "on_delivery" (the buyer pays against your sealed delivery) until you reach tier 1: 5 completed live jobs with 3 distinct paying counterparties. The sandbox allows upfront for testing.')
+  }
 }
 
 export async function listKeys(agentId: string): Promise<ApiKey[]> {

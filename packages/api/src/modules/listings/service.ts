@@ -1,29 +1,18 @@
 import { and, asc, desc, eq, inArray, like, lt, lte, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, reviews, type Env, type ListingStats, type PricingModel } from '../../db/schema.js'
+import { agents, jobs, listings, reviews, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { scanFields } from '../../lib/content-safety.js'
+import { searchTerms } from '../../lib/search.js'
 import { publishFeed } from '../../events/bus.js'
+import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
+import { isCompletedJob, isSellerFailure, paidValue } from '../jobs/outcomes.js'
 import type { Agent } from '../../middleware/auth.js'
 
 export type Listing = typeof listings.$inferSelect
 
-/**
- * Multi-word search: every word must match somewhere (AND across words, OR across fields).
- * Returns LIKE patterns; empty for blank queries. Shared by listings, bounties and agents search.
- */
-export function searchTerms(q: string | undefined): string[] {
-  if (!q) return []
-  return q
-    .toLowerCase()
-    .replace(/[%_]/g, ' ')
-    .split(/[\s,+]+/)
-    .map((w) => w.trim())
-    .filter((w) => w.length >= 2)
-    .slice(0, 8)
-    .map((w) => `%${w}%`)
-}
+export { searchTerms }
 
 export const MAX_ACTIVE_LISTINGS = 50
 export const GRADUATION = { minJobs: 5, minBuyers: 3, minRating: 3.5 }
@@ -35,7 +24,7 @@ export const emptyStats = (): ListingStats => ({
   rating_avg: null,
   rating_count: 0,
   median_turnaround_seconds: null,
-  volume_crd: 0,
+  volume_usdc: 0,
 })
 
 export type CreateListingInput = {
@@ -46,6 +35,7 @@ export type CreateListingInput = {
   pricing_model: PricingModel
   price?: number | null
   unit_name?: string | null
+  payment?: PaymentTiming
   input_schema?: Record<string, unknown> | null
   output_schema?: Record<string, unknown> | null
   example_input?: unknown
@@ -69,12 +59,17 @@ function validatePricing(model: PricingModel, price: number | null | undefined, 
     if (price != null) throw errors.validation('Quote-priced listings must not set a price; the seller quotes per job.', 'price', 'Omit price, or use pricing_model "fixed".')
     return { price: null, unitName: null }
   }
-  if (price == null || !Number.isInteger(price) || price < 0) throw errors.validation(`pricing_model "${model}" requires an integer price >= 0 in CRD.`, 'price', '1000 CRD = 1 USD.')
+  if (price == null || !Number.isInteger(price) || price < 0) throw errors.validation(`pricing_model "${model}" requires an integer price >= 0 in USDC minor units.`, 'price', '1000000 = 1 USDC, 10000 = 0.01 USDC. 0 = free.')
   if (model === 'per_unit') {
     if (!unitName || !unitName.trim()) throw errors.validation('per_unit pricing requires unit_name (e.g. "1k_tokens", "page", "minute").', 'unit_name')
     return { price, unitName: unitName.trim().toLowerCase().slice(0, 32) }
   }
   return { price, unitName: null }
+}
+
+/** Free fixed/per-unit listings can be sold without a wallet; everything else gets paid, so a wallet is needed. */
+function needsWallet(model: PricingModel, price: number | null): boolean {
+  return model === 'quote' || (price ?? 0) > 0
 }
 
 function assertContent(...texts: (string | null | undefined)[]): string[] {
@@ -94,6 +89,9 @@ export async function createListing(env: Env, seller: Agent, input: CreateListin
     throw errors.state('listing_limit', `You already have ${MAX_ACTIVE_LISTINGS} active listings in this environment.`, 'Archive or pause old listings (DELETE /v1/listings/{id}) before creating new ones.')
   }
   const { price, unitName } = validatePricing(input.pricing_model, input.price, input.unit_name)
+  const payment: PaymentTiming = input.payment ?? 'on_delivery'
+  if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
+  assertUpfrontAllowed(seller, env, payment)
   const warnings = assertContent(input.title, input.description)
   const now = Date.now()
   const row: typeof listings.$inferInsert = {
@@ -107,6 +105,7 @@ export async function createListing(env: Env, seller: Agent, input: CreateListin
     pricingModel: input.pricing_model,
     price,
     unitName,
+    payment,
     inputSchema: input.input_schema ?? null,
     outputSchema: input.output_schema ?? null,
     exampleInput: input.example_input ?? null,
@@ -122,24 +121,32 @@ export async function createListing(env: Env, seller: Agent, input: CreateListin
     updatedAt: now,
   }
   await db().insert(listings).values(row)
-  await publishFeed(env, 'listing.created', { listing_id: row.id, title: row.title, category: row.category, seller_handle: seller.handle, pricing_model: row.pricingModel, price: row.price })
+  await publishFeed(env, 'listing.created', { listing_id: row.id, title: row.title, category: row.category, seller_handle: seller.handle, pricing_model: row.pricingModel, price: row.price, currency: 'USDC', payment })
   return row as Listing
 }
 
 export type UpdateListingInput = Partial<CreateListingInput> & { status?: 'active' | 'paused' }
 
-export async function updateListing(env: Env, sellerId: string, id: string, patch: UpdateListingInput): Promise<Listing> {
-  const l = await db().query.listings.findFirst({ where: and(eq(listings.id, id), eq(listings.env, env), eq(listings.sellerAgentId, sellerId)) })
+export async function updateListing(env: Env, seller: Agent, id: string, patch: UpdateListingInput): Promise<Listing> {
+  const l = await db().query.listings.findFirst({ where: and(eq(listings.id, id), eq(listings.env, env), eq(listings.sellerAgentId, seller.id)) })
   if (!l) throw errors.notFound('Listing', id, 'Only the seller can edit a listing. GET /v1/agents/me/listings shows yours.')
   if (l.status === 'archived') throw errors.state('listing_archived', 'Archived listings cannot be edited.', 'Create a new listing with POST /v1/listings.')
   const set: Partial<typeof listings.$inferInsert> = { updatedAt: Date.now() }
   const model = patch.pricing_model ?? l.pricingModel
+  let price = l.price
   if (patch.pricing_model !== undefined || patch.price !== undefined || patch.unit_name !== undefined) {
-    const { price, unitName } = validatePricing(model, patch.price !== undefined ? patch.price : l.price, patch.unit_name !== undefined ? patch.unit_name : l.unitName)
+    const v = validatePricing(model, patch.price !== undefined ? patch.price : l.price, patch.unit_name !== undefined ? patch.unit_name : l.unitName)
+    price = v.price
     set.pricingModel = model
-    set.price = price
-    set.unitName = unitName
+    set.price = v.price
+    set.unitName = v.unitName
   }
+  if (patch.payment !== undefined) {
+    assertUpfrontAllowed(seller, env, patch.payment)
+    set.payment = patch.payment
+  }
+  const willBeActive = patch.status === 'active' || (patch.status === undefined && l.status === 'active')
+  if (willBeActive && needsWallet(model, price) && (patch.status !== undefined || patch.price !== undefined || patch.pricing_model !== undefined)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
   if (patch.title !== undefined || patch.description !== undefined) {
     set.contentWarnings = assertContent(patch.title ?? l.title, patch.description ?? l.description)
     if (patch.title !== undefined) set.title = patch.title.trim()
@@ -156,7 +163,7 @@ export async function updateListing(env: Env, sellerId: string, id: string, patc
   if (patch.max_open_jobs !== undefined) set.maxOpenJobs = patch.max_open_jobs
   if (patch.status !== undefined) {
     if (patch.status === 'active' && l.status !== 'active') {
-      const active = await db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, sellerId), eq(listings.status, 'active')))
+      const active = await db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, seller.id), eq(listings.status, 'active')))
       if ((active[0]?.n ?? 0) >= MAX_ACTIVE_LISTINGS) throw errors.state('listing_limit', `You already have ${MAX_ACTIVE_LISTINGS} active listings.`)
     }
     set.status = patch.status
@@ -190,6 +197,7 @@ export type SearchListingsInput = {
   seller?: string
   max_price?: number
   pricing_model?: PricingModel
+  payment?: PaymentTiming
   graduated?: boolean
   sort?: 'relevance' | 'newest' | 'cheapest' | 'rating'
   limit: number
@@ -210,6 +218,7 @@ export async function searchListings(env: Env, input: SearchListingsInput): Prom
   }
   if (input.max_price !== undefined) conds.push(or(lte(listings.price, input.max_price), eq(listings.pricingModel, 'quote'))!)
   if (input.pricing_model) conds.push(eq(listings.pricingModel, input.pricing_model))
+  if (input.payment) conds.push(eq(listings.payment, input.payment))
   if (input.graduated) conds.push(eq(listings.graduated, true))
 
   const sort = input.sort ?? 'relevance'
@@ -273,8 +282,8 @@ export async function recomputeListingStats(listingId: string): Promise<ListingS
   const l = await db().query.listings.findFirst({ where: eq(listings.id, listingId) })
   if (!l) return undefined
   const rows = await db().query.jobs.findMany({ where: eq(jobs.listingId, listingId) })
-  const completed = rows.filter((j) => j.status === 'completed' || (j.status === 'resolved' && (j.resolution?.seller_payout ?? 0) > 0))
-  const failed = rows.filter((j) => ((j.status === 'cancelled' || j.status === 'expired') && j.acceptedAt != null) || (j.status === 'resolved' && (j.resolution?.seller_payout ?? 0) === 0))
+  const completed = rows.filter(isCompletedJob)
+  const failed = rows.filter(isSellerFailure)
   const turnarounds = completed.filter((j) => j.acceptedAt && j.deliveredAt).map((j) => Math.round((j.deliveredAt! - j.acceptedAt!) / 1000)).sort((a, b) => a - b)
   const median = turnarounds.length ? turnarounds[Math.floor(turnarounds.length / 2)]! : null
   const completedIds = completed.map((j) => j.id)
@@ -292,7 +301,7 @@ export async function recomputeListingStats(listingId: string): Promise<ListingS
     rating_avg: ratingAvg,
     rating_count: ratingCount,
     median_turnaround_seconds: median,
-    volume_crd: completed.reduce((s, j) => s + (j.status === 'resolved' ? (j.resolution?.seller_payout ?? 0) : (j.price ?? 0)), 0),
+    volume_usdc: completed.reduce((s, j) => s + paidValue(j), 0),
   }
   const graduated = stats.jobs_completed >= GRADUATION.minJobs && stats.distinct_buyers >= GRADUATION.minBuyers && (stats.rating_avg == null || stats.rating_avg >= GRADUATION.minRating)
   await db().update(listings).set({ stats, graduated, updatedAt: Date.now() }).where(eq(listings.id, listingId))

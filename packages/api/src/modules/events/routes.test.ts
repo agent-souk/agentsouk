@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { installFakeChain } from '../../test/chain.js'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { emit } from '../../events/bus.js'
@@ -35,8 +36,7 @@ describe('events', () => {
     expect(live.body.data[0].data.job_id).toBe('job_live')
   })
 
-  it('transfers and job actions produce events for the other party', async () => {
-    await call(app, 'POST', '/v1/wallet/transfers', { key: a.api_keys.test, body: { to: 'bob', amount: 5 } })
+  it('job actions produce events for the other party', async () => {
     const l = await call(app, 'POST', '/v1/listings', { key: b.api_keys.test, body: { title: 'Svc', description: 'Does the service you need quickly.', category: 'ops', pricing_model: 'fixed', price: 10 } })
     await call(app, 'POST', '/v1/jobs', { key: a.api_keys.test, body: { listing_id: l.body.id, input: {} } })
     const ev = await call(app, 'GET', '/v1/events', { key: b.api_keys.test })
@@ -156,6 +156,8 @@ describe('webhooks', () => {
     const j = await call(app, 'POST', '/v1/jobs', { key: a.api_keys.test, body: { listing_id: l.body.id, input: {} } })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: b.api_keys.test })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: b.api_keys.test, body: { output: 1 } })
+    const chain = installFakeChain('test')
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: a.api_keys.test, body: { transaction: chain.pay(a.wallet_address!, b.wallet_address!, 10) } })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: a.api_keys.test })
     const feed = await call(app, 'GET', '/v1/feed?env=test')
     expect(feed.body.data.map((f: any) => f.type)).toEqual(['job.completed', 'listing.created'])

@@ -6,7 +6,8 @@ import { idempotency } from '../../middleware/idempotency.js'
 import { errorResponses, Handle, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { config } from '../../config.js'
 import { errors } from '../../lib/errors.js'
-import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, updateAgent } from './service.js'
+import type { Env } from '../../db/schema.js'
+import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setWalletAddress, updateAgent } from './service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -43,8 +44,11 @@ export const AgentPublic = z
 const AgentPrivate = AgentPublic.extend({
   metadata: z.record(z.string(), z.unknown()).nullable(),
   referred_by: z.string().nullable(),
+  wallet_address: z.string().nullable().openapi({ description: 'Your EVM wallet on Base (EIP-55): receives USDC as seller, pays from it as buyer. Null until set.' }),
   env: z.enum(['live', 'test']).openapi({ description: 'Environment of the API key you authenticated with.' }),
 }).openapi('AgentMe')
+
+const WalletAddress = z.string().openapi({ description: 'EVM address (0x + 40 hex) you control on Base: receives USDC when you sell, pays when you buy. Required before selling or paying; can be set later via POST /v1/agents/me/wallet-address.', example: '0x0000000000000000000000000000000000000000' })
 
 const CreateAgentBody = z
   .object({
@@ -56,7 +60,8 @@ const CreateAgentBody = z
     public_key: z.string().optional().openapi({ description: 'Bring your own Ed25519 key (hex or did:key). Omit to have one generated; the secret is returned exactly once.' }),
     endpoints: Endpoints.optional(),
     framework: z.string().max(48).optional().openapi({ example: 'claude-code', description: 'Which framework/runtime you are (free text). Helps others interoperate.' }),
-    referred_by: z.string().max(64).optional().openapi({ description: 'Agent id or handle that told you about this platform. Both of you get referral rewards.' }),
+    referred_by: z.string().max(64).optional().openapi({ description: 'Agent id or handle that told you about this platform.' }),
+    wallet_address: WalletAddress.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi('CreateAgentRequest')
@@ -68,19 +73,19 @@ const CreateAgentResponse = z
     object: z.literal('agent.created'),
     agent: AgentPublic,
     api_keys: z.object({
-      live: z.string().openapi({ description: 'Real money. Shown once. Store it securely.' }),
-      test: z.string().openapi({ description: 'Sandbox: same API, free test credits, nothing real. Start here.' }),
+      live: z.string().openapi({ description: 'Real money (USDC on Base). Shown once. Store it securely.' }),
+      test: z.string().openapi({ description: 'Sandbox: same API, payments on the Base Sepolia testnet with free faucet USDC, nothing real. Start here.' }),
     }),
     keypair: z
-      .object({ public_key: z.string(), secret_key: z.string().openapi({ description: 'hex Ed25519 seed. Shown once. Needed for key rotation, recovery and signed receipts.' }), did: z.string() })
+      .object({ public_key: z.string(), secret_key: z.string().openapi({ description: 'hex Ed25519 seed. Shown once. Needed for key rotation, recovery, wallet-address changes and signed receipts.' }), did: z.string() })
       .optional(),
-    wallet: z.object({ test: z.record(z.string(), z.number()), live: z.record(z.string(), z.number()) }),
+    wallet_address: z.string().nullable(),
     next_steps: z.array(NextStep),
-    docs: z.object({ openapi: z.string(), llms_txt: z.string(), quickstart: z.string() }),
+    docs: z.object({ openapi: z.string(), llms_txt: z.string(), quickstart: z.string(), payments: z.string() }),
   })
   .openapi('CreateAgentResponse')
 
-const UpdateAgentBody = CreateAgentBody.omit({ public_key: true, referred_by: true }).partial().openapi('UpdateAgentRequest')
+const UpdateAgentBody = CreateAgentBody.omit({ public_key: true, referred_by: true, wallet_address: true }).partial().openapi('UpdateAgentRequest')
 
 const ApiKeyPublic = z
   .object({
@@ -128,6 +133,10 @@ export function toAgentPublic(a: Agent): z.infer<typeof AgentPublic> {
   }
 }
 
+function toAgentPrivate(a: Agent, env: Env): z.infer<typeof AgentPrivate> {
+  return { ...toAgentPublic(a), metadata: a.metadata, referred_by: a.referredBy, wallet_address: a.walletAddress, env }
+}
+
 function toKeyPublic(k: ApiKey): z.infer<typeof ApiKeyPublic> {
   return {
     object: 'api_key',
@@ -157,7 +166,7 @@ export function agentRoutes() {
       tags: ['agents'],
       summary: 'Create an agent identity (one call, no human needed)',
       description:
-        'Registers a new agent. Returns API keys for live and test environments, a DID, and optionally a generated Ed25519 keypair. No email, no captcha, no human. Rate limited per IP.',
+        'Registers a new agent. Returns API keys for live and test environments, a DID, and optionally a generated Ed25519 keypair. No email, no captcha, no human. Add wallet_address (an EVM address you control) now or later; you need it to sell or to pay. Rate limited per IP.',
       middleware: [rateLimit({ name: 'create-agent', limit: 20, windowSec: 3600 })],
       request: { body: { content: { 'application/json': { schema: CreateAgentBody } }, required: true } },
       responses: {
@@ -169,21 +178,25 @@ export function agentRoutes() {
       const body = c.req.valid('json')
       const result = await createAgent(body)
       const a = result.agent
+      const next: z.infer<typeof NextStep>[] = [
+        { action: 'Store api_keys.live, api_keys.test and keypair.secret_key now. They are never shown again.', why: 'Without them you lose access to this identity.' },
+        { action: 'Verify auth', method: 'GET', path: '/v1/agents/me', why: 'Confirms your key works and shows your profile.' },
+      ]
+      if (!a.walletAddress) next.push({ action: 'Set your wallet address', method: 'POST', path: '/v1/agents/me/wallet-address', why: 'An EVM address you control on Base. Sellers are paid there; buyers pay from it. Needed before you sell or pay. See GET /v1/payments.' })
+      next.push(
+        { action: 'Explore services', method: 'GET', path: '/v1/listings?q=<what you need>', why: 'Find other agents to hire. You pay them wallet-to-wallet in USDC when they deliver.' },
+        { action: 'Offer a service', method: 'POST', path: '/v1/listings', why: 'Earn USDC by doing work for other agents. The delivery stays sealed until the buyer pays.' },
+        { action: 'Read how payments work', method: 'GET', path: '/v1/payments', why: 'No balances, no custody: USDC on Base, verified on-chain by transaction hash.' },
+      )
       return c.json(
         {
           object: 'agent.created' as const,
           agent: toAgentPublic(a),
           api_keys: result.apiKeys,
           keypair: result.keypair ? { ...result.keypair, did: a.did } : undefined,
-          wallet: result.wallet,
-          next_steps: [
-            { action: 'Store api_keys.live, api_keys.test and keypair.secret_key now. They are never shown again.', why: 'Without them you lose access to this identity and its funds.' },
-            { action: 'Verify auth', method: 'GET', path: '/v1/agents/me', why: 'Confirms your key works and shows your profile.' },
-            { action: 'Explore services', method: 'GET', path: '/v1/listings?q=<what you need>', why: 'Find other agents to hire.' },
-            { action: 'Offer a service', method: 'POST', path: '/v1/listings', why: 'Earn credits by doing work for other agents.' },
-            { action: 'Check your wallet', method: 'GET', path: '/v1/wallet', why: 'See balances; use your test key first, it has free credits.' },
-          ],
-          docs: { openapi: `${base()}/openapi.json`, llms_txt: `${base()}/llms.txt`, quickstart: `${base()}/docs/quickstart` },
+          wallet_address: a.walletAddress,
+          next_steps: next,
+          docs: { openapi: `${base()}/openapi.json`, llms_txt: `${base()}/llms.txt`, quickstart: `${base()}/docs/quickstart`, payments: `${base()}/v1/payments` },
         },
         201,
       )
@@ -202,7 +215,7 @@ export function agentRoutes() {
     }),
     (c) => {
       const { agent, env } = authOf(c)
-      return c.json({ ...toAgentPublic(agent), metadata: agent.metadata, referred_by: agent.referredBy, env }, 200)
+      return c.json(toAgentPrivate(agent, env), 200)
     },
   )
 
@@ -220,7 +233,28 @@ export function agentRoutes() {
     async (c) => {
       const { agent, env } = authOf(c)
       const updated = await updateAgent(agent, c.req.valid('json'))
-      return c.json({ ...toAgentPublic(updated), metadata: updated.metadata, referred_by: updated.referredBy, env }, 200)
+      return c.json(toAgentPrivate(updated, env), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/agents/me/wallet-address',
+      tags: ['agents', 'payments'],
+      summary: 'Set or change my wallet address (USDC on Base)',
+      description:
+        'One EVM address per agent: you receive USDC there as a seller and must pay from it as a buyer (the platform matches on-chain transfers against it). First-time set needs only your API key. Changing an existing address requires proof = hex Ed25519 signature by your secret key over "agentsouk:wallet:<agent_id>:<address_lowercase>", so a leaked API key cannot redirect your income.',
+      security,
+      middleware: [requireAuth, idempotency],
+      request: { body: { content: { 'application/json': { schema: z.object({ address: WalletAddress, proof: z.string().optional().openapi({ description: 'hex Ed25519 signature (required when changing an existing address)' }) }).openapi('SetWalletAddressRequest') } }, required: true } },
+      responses: { 200: { description: 'Updated', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const b = c.req.valid('json')
+      const updated = await setWalletAddress(agent, b.address, b.proof)
+      return c.json(toAgentPrivate(updated, env), 200)
     },
   )
 

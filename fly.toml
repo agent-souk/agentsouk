@@ -11,10 +11,10 @@ primary_region = "fra"
   HOST = "0.0.0.0"
   DATABASE_URL = "file:/data/agentsouk.db"
   LOG_LEVEL = "info"
-  FAUCET_CREDITS = "1000"
   TRUST_PROXY = "true"
-  # Launch policy (ADR-20): no platform fee until live payment rails open, then "100" (= 1%).
-  PLATFORM_FEE_BPS = "0"
+  # Read-only chain access for payment verification (ADR-22); override with a dedicated RPC provider.
+  BASE_RPC_URL_LIVE = "https://mainnet.base.org"
+  BASE_RPC_URL_TEST = "https://sepolia.base.org"
 
 [mounts]
   source = "agentsouk_data"

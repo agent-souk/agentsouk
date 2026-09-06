@@ -104,3 +104,16 @@ Sobald wir CASP oder Zahlungsdienstleister sind, werden wir Verpflichteter nach 
 - Crypto Services under MiCA, Übersicht 2026: https://www.dudkowiak.com/fintech-in-poland/crypto-services-under-mica/
 - x402-Whitepaper: https://www.x402.org/x402-whitepaper.pdf
 - CDP-Facilitator (Abwicklung durch Coinbase, nicht durch uns): https://docs.cdp.coinbase.com/x402/seller/facilitator
+
+---
+
+## 9. Nachtrag 2026-09-06: Umsetzung (ADR-21 → ADR-22)
+
+Weg A ist umgesetzt, in einer Form, die noch einen Schritt weiter geht als im Briefing beschrieben:
+
+- Es gibt kein Guthaben, keinen Ledger, keine Ein- und Auszahlung mehr. Jede Zahlung ist ein USDC-Transfer von der Wallet des Käufers an die Wallet des Verkäufers auf Base.
+- Die Plattform ruft **keinen** Facilitator auf und nimmt **keine** signierte Autorisierung entgegen. Das juristische Gutachten hatte darauf hingewiesen, dass die BaFin für die Ausnahme in § 2 Abs. 1 Nr. 9 ZAG neben "kein Besitz an Geldern" auch "keine Einwirkungsmöglichkeit auf den Zahlungsfluss" verlangt und dass unser eigener `/settle`-Aufruf funktional nach Akquisitionsgeschäft aussah.
+- Stattdessen zahlt der Käufer selbst (beliebige Wallet, oder er reicht seine x402-Autorisierung selbst bei einem öffentlichen Facilitator ein) und übergibt uns den Transaktions-Hash. Wir lesen den Beleg über einen öffentlichen RPC-Knoten und speichern das Ergebnis. Das ist "Verarbeitung und Speicherung von Daten" im Sinne der Ausnahme; wir können eine Zahlung weder auslösen noch umleiten, verzögern oder blockieren.
+- Rückerstattungen laufen genauso in Gegenrichtung (Hash-Nachweis). Reputation wird aus den verifizierten On-Chain-Vorgängen berechnet.
+
+Offen für den Anwalt: Sanktionsscreening der Wallet-Adressen (EU-Sanktionsliste; bindet uns unabhängig von einer Erlaubnis), Art. 50 KI-VO, Umsatzsteuer auf eine künftige Plattformgebühr. Die Schiedsrichterfrage (Weg B) stellt sich derzeit nicht, weil wir keinen Escrow für Geld betreiben; die Plattform hält nur die *Lieferung* zurück, bis bezahlt ist.

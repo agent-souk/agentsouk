@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent } from '../../test/setup.js'
+import { freshApp, call, createTestAgent, randomAddress } from '../../test/setup.js'
 import type { App } from '../../app.js'
-import { generateKeyPair, didKeyFromPublicKey } from '../../lib/crypto.js'
+import { generateKeyPair, didKeyFromPublicKey, sign } from '../../lib/crypto.js'
+import { walletMessage } from './service.js'
+import { toChecksumAddress } from '../payments/address.js'
 
 let app: App
 beforeEach(async () => {
@@ -9,7 +11,7 @@ beforeEach(async () => {
 })
 
 describe('POST /v1/agents', () => {
-  it('creates an identity in one call with keys, keypair, sandbox credits and next steps', async () => {
+  it('creates an identity in one call with keys, keypair and next steps', async () => {
     const r = await call(app, 'POST', '/v1/agents', { body: { name: 'Summarizer Bot', capabilities: ['Summarization', 'summarization'], tags: ['NLP'] } })
     expect(r.status).toBe(201)
     expect(r.body.object).toBe('agent.created')
@@ -20,10 +22,28 @@ describe('POST /v1/agents', () => {
     expect(r.body.api_keys.live).toMatch(/^as_live_/)
     expect(r.body.api_keys.test).toMatch(/^as_test_/)
     expect(r.body.keypair.secret_key).toHaveLength(64)
-    expect(r.body.wallet.test.CRD).toBeGreaterThan(0)
-    expect(r.body.wallet.live.CRD).toBe(0)
-    expect(r.body.next_steps.length).toBeGreaterThan(2)
+    expect(r.body.wallet).toBeUndefined()
+    expect(r.body.wallet_address).toBeNull()
+    expect(r.body.next_steps.some((s: any) => s.path === '/v1/agents/me/wallet-address')).toBe(true)
     expect(r.body.docs.openapi).toContain('/openapi.json')
+    expect(r.body.docs.payments).toContain('/v1/payments')
+  })
+
+  it('accepts a wallet address at registration (lowercase is checksummed) and rejects bad ones', async () => {
+    const lower = randomAddress()
+    const r = await call(app, 'POST', '/v1/agents', { body: { name: 'Walleted', wallet_address: lower } })
+    expect(r.status).toBe(201)
+    expect(r.body.wallet_address).toBe(toChecksumAddress(lower))
+    expect(r.body.next_steps.some((s: any) => s.path === '/v1/agents/me/wallet-address')).toBe(false)
+    const me = await call(app, 'GET', '/v1/agents/me', { key: r.body.api_keys.test })
+    expect(me.body.wallet_address).toBe(toChecksumAddress(lower))
+    const pub = await call(app, 'GET', `/v1/agents/${r.body.agent.id}`)
+    expect(pub.body.wallet_address).toBeUndefined()
+    const bad = await call(app, 'POST', '/v1/agents', { body: { name: 'Bad', wallet_address: '0x123' } })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.param).toBe('wallet_address')
+    const badChecksum = await call(app, 'POST', '/v1/agents', { body: { name: 'Bad2', wallet_address: '0xFb6916095ca1df60bB79Ce92cE3Ea74c37c5d359' } })
+    expect(badChecksum.status).toBe(400)
   })
 
   it('accepts a bring-your-own key (hex and did:key) and rejects duplicates', async () => {
@@ -56,6 +76,32 @@ describe('POST /v1/agents', () => {
     expect(r.body.error.param).toBe('name')
     expect(r.body.error.hint).toContain('/openapi.json')
     expect(r.body.error.details.issues[0].path).toBe('name')
+  })
+})
+
+describe('wallet address', () => {
+  it('first set needs only the API key; changes need an Ed25519 proof', async () => {
+    const a = await createTestAgent(app, { name: 'Wallet', wallet_address: null })
+    const first = randomAddress()
+    const set = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: first } })
+    expect(set.status).toBe(200)
+    expect(set.body.wallet_address).toBe(toChecksumAddress(first))
+    const same = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: first.toUpperCase().replace('0X', '0x') } })
+    expect(same.status).toBe(200)
+    const second = randomAddress()
+    const noProof = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second } })
+    expect(noProof.status).toBe(400)
+    expect(noProof.body.error.param).toBe('proof')
+    expect(noProof.body.error.hint).toContain(`agentsouk:wallet:${a.agent.id}:${second}`)
+    const attacker = generateKeyPair()
+    const forged = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second, proof: sign(walletMessage(a.agent.id, second), attacker.secretKey) } })
+    expect(forged.status).toBe(400)
+    const ok = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second, proof: sign(walletMessage(a.agent.id, second), a.keypair!.secret_key) } })
+    expect(ok.status).toBe(200)
+    expect(ok.body.wallet_address).toBe(toChecksumAddress(second))
+    const ev = await call(app, 'GET', '/v1/events?types=agent.wallet_address_changed', { key: a.api_keys.live })
+    expect(ev.body.data).toHaveLength(2)
+    expect(ev.body.data.map((e: any) => e.data.previous)).toContain(toChecksumAddress(first))
   })
 })
 

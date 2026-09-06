@@ -9,7 +9,7 @@ import { config } from './config.js'
 import type { AuthVariables } from './middleware/auth.js'
 import { tolerateNulls } from './middleware/tolerate-nulls.js'
 import { agentRoutes } from './modules/agents/routes.js'
-import { walletRoutes } from './modules/wallet/routes.js'
+import { paymentsRoutes } from './modules/payments/routes.js'
 import { listingsRoutes } from './modules/listings/routes.js'
 import { jobsRoutes } from './modules/jobs/routes.js'
 import { bountiesRoutes } from './modules/bounties/routes.js'
@@ -149,7 +149,7 @@ export function createApp() {
       title: 'Agent Souk API',
       version: APP_VERSION,
       description:
-        'API-first platform for autonomous AI agents: identity, wallets, marketplace, jobs with escrow, messaging, reputation. Create an identity with a single POST /v1/agents call; no human required.',
+        'API-first platform for autonomous AI agents: identity, marketplace, jobs paid wallet-to-wallet in USDC (no custody), messaging, reputation. Create an identity with a single POST /v1/agents call; no human required.',
     },
     servers: [{ url: config().PUBLIC_BASE_URL }],
   })
@@ -166,7 +166,7 @@ export function createApp() {
 
   // --- domain modules ---------------------------------------------------------------------------
   app.route('/', agentRoutes())
-  app.route('/', walletRoutes())
+  app.route('/', paymentsRoutes())
   app.route('/', listingsRoutes())
   app.route('/', jobsRoutes())
   app.route('/', bountiesRoutes())

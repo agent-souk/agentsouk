@@ -2,88 +2,79 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## ⚠️ ACHTUNG: Der Code ist mitten in einer Operation und kompiliert NICHT
+## Stand 2026-09-06, Checkpoint 34: Umbau auf nicht-verwahrende Zahlungen FERTIG
 
-Stand 2026-09-06, 17:30 Uhr. `npx tsc -p packages/api/tsconfig.json --noEmit` meldet **29 Fehler**.
-Das ist kein Bug, das ist ein halbfertiger Umbau. **Nächster Schritt: den Umbau zu Ende führen.**
-Wer hier weitermacht, liest zuerst `docs/DECISIONS.md` → ADR-21 und `docs/SPEC-PAYMENTS.md`.
+`npm run typecheck` grün, `npm test` grün (22 Dateien, 121 Tests). Der Code kompiliert wieder und ist deploybar.
 
-## Was gerade umgebaut wird (ADR-21): weg vom eigenen Guthaben, hin zu Wallet-zu-Wallet
+### Die Entscheidung (ADR-22, ersetzt die Settlement-Teile von ADR-21)
 
-**Warum:** Das alte Modell (eigene CRD-Credits, wir halten das Geld im Escrow) ist in Deutschland
-doppelt erlaubnispflichtig (MiCA/KMAG CASP **und** ZAG), Übergangsfristen abgelaufen, 125.000 € Mindestkapital,
-dazu GwG-Pflichten, die "Registrierung ohne Mensch" unmöglich machen. Siehe `docs/LEGAL-BRIEFING.md`.
+**Proof-of-Payment.** Die Plattform berührt zu keinem Zeitpunkt ein Zahlungsinstrument und ruft nie einen
+Facilitator auf. Der Käufer zahlt selbst on-chain (USDC auf Base; beliebige Wallet, oder gasfrei, indem er seine
+x402-Autorisierung selbst bei einem öffentlichen Facilitator einreicht) und reicht nur den Transaktions-Hash ein
+(`POST /v1/jobs/{id}/pay {"transaction":"0x…"}`). Wir lesen den Beleg über einen Base-JSON-RPC-Knoten
+(3 Leseaufrufe) und prüfen: erfolgreich, USDC-Vertrag, von der Wallet des Käufers an die Wallet des Verkäufers,
+Betrag ≥ Preis, Bestätigungen, Blockzeit nach Auftragserstellung, Hash nie zuvor verwendet, Zahler ≠ Empfänger.
+Damit sind wir reine Datenverarbeitung (§ 2 Abs. 1 Nr. 9 ZAG), ohne Einwirkungsmöglichkeit auf den Zahlungsfluss,
+und die Doppelzahlungsklasse aus dem mechanischen Gutachten ist konstruktionsbedingt weg (ein Hash zahlt genau
+einen Job, Wiederholung ist idempotent, unklare Settlement-Ausgänge gibt es nicht mehr).
 
-**Neues Modell:** Käufer zahlt Verkäufer direkt, Wallet zu Wallet, USDC auf Base, über x402.
-Die Plattform fasst nie Geld an. Sie hält stattdessen die **Lieferung** zurück, bis bezahlt wurde
-("versiegelte Lieferung"). Preise sind USDC-Minor-Units (1000000 = 1 USDC).
+Weitere Punkte aus ADR-22: `wallet_address` statt `payout_address` (eine Adresse pro Agent, Pflicht für
+Verkäufer **und** zahlende Käufer; Änderung nur mit Ed25519-Proof `agentsouk:wallet:<id>:<addr>`),
+symmetrische Rückerstattung `POST /v1/jobs/{id}/refund` mit Hash, `refund_due` als Reputationsmangel,
+`upfront` nur ab T1 (live), Walk-away ohne Makel, Gegenparteien nach Wallet-Adresse, T1 nur über bezahlte
+Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECISIONS.md` ADR-22.
 
-## Fertig umgebaut
+### Was seit Checkpoint 33 gebaut wurde
 
-- `docs/DECISIONS.md` → **ADR-21** (die vollständige Entscheidung mit Begründung)
-- `docs/SPEC-PAYMENTS.md` → **neu**, die maßgebliche Spezifikation (Zustandsmaschine, Endpunkte, Wire-Format)
-- `packages/api/src/db/schema.ts` → Ledger/Accounts/Deposits/Withdrawals raus, `agents.payout_address` rein
-- `packages/api/src/db/schema-marketplace.ts` → `payment` (on_delivery|upfront) auf Listings/Jobs/Proposals,
-  Job-Felder `paid_at`, `payment_deadline_at`, `settlement_id`, `output_hash`, `output_bytes`, `output_preview`,
-  `unpaid`, `turnaround_seconds`; neue Tabelle **`settlements`**; Reputation `volume_usdc` + `jobs_unpaid`
-- `packages/api/src/config.ts` → `X402_FACILITATOR_URL_LIVE/TEST`, `CDP_API_KEY_ID/SECRET`, `PAYMENT_WINDOW_*`;
-  `FAUCET_CREDITS`, `PLATFORM_FEE_BPS`, `X402_PAY_TO` entfernt
-- `packages/api/src/lib/ids.ts` (`stl_` statt `txn_`/`led_`/`acc_`/`dep_`/`wdr_`), `lib/errors.ts` (`insufficient_funds` raus)
-- `packages/api/src/modules/payments/` → **neu**: `address.ts` (EIP-55), `x402.ts` (v1+v2 Wire-Format),
-  `facilitator.ts` (verify/settle, CDP-JWT, /supported-Cache, Test-Hook), `service.ts` (Settlements), `routes.ts`
-  (`GET /v1/payments`, `GET /v1/payments/settlements`)
-- `packages/api/src/modules/agents/service.ts` → `payout_address` + Ed25519-Proof beim Ändern; Faucet/Referral-Credits raus
-- `packages/api/src/modules/jobs/service.ts` + `routes.ts` → komplett neu: Status `awaiting_payment`,
-  versiegelte Lieferung, `POST /v1/jobs/{id}/pay` (402 + x402), Per-Job-Mutex, Sweeps für unbezahlt
-- **Gelöscht:** `src/ledger/*`, `src/modules/wallet/*`
+- `modules/payments/`: `chain.ts` (JSON-RPC-Reader, `verifyUsdcTransfer`, Test-Hook), `x402.ts` (Konstanten,
+  Terms, nur noch Info), `service.ts` (Settlements: settled | orphaned, Unique-Index auf dem Hash), `routes.ts`
+  (`GET /v1/payments`, `GET /v1/payments/settlements`). `facilitator.ts` gelöscht.
+- `modules/jobs/`: `pay` (Terms als 402 ohne Header, Hash-Verifikation, Wiederbelebung nach unbezahltem
+  Ablauf innerhalb 1 h Gnade, verwaiste Zahlungen → `refund_due`), `refund`, `cancel_kind`, `outcomes.ts`
+  (gemeinsame Ergebnisregeln für Listing-Statistik und Reputation). Keine DB-Transaktionen mehr (SQLite-
+  Single-Writer-Deadlock im Single-Thread), stattdessen Insert + bedingtes Update unter `lib/mutex.ts`.
+- `modules/agents/`: `wallet_address` bei Registrierung, `POST /v1/agents/me/wallet-address`,
+  `assertWalletAddress`, `assertUpfrontAllowed`.
+- Listings (`payment`, USDC-Anzeige, Wallet-Pflicht, Upfront-Gate), Bounties (`payment` im Proposal),
+  Reviews/Reputation (neue Felder, Zählung nach Adresse, `refunds_due` im Score), Meta (Stats aus Settlements,
+  Changelog), A2A, MCP (`payment_info`, `set_wallet_address`, `my_settlements`, `job_action pay/refund`),
+  Discovery-Texte komplett neu (skill.md, llms.txt, quickstart, errors, agent card), Inbox mit Zahlungsaufgaben.
+- Migrationen auf eine frische `0000_init` zurückgesetzt (nichts war deployt; drizzle-kit braucht für
+  Umbenennungen ein TTY). Lokale Dev-DB gelöscht.
+- Tests: neue Fake-Chain (`src/test/chain.ts`), Jobs-Suite komplett neu (18 Tests inkl. Race, Orphan, Grace,
+  Walk-away, Refund, x402-Header-Ablehnung, Chain-Ausfall), Payments-Unit-Tests, alle anderen Suiten angepasst.
+- SDKs: npm `jobs.pay(id, hashOderSender)`, `jobs.paymentRequired`, `jobs.refund`, `payments.*`,
+  `agents.setWalletAddress` (Proof wird mit `secretKey` selbst signiert), CLI `jobs terms|pay|refund`,
+  `wallet set`; Python spiegelgleich (`jobs.pay`, `payment_required`, `refund`, `payments`, CLI `terms|pay|refund|wallet-address`).
+  Beide auf Version 0.2.0 (noch nicht veröffentlicht; auf npm/PyPI liegt 0.0.1 als Platzhalter).
+- Docs: README, AGENTS.md, SDK-READMEs/AGENTS.md, SKILL.md (aus `discovery/text.ts` generiert), `.env.example`,
+  `docker-compose.yml`, `fly.toml`, `server.json`.
 
-## NOCH NICHT umgebaut (daher die 29 Fehler)
+### Stand der Gutachten-Findings (2026-09-06)
 
-Ein Patch-Skript ist an einem Shell-Quoting-Fehler gescheitert; diese Dateien sind unangetastet:
+| Finding | Status |
+|---|---|
+| Juristisch: wir lösen `/settle` aus → Akquisitionsgeschäft | **Erledigt** durch ADR-22 (wir lösen nichts aus, wir lesen nur) |
+| Sanktionsscreening der Wallet-Adressen | **Offen** (Folgeaufgabe: EU-Liste prüfen bei `wallet_address`-Setzen) |
+| KI-VO Art. 50 (Transparenz) | **Offen** (Anwalt) |
+| Mechanisch: Doppelzahlung bei unklarem Settlement | **Entfällt** konstruktionsbedingt |
+| `cancel`/Sweeps ohne Mutex | **Erledigt**: bedingte Updates, verwaiste Zahlung → `refund_due` + Refund-Flow |
+| `upfront` ohne Vertrauensstufe | **Erledigt**: live nur ab T1 |
+| Reputation nach Agent-ID farmbar | **Erledigt**: Zählung nach Adresse, Selbstzahlung abgelehnt, T1 nur mit 3 Zahleradressen (Restrisiko in ADR-22 dokumentiert) |
+| Müll-Lieferung erzeugt `jobs_unpaid` | **Erledigt**: Walk-away ohne Makel, nur stilles Verstreichen zählt |
+| CDP-JWT pro Aufruf | **Entfällt** (kein Facilitator-Client mehr) |
 
-1. `modules/listings/service.ts` + `routes.ts` — `volume_crd` → `volume_usdc`, `payment`-Feld,
-   Payout-Adresse als Pflicht (`assertPayoutAddress`), USDC-Anzeige, `updateListing(env, agent, ...)`
-2. `modules/bounties/service.ts` + `routes.ts` — `payment` im Proposal, USDC-Texte, Payout-Pflicht
-3. `modules/reviews/service.ts` + `routes.ts` — `volume_usdc`, `jobs_unpaid`, neues `JobResolution.outcome`
-4. `modules/agents/routes.ts` — `payout_address` in Request/Response, `POST /v1/agents/me/payout-address`
-5. `app.ts` — `walletRoutes()` raus, `paymentsRoutes()` rein
-6. `mcp/server.ts` — Wallet-Tools raus, `payment_info` / `set_payout_address` / `pay` rein
-7. `discovery/text.ts` — der gesamte CRD-Text in skill.md, llms.txt, quickstart, errors
-8. `meta/routes.ts` (Stats `volume_usdc`, Changelog), `a2a/routes.ts` (CRD in Skill-Beschreibung)
-9. **Migration `0005` noch nicht erzeugt** (`cd packages/api && npx drizzle-kit generate --name payments`)
-10. **Alle Tests** noch auf dem alten Modell (jobs, listings, bounties, agents, integration,
-    review-regressions, sdk, mcp, discovery, meta, events, messaging) + neue Tests laut SPEC §14
-11. **SDKs** (npm `packages/sdk`, `sdk-python`) — Wallet-Oberfläche raus, Payments rein
-12. `README.md`, `AGENTS.md`, `docs/LAUNCH-CHECKLIST.md`, `fly.toml`, `.env.example`, `docker-compose.yml`
+### Nächste Schritte (Reihenfolge)
 
-## Zwei Gutachten liegen vor (adversarial, 2026-09-06) — beide "ship_with_fixes"
-
-Volltext: `.claude/projects/.../tasks/wo0t74l64.output` (Run `wf_34a3c84e-d25`).
-
-**Juristisch (Blocker, Entscheidung nötig):** Der Gutachter widerlegt vier von fünf Angriffen — keine
-MiCA-Verwahrung, kein Zahlungsauslösedienst, keine eigenständige GwG-Pflicht, Testnetz unkritisch.
-**Aber:** ADR-21 prüft nur "kein Besitz an Geldern". Die BaFin hat eine zweite Hürde: wer
-*Einwirkungsmöglichkeit auf den Zahlungsfluss* hat, verliert die Ausnahme für technische Dienstleister
-(§ 2 Abs. 1 Nr. 9 ZAG). Weil **wir** `/settle` aufrufen — ohne uns fließt nichts —, sieht das funktional nach
-Akquisitionsgeschäft (§ 1 Abs. 1 S. 2 Nr. 5 ZAG) aus; USDC ist als E-Geld-Token "Geldbetrag".
-*Vorgeschlagene Lösung:* Der **Käufer-Client** löst das Settlement aus (oder der Verkäufer per
-`receiveWithAuthorization`), wir prüfen nur lesend auf der Kette. Dann sind wir gar nicht in der Zahlungskette.
-Das ist eine Architekturentscheidung — **Fable entscheidet, nicht Opus.**
-Außerdem offen: Sanktions-Screening (bindet uns unabhängig von der Lizenz) und KI-VO Art. 50 (gilt seit 02.08.2026).
-
-**Mechanisch (1 Blocker, 4 Major):**
-- **Blocker:** Bei unklarem Settlement-Ausgang (Facilitator-Timeout nach Broadcast, `settlement_pending`,
-  DB-Schreibfehler nach Settle) zahlt der Käufer zweimal, ohne Rückweg. Fix: `payer_address` + `nonce` auf der
-  Settlement-Zeile speichern, `settlement_pending` als **nicht-terminal** behandeln, vor jedem neuen Settle
-  erst auf eine bestehende Zeile mit `transaction != null` prüfen.
-- `cancel`/Sweeps nehmen den Per-Job-Mutex nicht → Zahlung landet, Job ist schon `cancelled`/`expired unpaid`.
-- `upfront` ist an keine Vertrauensstufe gebunden → frischer Verkäufer kassiert und verschwindet.
-- Reputation ist gratis farmbar: Registrierung frei, Facilitator zahlt Gas, Gegenparteien werden nach Agent-ID
-  statt nach Wallet gezählt → Selbstzahlung sieht aus wie echtes Volumen. Fix: nach `payer_address` zählen,
-  `payer == payTo` ablehnen.
-- `on_delivery` schützt den Käufer nur vor Vertauschen, nicht vor Müll; ein Verkäufer kann Käufern
-  `jobs_unpaid`-Marken anhängen, indem er Müll liefert.
-- Die CDP-JWT-`uris`-Claim ist an eine Methode+Pfad gebunden → pro Aufruf (verify/settle) neu ausstellen.
+1. Kurzes adversariales Review der neuen Zahlungslogik (1–2 Agenten, siehe Session-Limit-Hinweis), Findings einbauen.
+2. Deploy nach Fly.io `fra` (`fly launch --no-deploy`, Volume, Secrets, `fly deploy`), `api.agentsouk.dev`
+   per CNAME in Cloudflare (Nick), `fly certs add`. Rauchtest gegen Base Sepolia mit echtem Faucet-USDC:
+   zwei Wegwerf-Wallets, Listing, Job, Transfer, `pay` mit Hash.
+3. npm/PyPI 0.2.0 veröffentlichen (`packages/sdk`: `npm publish`; `sdk-python`: `python -m build && twine upload`).
+4. MCP-Registry (`packages/api/server.json`, TXT-Record auf agentsouk.dev), ClawHub-Skill, Repo öffentlich,
+   Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6.
+5. Danach: Sanktionsscreening, Evaluator-/Schlichtungs-Panel, semantische Suche, `receiveWithAuthorization`-
+   Pfad als gasfreie Zahlmethode dokumentieren (der Käufer reicht selbst beim Facilitator ein; schon im 402 erklärt).
 
 ## Setup-Stand
 
@@ -96,27 +87,17 @@ Außerdem offen: Sanktions-Screening (bindet uns unabhängig von der Lizenz) und
   **noch keine App angelegt**, Name `agentsouk-api` frei.
 - **GitHub:** `nickillig3-dotcom`, Repo `https://github.com/nickillig3-dotcom/agentsouk`, **privat**, Branch `main`.
   Org `agent-souk` noch nicht angelegt.
-- **Rabby-Adresse** liegt auskommentiert in `packages/api/.env`. Im neuen Modell brauchen wir sie nicht mehr
-  für Einzahlungen — nur noch, falls Agent Souk selbst als Verkäufer auftritt.
-- **Facilitatoren am 2026-09-06 per `/supported` geprüft:** `https://facilitator.payai.network` kann v2 auf
-  `eip155:8453` (Base Mainnet), ohne Schlüssel. `https://x402.org/facilitator` kann v2 auf `eip155:84532`
-  (Base Sepolia), ohne Schlüssel. Coinbase CDP braucht `CDP_API_KEY_ID`/`SECRET`.
-
-## Reihenfolge für die nächste Sitzung
-
-1. **Erst entscheiden:** löst der Käufer-Client das Settlement aus (juristischer Blocker) oder wir?
-   Davon hängen `payments/facilitator.ts`, `jobs/service.ts` und SPEC §5 ab.
-2. Umbau fertig machen (Liste oben, Punkte 1–8), Migration 0005 erzeugen, `npm run typecheck` grün.
-3. Die fünf mechanischen Findings einbauen (vor allem Doppelzahlung + Mutex + Selbstzahlung).
-4. Tests grün, dann Deploy nach `fra`, `api.agentsouk.dev` verbinden, Rauchtest.
-5. Danach: npm/PyPI 0.1.0, MCP-Registry (`packages/api/server.json`, TXT-Record auf agentsouk.dev),
-   ClawHub, Repo öffentlich, Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6.
+- **Rabby-Adresse** liegt auskommentiert in `packages/api/.env`. Im neuen Modell wird sie nur gebraucht, falls
+  Agent Souk selbst als Verkäufer auftritt (z. B. eine eigene Plattform-Leistung anbietet).
+- **Base-RPC:** öffentliche Endpunkte (`mainnet.base.org`, `sepolia.base.org`) sind Standard; ein Alchemy-/
+  QuickNode-Schlüssel wäre nur für höhere Ratenlimits nötig (`BASE_RPC_URL_LIVE/TEST`).
 
 ## Befehle
 
 - `npm install` (Root) · `npm run dev` · `npm test` · `npm run typecheck`
-- Migration: `cd packages/api && npx drizzle-kit generate --name <name>`
+- Migration: `cd packages/api && npx drizzle-kit generate --name <name>` (bei Tabellen-Umbenennungen interaktiv, braucht ein TTY)
+- SKILL.md neu erzeugen: `cd packages/api && npx tsx -e "import { skillMd } from './src/discovery/text.ts'; process.stdout.write(skillMd('https://api.agentsouk.dev'))" > ../sdk/SKILL.md && cp ../sdk/SKILL.md ../../sdk-python/SKILL.md`
 - Windows: `netstat` ist deutsch ("ABHÖREN"); Serverprozesse per
-  `wmic process where "CommandLine like '%src/index.ts%'"` finden und `taskkill //F //PID` beenden
+  `wmic process where "CommandLine like '%src/index.ts%'"` finden und `taskkill //F //PID` beenden; kein `python3` auf dem Pfad (Node für Skripte nehmen)
 - Session-Limit: große parallele Subagent-Workflows scheitern; selbst bauen, Subagents einzeln
   (zwei Gutachter parallel gingen gut), früh auf Disk schreiben, oft committen

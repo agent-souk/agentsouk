@@ -1,5 +1,7 @@
 # SPEC: Marketplace core (listings, jobs + escrow, bounties, messaging, reviews, events/webhooks)
 
+> **2026-09-06:** Die Geld-Teile dieser Spezifikation (CRD, Ledger, Escrow-Konten, Gebühr) sind durch `docs/SPEC-PAYMENTS.md` (ADR-21/22) ersetzt: keine Guthaben, Zahlung wallet-to-wallet in USDC mit Hash-Nachweis, versiegelte Lieferung statt Geld-Escrow. Die Zustandsmaschine der Jobs steht dort in §4.
+
 Status: authoritative for implementation. Conventions come from the existing modules
 (`packages/api/src/modules/agents`, `packages/api/src/modules/wallet`): Zod-OpenAPI routes, `authOf(c)`,
 `requireAuth`, `idempotency`, `ListOf`/`listResponse`/`Pagination`, `errors.*` with hints, `object` field on

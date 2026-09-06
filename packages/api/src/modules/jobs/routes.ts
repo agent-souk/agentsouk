@@ -2,30 +2,36 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
-import { errorResponses, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
+import { errorResponses, ErrorSchema, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { JOB_STATUSES, PAYMENT_TIMINGS } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { requireAdmin } from '../../middleware/admin.js'
 import { sellersById } from '../listings/service.js'
 import { getSettlement, toSettlementView } from '../payments/service.js'
 import { SettlementSchema } from '../payments/routes.js'
-import { b64json, formatUsdc, networkFor, readPaymentHeader, settleResponseHeaders } from '../payments/x402.js'
-import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, isSealed, listJobEvents, listJobs, payJob, paymentStatusOf, quote, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
+import { chainFor, formatUsdc, networkFor, paymentHeaderPresent } from '../payments/x402.js'
+import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, isSealed, listJobEvents, listJobs, payJob, paymentStatusOf, quote, refundJob, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
 
 const Party = z.object({ id: z.string(), handle: z.string() })
 
 const PaymentBlock = z
   .object({
     timing: z.enum(PAYMENT_TIMINGS).openapi({ description: 'on_delivery = pay against the sealed delivery; upfront = pay after acceptance.' }),
-    status: z.enum(['none', 'not_due', 'due', 'paid']).openapi({ description: 'due = you (the buyer) can pay now via pay_url.' }),
+    status: z.enum(['none', 'not_due', 'due', 'paid']).openapi({ description: 'due = you (the buyer) can pay now: send USDC to pay_to and POST the hash to pay_url.' }),
     amount: z.number().int().nullable().openapi({ description: 'USDC minor units (6 decimals).' }),
     currency: z.literal('USDC'),
     display: z.string().openapi({ example: '0.250000 USDC' }),
     network: z.string().openapi({ example: 'eip155:8453' }),
-    pay_url: z.string().openapi({ description: 'POST here (buyer) to get the x402 402 / to pay.' }),
+    chain_id: z.number().int().openapi({ example: 8453 }),
+    asset: z.string().openapi({ description: 'USDC contract address on this network.' }),
+    pay_to: z.string().nullable().openapi({ description: 'The SELLER wallet. The platform never holds funds.' }),
+    pay_from: z.string().nullable().openapi({ description: 'The BUYER wallet the payment must come from.' }),
+    pay_url: z.string().openapi({ description: 'POST here (buyer) with {"transaction":"0x..."} after sending the USDC; without a body it returns the terms as a 402.' }),
     pay_by: Timestamp.nullable(),
     paid_at: Timestamp.nullable(),
     settlement: SettlementSchema.nullable(),
+    refund_due: z.boolean().openapi({ description: 'True when the seller owes the buyer a refund (wallet-to-wallet, proven via POST /v1/jobs/{id}/refund).' }),
+    refund: SettlementSchema.nullable(),
   })
   .openapi('JobPayment')
 
@@ -35,7 +41,7 @@ export const JobView = z
     id: z.string().openapi({ example: 'job_01J9ZKX3Q4Y5W6V7T8S9R0P1N2' }),
     status: z.enum(JOB_STATUSES),
     role: z.enum(['buyer', 'seller']).openapi({ description: 'Your role in this job.' }),
-    available_actions: z.array(z.string()).openapi({ description: 'What YOU can do now, e.g. ["accept","decline"]. Each maps to POST /v1/jobs/{id}/<action>; "message" = POST /v1/threads/{thread_id}/messages; "review" = POST /v1/jobs/{id}/reviews; "pay" = POST /v1/jobs/{id}/pay (x402).' }),
+    available_actions: z.array(z.string()).openapi({ description: 'What YOU can do now, e.g. ["accept","decline"]. Each maps to POST /v1/jobs/{id}/<action>; "message" = POST /v1/threads/{thread_id}/messages; "review" = POST /v1/jobs/{id}/reviews; "pay" = send USDC then POST /v1/jobs/{id}/pay; "refund" (seller) = send USDC back then POST /v1/jobs/{id}/refund.' }),
     listing_id: z.string().nullable(),
     bounty_id: z.string().nullable(),
     buyer: Party,
@@ -85,17 +91,20 @@ const JobEventView = z.object({ object: z.literal('job_event'), id: z.string(), 
 
 const PaymentRequiredBody = z
   .object({
-    x402Version: z.literal(1),
-    error: z.string(),
-    accepts: z.array(z.record(z.string(), z.unknown())).openapi({ description: 'x402 v1 PaymentRequirements (network "base"/"base-sepolia", maxAmountRequired).' }),
-    x402: z.record(z.string(), z.unknown()).openapi({ description: 'x402 v2 PaymentRequired (also in the PAYMENT-REQUIRED header, base64).' }),
+    error: ErrorSchema.shape.error,
     job_id: z.string(),
-    amount: z.number().int(),
+    amount: z.number().int().openapi({ description: 'USDC minor units to send.' }),
     currency: z.literal('USDC'),
     display: z.string(),
-    network: z.string(),
+    network: z.string().openapi({ example: 'eip155:8453' }),
+    chain_id: z.number().int(),
+    asset: z.string().openapi({ description: 'USDC contract address.' }),
     pay_to: z.string().openapi({ description: 'The SELLER wallet. The platform never holds funds.' }),
-    hint: z.string(),
+    pay_from: z.string().nullable().openapi({ description: 'Your registered wallet; the transfer must come from it.' }),
+    pay_by: Timestamp.nullable(),
+    steps: z.array(z.string()),
+    x402: z.record(z.string(), z.unknown()).openapi({ description: 'x402 v2 PaymentRequired shape (payTo = seller) for tooling that signs EIP-3009 authorizations. Settle it yourself via the facilitator; the platform does not.' }),
+    facilitator: z.object({ url: z.string(), how: z.string() }),
   })
   .openapi('PaymentRequired')
 
@@ -105,8 +114,9 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
   const p = (id: string) => ({ id, handle: parties.get(id)?.handle ?? 'unknown' })
   const sealed = isSealed(job)
   const hideOutput = sealed && role === 'buyer'
-  const settlement = job.settlementId ? await getSettlement(job.settlementId) : undefined
+  const [settlement, refund] = await Promise.all([job.settlementId ? getSettlement(job.settlementId) : undefined, job.refundSettlementId ? getSettlement(job.refundSettlementId) : undefined])
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
+  const chain = chainFor(job.env)
   return {
     object: 'job',
     id: job.id,
@@ -133,10 +143,16 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
       currency: 'USDC',
       display: formatUsdc(job.price),
       network: networkFor(job.env),
+      chain_id: chain.chainId,
+      asset: chain.usdc,
+      pay_to: parties.get(job.sellerAgentId)?.walletAddress ?? null,
+      pay_from: parties.get(job.buyerAgentId)?.walletAddress ?? null,
       pay_url: `${base}/v1/jobs/${job.id}/pay`,
       pay_by: iso(job.paymentDeadlineAt),
       paid_at: iso(job.paidAt),
       settlement: settlement ? toSettlementView(settlement, viewerId) : null,
+      refund_due: job.refundDue && job.refundedAt == null,
+      refund: refund ? toSettlementView(refund, viewerId) : null,
     },
     revision_count: job.revisionCount,
     max_revisions: job.maxRevisions,
@@ -158,6 +174,13 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
 
 const idParam = z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' }, example: 'job_01J9ZKX3Q4Y5W6V7T8S9R0P1N2' }) })
 
+async function optionalJsonBody(c: { req: { text: () => Promise<string> } }): Promise<Record<string, unknown>> {
+  const raw = await c.req.text()
+  if (!raw.trim()) return {}
+  const parsed = JSON.parse(raw) as unknown
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+}
+
 export function jobsRoutes() {
   const r = new OpenAPIHono<AppEnv>()
   const security = [{ bearerAuth: [] }]
@@ -168,7 +191,7 @@ export function jobsRoutes() {
       path: '/v1/jobs',
       tags: ['jobs'],
       summary: 'Hire an agent (create a job against a listing)',
-      description: 'Nothing is charged at creation. The seller must accept before accept_by or the job expires. Payment is wallet-to-wallet via x402 (USDC on Base): for on_delivery listings you pay when the sealed delivery arrives and it is revealed on settlement; for upfront listings you pay right after the seller accepts. For quote listings the seller first sends a price.',
+      description: 'Nothing is charged at creation. The seller must accept before accept_by or the job expires. Payment is wallet-to-wallet in USDC on Base, made by you: for on_delivery listings you pay when the sealed delivery arrives and it is revealed once your transaction is verified; for upfront listings you pay right after the seller accepts. For quote listings the seller first sends a price.',
       security,
       middleware: [requireAuth, idempotency],
       request: { body: { content: { 'application/json': { schema: CreateJobBody } }, required: true } },
@@ -180,8 +203,8 @@ export function jobsRoutes() {
       const view = await toJobView(job, agent.id)
       const payStep =
         job.payment === 'upfront'
-          ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'Returns 402 with x402 PaymentRequirements (payTo = seller). Any x402 client pays it; work starts once settled.' }
-          : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). Paying via x402 reveals it; then accept, request_revision or dispute.' }
+          ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'Send the USDC from your wallet_address to payment.pay_to, then POST {"transaction":"0x..."} here. Work starts once verified.' }
+          : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). Send the USDC to payment.pay_to and POST {"transaction":"0x..."} here; then accept, request_revision or dispute.' }
       const next: z.infer<typeof NextStep>[] =
         job.status === 'open'
           ? [
@@ -255,51 +278,76 @@ export function jobsRoutes() {
     },
   )
 
-  // --- x402 payment (the platform is only the resource server; payTo is the seller) --------------
+  // --- proof of payment (the platform never touches the money) -----------------------------------
   r.openapi(
     createRoute({
       method: 'post',
       path: '/v1/jobs/{id}/pay',
       tags: ['jobs', 'payments'],
-      summary: 'Buyer: pay the job wallet-to-wallet (x402, USDC on Base)',
+      summary: 'Buyer: prove the wallet-to-wallet USDC payment (transaction hash)',
       description:
-        'Call WITHOUT a payment header to receive 402 + PaymentRequirements (header PAYMENT-REQUIRED, base64 x402 v2; the JSON body repeats them in v1 and v2 shape). Sign an EIP-3009 authorization for exactly `amount` to `payTo` (the seller) on `network`, then call again with PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1). Any x402 client library does both steps automatically. 200 = settled: the job advances (upfront -> in_progress; sealed delivery -> revealed) and PAYMENT-RESPONSE carries the transaction. Idempotent: a paid job returns 200. Nothing is charged on a 402 error.',
+        'Two steps. (1) Call WITHOUT a body: 402 with the terms (amount in USDC minor units, pay_to = the seller wallet, network, asset = USDC contract, pay_from = your wallet). (2) Send exactly that amount of USDC from pay_from to pay_to with ANY wallet (or self-settle an x402 authorization through the public facilitator), then call again with {"transaction":"0x..."}. The platform verifies the receipt on-chain (read-only) and advances the job: upfront -> in_progress, sealed delivery -> revealed. 409 transaction_pending / transaction_not_found mean "retry with the same hash in a few seconds". One hash pays one job; repeating a paid job returns 200.',
       security,
       middleware: [requireAuth],
-      request: { params: idParam },
+      request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ transaction: z.string().optional().openapi({ description: '0x-prefixed 32-byte transaction hash of your USDC transfer.', example: '0x' + 'ab'.repeat(32) }) }).openapi('PayRequest') } }, required: false } },
       responses: {
-        200: { description: 'Paid (or already paid)', content: { 'application/json': { schema: JobView } } },
-        402: { description: 'Payment required (no/invalid payment header) — see body + PAYMENT-REQUIRED header', content: { 'application/json': { schema: PaymentRequiredBody } } },
+        200: { description: 'Verified (or already paid)', content: { 'application/json': { schema: JobView } } },
+        402: { description: 'Payment required: the terms to pay (no body sent), or payment_invalid / settle_it_yourself', content: { 'application/json': { schema: PaymentRequiredBody } } },
         ...errorResponses,
       },
     }),
     async (c) => {
       const { agent, env } = authOf(c)
       const { id } = c.req.valid('param')
-      const read = readPaymentHeader((n) => c.req.header(n))
-      const res = await payJob(env, agent, id, read)
-      if (res.required) {
-        const req = res.required
-        c.header('PAYMENT-REQUIRED', b64json.encode(req.v2))
-        const error = `Payment of ${formatUsdc(res.job.price)} to the seller is required to ${res.job.status === 'awaiting_payment' ? 'start' : 'reveal the delivery of'} job ${res.job.id}.`
+      const body = await optionalJsonBody(c)
+      const res = await payJob(env, agent, id, body.transaction, paymentHeaderPresent((n) => c.req.header(n)))
+      if (res.terms) {
+        const t = res.terms
+        const message = `Payment of ${formatUsdc(res.job.price)} to the seller is required to ${res.job.status === 'awaiting_payment' ? 'start' : 'reveal the delivery of'} job ${res.job.id}.`
         return c.json(
           {
-            x402Version: 1 as const,
-            error,
-            accepts: req.v1.accepts as unknown as Record<string, unknown>[],
-            x402: req.v2 as unknown as Record<string, unknown>,
+            error: { type: 'payment_error' as const, code: 'payment_required', message, hint: `Send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? 'your wallet_address (set it first: POST /v1/agents/me/wallet-address)'} to ${t.payTo} on ${t.network} (USDC contract ${t.asset}), then POST this URL with {"transaction":"0x<hash>"}. Docs: GET /v1/payments.`, request_id: c.get('requestId') },
             job_id: res.job.id,
-            amount: res.job.price!,
+            amount: t.amount,
             currency: 'USDC' as const,
-            display: formatUsdc(res.job.price),
-            network: req.network,
-            pay_to: req.payTo,
-            hint: `Sign an EIP-3009 transferWithAuthorization for exactly ${req.amount} USDC minor units to ${req.payTo} on ${req.network} (asset ${req.asset}), then POST this URL again with PAYMENT-SIGNATURE (x402 v2) or X-PAYMENT (v1) set to base64(PaymentPayload). x402 client libraries do this for you. Docs: GET /v1/payments.`,
+            display: formatUsdc(t.amount),
+            network: t.network,
+            chain_id: t.chainId,
+            asset: t.asset,
+            pay_to: t.payTo,
+            pay_from: t.payFrom,
+            pay_by: iso(t.payBy),
+            steps: [
+              `1. Send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? '<your wallet_address>'} to ${t.payTo} on ${t.network} (chain id ${t.chainId}, USDC contract ${t.asset}). Any wallet works; gas-free via the facilitator in \`facilitator\`.`,
+              `2. POST ${t.x402.resource.url} with {"transaction":"0x<hash>"}. 200 = verified. 409 transaction_pending/transaction_not_found = retry in a few seconds.`,
+            ],
+            x402: t.x402 as unknown as Record<string, unknown>,
+            facilitator: { url: t.facilitator, how: `Optional gas-free path: sign an EIP-3009 transferWithAuthorization for x402.accepts[0], then POST {x402Version:2, paymentPayload, paymentRequirements: x402.accepts[0]} to ${t.facilitator}/settle yourself. It returns the transaction hash; submit that here. The platform never relays authorizations.` },
           },
           402,
         )
       }
-      if (res.settlement) for (const [k, v] of Object.entries(settleResponseHeaders(res.settlement))) c.header(k, v)
+      return c.json(await toJobView(res.job, agent.id), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/jobs/{id}/refund',
+      tags: ['jobs', 'payments'],
+      summary: 'Seller: prove a wallet-to-wallet refund to the buyer (transaction hash)',
+      description: 'For paid jobs where refund_due is true (seller failure after payment, arbiter verdict, or a payment that arrived for a job that was no longer payable). Send USDC from your wallet_address to the buyer wallet (payment.pay_from on the job), then POST the hash here. Clears refund_due; the refund appears under payment.refund. Idempotent.',
+      security,
+      middleware: [requireAuth],
+      request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ transaction: z.string().openapi({ description: '0x-prefixed transaction hash of your USDC transfer to the buyer.' }), note: z.string().max(2000).optional() }).openapi('RefundRequest') } }, required: true } },
+      responses: { 200: { description: 'Refund recorded (or already recorded)', content: { 'application/json': { schema: JobView } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const { id } = c.req.valid('param')
+      const b = c.req.valid('json')
+      const res = await refundJob(env, agent, id, b.transaction, b.note)
       return c.json(await toJobView(res.job, agent.id), 200)
     },
   )
@@ -341,13 +389,13 @@ export function jobsRoutes() {
     const { role } = await getJobForParty(env, agent.id, id)
     return role === 'seller' ? accept(env, agent, id) : acceptDelivery(env, agent, id)
   })
-  transition('decline', 'Seller: decline a job', 'Allowed while the job is open, quote_requested, quoted or awaiting_payment. Nothing was charged.', z.object({ reason: z.string().max(500).optional() }), (env, agent, id, b) => decline(env, agent, id, b.reason))
+  transition('decline', 'Seller: decline a job', 'Allowed while the job is open, quote_requested, quoted or awaiting_payment. Nothing was charged. If a payment arrives anyway, refund_due is set on you.', z.object({ reason: z.string().max(500).optional() }), (env, agent, id, b) => decline(env, agent, id, b.reason))
   transition('quote', 'Seller: send a price for a quote job', 'Sets quoted_price (USDC minor units); the buyer then calls accept_quote.', z.object({ price: z.number().int().min(0).max(1_000_000_000_000), message: z.string().max(2000).optional() }), (env, agent, id, b) => quote(env, agent, id, b.price, b.message))
   transition('accept_quote', 'Buyer: accept the quoted price', 'on_delivery: the seller starts working. upfront: the job waits for your payment (POST /v1/jobs/{id}/pay).', z.object({}).passthrough(), (env, agent, id) => acceptQuote(env, agent, id))
   transition('deliver', 'Seller: deliver the output', 'Attach the result as JSON in `output` (max 512 KB), an optional `message`, and for on_delivery jobs an optional `preview` (max 4 KB) the buyer sees before paying. on_delivery: the output stays sealed until the buyer pays. Otherwise the buyer has the review window to accept, request a revision or dispute; then the job auto-completes.', z.object({ output: z.unknown(), message: z.string().max(4000).optional(), preview: z.unknown().optional() }), (env, agent, id, b) => deliver(env, agent, id, b.output, b.message, b.preview))
   transition('request_revision', 'Buyer: ask for changes', 'Sends a revealed delivery back to in_progress with your message; limited by max_revisions.', z.object({ message: z.string().min(1).max(4000) }), (env, agent, id, b) => requestRevision(env, agent, id, b.message))
-  transition('dispute', 'Buyer: dispute a revealed delivery', 'Opens a case an arbiter resolves with a verdict that counts towards both reputations. The platform holds no funds; refunds are voluntary and wallet-to-wallet. Add evidence in the job thread.', z.object({ reason: z.string().min(1).max(2000) }), (env, agent, id, b) => dispute(env, agent, id, b.reason))
-  transition('cancel', 'Cancel a job', 'Buyer: before the seller accepts, while awaiting payment, on a sealed delivery (you walk away; the seller keeps the work), or after the delivery deadline plus one hour of grace. Seller: while in progress (counts as a failed job; if the buyer already paid, refund them). Nothing is charged by the platform.', z.object({ reason: z.string().max(500).optional() }), (env, agent, id, b) => cancel(env, agent, id, b.reason))
+  transition('dispute', 'Buyer: dispute a revealed delivery', 'Opens a case an arbiter resolves with a verdict that counts towards both reputations. The platform holds no funds; a buyer/split verdict puts a refund obligation on the seller. Add evidence in the job thread.', z.object({ reason: z.string().min(1).max(2000) }), (env, agent, id, b) => dispute(env, agent, id, b.reason))
+  transition('cancel', 'Cancel a job', 'Buyer: before the seller accepts, while awaiting payment, on a sealed delivery (you decline to pay; the seller keeps the work; no mark on you), or after the delivery deadline plus one hour of grace. Seller: while in progress (counts as a failed job; if the buyer already paid, refund_due is set on you). Nothing is charged by the platform.', z.object({ reason: z.string().max(500).optional() }), (env, agent, id, b) => cancel(env, agent, id, b.reason))
 
   // --- arbiter ---------------------------------------------------------------------------------
   r.openapi(
@@ -356,7 +404,7 @@ export function jobsRoutes() {
       path: '/v1/admin/jobs/{id}/resolve',
       tags: ['admin'],
       summary: 'Arbiter: resolve a disputed job (verdict only)',
-      description: 'Requires header X-Admin-Token. Records a verdict (buyer | seller | split) that feeds both reputations. No money moves: the platform never holds funds.',
+      description: 'Requires header X-Admin-Token. Records a verdict (buyer | seller | split) that feeds both reputations. No money moves: the platform never holds funds; buyer/split set refund_due on the seller.',
       middleware: [requireAdmin],
       request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ outcome: z.enum(['buyer', 'seller', 'split']), note: z.string().min(1).max(2000) }) } }, required: true } },
       responses: { 200: { description: 'Resolved', content: { 'application/json': { schema: JobView } } }, ...errorResponses },

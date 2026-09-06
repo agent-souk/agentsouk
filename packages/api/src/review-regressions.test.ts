@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent } from './test/setup.js'
+import { freshApp, call, createTestAgent, randomAddress, type TestAgent } from './test/setup.js'
+import { installFakeChain } from './test/chain.js'
 import { signRequest } from './test/sign.js'
 import type { App } from './app.js'
 import { _resetNonces } from './middleware/signatures.js'
@@ -10,18 +11,18 @@ import { config } from './config.js'
 
 /**
  * Regression tests derived from the adversarial review of 2026-09-06 (docs/REVIEW-2026-09-06.md).
- * Each test encodes a finding that was reproduced before the fix.
+ * Each test encodes a finding that was reproduced before the fix. Money-related findings were re-based on the
+ * non-custodial model (ADR-22): there is no ledger any more, so they now guard the equivalent invariants.
  */
 let app: App
 const BASE = 'http://localhost:8787'
-type Ag = Awaited<ReturnType<typeof createTestAgent>>
 
 beforeEach(async () => {
   app = await freshApp()
   _resetNonces()
 })
 
-function signed(a: Ag, method: string, path: string, opts: { body?: unknown; env?: string; secretKey?: string; nonce?: string } = {}) {
+function signed(a: TestAgent, method: string, path: string, opts: { body?: unknown; env?: string; secretKey?: string; nonce?: string } = {}) {
   const bodyText = opts.body !== undefined ? JSON.stringify(opts.body) : undefined
   const headers = signRequest({ method, url: `${BASE}${path}`, body: bodyText, secretKey: opts.secretKey ?? a.keypair!.secret_key, keyid: a.agent.id, nonce: opts.nonce, extraHeaders: opts.env ? { 'x-env': opts.env } : undefined })
   if (bodyText) headers['content-type'] = 'application/json'
@@ -31,28 +32,32 @@ async function send(method: string, path: string, headers: Record<string, string
   const res = await app.request(path, { method, headers, body: bodyText })
   return { status: res.status, body: (await res.json()) as any }
 }
-async function makeListing(seller: Ag, price: number | null, extra: Record<string, unknown> = {}) {
+async function makeListing(seller: TestAgent, price: number | null, extra: Record<string, unknown> = {}) {
   const r = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Regression listing', description: 'A listing used by the regression suite.', category: 'test', pricing_model: 'fixed', price, ...extra } })
   expect(r.status, JSON.stringify(r.body)).toBe(201)
   return r.body
 }
 
 describe('review regressions', () => {
-  it('F1: a 1-CRD job completes (fee capped at price, zero legs dropped) and the sweep survives', async () => {
+  it('F1: a 1-unit job completes end to end and the sweep survives', async () => {
+    const chain = installFakeChain('test')
     const seller = await createTestAgent(app, { name: 'Seller' })
     const buyer = await createTestAgent(app, { name: 'Buyer' })
     const l = await makeListing(seller, 1)
     const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { x: 1 } } })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: { ok: true } } })
+    const paid = await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, 1) } })
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200)
     const acc = await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: buyer.api_keys.test })
     expect(acc.status, JSON.stringify(acc.body)).toBe(200)
     expect(acc.body.status).toBe('completed')
-    expect(acc.body.fee).toBe(1)
+    expect(acc.body.payment.settlement.amount).toBe(1)
     const l2 = await makeListing(seller, 100)
     const j2 = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l2.id, input: { x: 1 } } })
     await call(app, 'POST', `/v1/jobs/${j2.body.id}/accept`, { key: seller.api_keys.test })
     await call(app, 'POST', `/v1/jobs/${j2.body.id}/deliver`, { key: seller.api_keys.test, body: { output: { ok: true } } })
+    await call(app, 'POST', `/v1/jobs/${j2.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, 100) } })
     const res = await sweepJobs(Date.now() + config().REVIEW_WINDOW_SECONDS_TEST * 1000 + 5000)
     expect(res.auto_completed).toBe(1)
     expect(res.errors).toBe(0)
@@ -75,27 +80,29 @@ describe('review regressions', () => {
     expect(ok).toBe(20)
   })
 
-  it('F5: signed money moves need a nonce and cannot be replayed or re-targeted', async () => {
-    const a = await createTestAgent(app, { name: 'Payer' })
-    const b = await createTestAgent(app, { name: 'Payee' })
-    const { headers, bodyText } = signed(a, 'POST', '/v1/wallet/transfers', { body: { to: b.agent.id, amount: 100 }, env: 'test' })
-    const r1 = await send('POST', '/v1/wallet/transfers', headers, bodyText)
-    expect(r1.status, JSON.stringify(r1.body)).toBe(201)
-    const r2 = await send('POST', '/v1/wallet/transfers', headers, bodyText)
+  it('F5: signed mutations need a nonce and cannot be replayed or re-targeted', async () => {
+    const a = await createTestAgent(app, { name: 'Payer', wallet_address: null })
+    const address = randomAddress()
+    const { headers, bodyText } = signed(a, 'POST', '/v1/agents/me/wallet-address', { body: { address }, env: 'test' })
+    const r1 = await send('POST', '/v1/agents/me/wallet-address', headers, bodyText)
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200)
+    expect(r1.body.wallet_address.toLowerCase()).toBe(address)
+    const r2 = await send('POST', '/v1/agents/me/wallet-address', headers, bodyText)
     expect(r2.status).toBe(401)
-    const r3 = await send('POST', '/v1/wallet/transfers', { ...headers, 'x-env': 'live' }, bodyText)
+    const r3 = await send('POST', '/v1/agents/me/wallet-address', { ...headers, 'x-env': 'live' }, bodyText)
     expect(r3.status).toBe(401)
-    expect((await call(app, 'GET', '/v1/wallet', { key: b.api_keys.test })).body.balances[0].available).toBe(100_100)
   })
 
   it('F10: Idempotency-Key is scoped per environment', async () => {
     const a = await createTestAgent(app, { name: 'Idem' })
-    const h = { 'idempotency-key': 'dep-1' }
-    const r1 = await call(app, 'POST', '/v1/wallet/deposits', { key: a.api_keys.test, body: { rail: 'sandbox', amount: 1000 }, headers: h })
+    const h = { 'idempotency-key': 'lst-1' }
+    const body = { title: 'Idempotent listing', description: 'Created once per environment.', category: 'test', pricing_model: 'fixed', price: 1000 }
+    const r1 = await call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body, headers: h })
     expect(r1.status).toBe(201)
-    const r2 = await call(app, 'POST', '/v1/wallet/deposits', { key: a.api_keys.live, body: { rail: 'sandbox', amount: 1000 }, headers: h })
-    expect(r2.status).toBe(400)
+    const r2 = await call(app, 'POST', '/v1/listings', { key: a.api_keys.live, body, headers: h })
+    expect(r2.status).toBe(201)
     expect(r2.headers.get('idempotent-replayed')).toBeNull()
+    expect(r2.body.id).not.toBe(r1.body.id)
   })
 
   it('F3: agent-authored reasons are attributed to the agent with content warnings, never to "system"', async () => {
@@ -114,23 +121,22 @@ describe('review regressions', () => {
     expect(fromSeller.content_warnings).toContain('instruction_override')
   })
 
-  it('P7: parallel transfers and same-key bursts never wedge the database', async () => {
+  it('P7: parallel writes and same-key bursts never wedge the database', async () => {
     const a = await createTestAgent(app, { name: 'A' })
-    const b = await createTestAgent(app, { name: 'B' })
-    const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => call(app, 'POST', '/v1/wallet/transfers', { key: a.api_keys.test, body: { to: b.agent.id, amount: 10, memo: `t${i}` } })))
+    const body = (i: number) => ({ title: `Parallel ${i}`, description: 'One of many listings created at once.', category: 'test', pricing_model: 'fixed', price: 10 })
+    const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(i) })))
     expect(rs.map((r) => r.status)).toEqual(Array(10).fill(201))
-    expect((await call(app, 'GET', '/v1/wallet', { key: b.api_keys.test })).body.balances[0].available).toBe(100_100)
-    const burst = await Promise.all([1, 2, 3].map(() => call(app, 'POST', '/v1/wallet/transfers', { key: a.api_keys.test, body: { to: b.agent.id, amount: 5 }, headers: { 'idempotency-key': 'concurrent' } })))
+    const burst = await Promise.all([1, 2, 3].map(() => call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(99), headers: { 'idempotency-key': 'concurrent' } })))
     const statuses = burst.map((r) => r.status).sort()
     expect(statuses.filter((s) => s === 201)).toHaveLength(1)
     expect(statuses.filter((s) => s === 409)).toHaveLength(2)
-    const again = await call(app, 'POST', '/v1/wallet/transfers', { key: a.api_keys.test, body: { to: b.agent.id, amount: 5 }, headers: { 'idempotency-key': 'concurrent' } })
+    const again = await call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(99), headers: { 'idempotency-key': 'concurrent' } })
     expect(again.status).toBe(201)
     expect(again.headers.get('idempotent-replayed')).toBe('true')
-    expect((await call(app, 'GET', '/v1/wallet', { key: b.api_keys.test })).body.balances[0].available).toBe(100_105)
+    expect((await call(app, 'GET', '/v1/agents/me/listings', { key: a.api_keys.test })).body.data).toHaveLength(11)
   })
 
-  it('F6: accept_quote racing sweep expiry never leaves escrow locked', async () => {
+  it('F6: accept_quote racing sweep expiry ends in exactly one consistent state', async () => {
     for (let attempt = 0; attempt < 4; attempt++) {
       const seller = await createTestAgent(app, { name: `QS${attempt}` })
       const buyer = await createTestAgent(app, { name: `QB${attempt}` })
@@ -141,14 +147,12 @@ describe('review regressions', () => {
       const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
       const [, acc] = await Promise.all([delay(attempt).then(() => sweepJobs(future)), delay(3 - attempt).then(() => call(app, 'POST', `/v1/jobs/${j.body.id}/accept_quote`, { key: buyer.api_keys.test }))])
       const jv = await call(app, 'GET', `/v1/jobs/${j.body.id}`, { key: buyer.api_keys.test })
-      const wallet = await call(app, 'GET', '/v1/wallet', { key: buyer.api_keys.test })
       if (jv.body.status === 'expired') {
         expect(acc.status).toBe(409)
-        expect(wallet.body.balances[0].in_escrow).toBe(0)
-        expect(wallet.body.balances[0].available).toBe(100_000)
+        expect(jv.body.payment.status).toBe('not_due')
       } else {
         expect(jv.body.status).toBe('in_progress')
-        expect(wallet.body.balances[0].in_escrow).toBe(500)
+        expect(jv.body.price).toBe(500)
       }
     }
   })

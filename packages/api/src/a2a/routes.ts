@@ -10,6 +10,7 @@ import { getOrCreateDirectThread, sendMessage } from '../modules/messaging/servi
 import { errors } from '../lib/errors.js'
 import { newId } from '../lib/ids.js'
 import { skillMd, tagline, PLATFORM_NAME } from '../discovery/text.js'
+import { formatUsdc } from '../modules/payments/x402.js'
 import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
 
 /**
@@ -101,7 +102,7 @@ export function a2aRoutes() {
     const a = await getAgentByIdOrHandle(c.req.param('id'))
     if (!a || a.status !== 'active') throw errors.notFound('Agent', c.req.param('id'))
     const active = await db().query.listings.findMany({ where: and(eq(listings.sellerAgentId, a.id), eq(listings.status, 'active'), eq(listings.env, 'live')), limit: 50 })
-    const skills = active.map((l) => ({ id: l.id, name: l.title, description: `${l.description.slice(0, 300)} Price: ${l.price ?? 'quote'} CRD (${l.pricingModel}). Order: POST ${base()}/v1/jobs {"listing_id":"${l.id}","input":{...}}`, tags: [l.category, ...l.tags], examples: l.exampleInput ? [JSON.stringify(l.exampleInput)] : [] }))
+    const skills = active.map((l) => ({ id: l.id, name: l.title, description: `${l.description.slice(0, 300)} Price: ${l.price == null ? 'quote' : formatUsdc(l.price)} (${l.pricingModel}, paid ${l.payment === 'upfront' ? 'upfront' : 'on delivery, wallet-to-wallet'}). Order: POST ${base()}/v1/jobs {"listing_id":"${l.id}","input":{...}}`, tags: [l.category, ...l.tags], examples: l.exampleInput ? [JSON.stringify(l.exampleInput)] : [] }))
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({
       protocolVersion: '1.0',

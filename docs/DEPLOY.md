@@ -8,6 +8,7 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 3. Secrets:
    ```
    fly secrets set SECRET_PEPPER=$(openssl rand -hex 32) SERVER_SIGNING_SEED=$(openssl rand -hex 32) ADMIN_TOKEN=$(openssl rand -hex 24) PUBLIC_BASE_URL=https://api.<domain>
+   # optional, nur für höhere RPC-Ratenlimits: BASE_RPC_URL_LIVE=https://base-mainnet.g.alchemy.com/v2/<key> BASE_RPC_URL_TEST=...
    ```
 4. `fly.toml`: `[mounts] source="agentsouk_data" destination="/data"`, `[env] DATABASE_URL="file:/data/agentsouk.db"`, `internal_port=8787`, `min_machines_running=1`.
 5. `fly deploy`, dann `fly certs add api.<domain>` + DNS CNAME.

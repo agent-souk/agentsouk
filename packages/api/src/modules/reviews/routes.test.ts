@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { installFakeChain, FakeChain } from '../../test/chain.js'
+import { _setRpcFetchForTests } from '../payments/chain.js'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { bayesianRating, scoreOf, emptySide } from './service.js'
@@ -7,9 +9,13 @@ let app: App
 type Ag = Awaited<ReturnType<typeof createTestAgent>>
 let seller: Ag
 let buyer: Ag
+let chain: FakeChain
+let liveChain: FakeChain
 
 beforeEach(async () => {
   app = await freshApp()
+  chain = installFakeChain('test')
+  liveChain = new FakeChain('live')
   seller = await createTestAgent(app, { name: 'Seller' })
   buyer = await createTestAgent(app, { name: 'Buyer' })
 })
@@ -20,6 +26,13 @@ async function completedJob(env: 'test' | 'live', s: Ag, b: Ag, price: number) {
   if (j.status !== 201) throw new Error(JSON.stringify(j.body))
   await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: s.api_keys[env] })
   await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: s.api_keys[env], body: { output: 'ok' } })
+  if (price > 0) {
+    const c = env === 'live' ? liveChain : chain
+    _setRpcFetchForTests(c.fetch)
+    const paid = await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: b.api_keys[env], body: { transaction: c.pay(b.wallet_address!, s.wallet_address!, price, { confirmations: env === 'live' ? 3 : 1 }) } })
+    _setRpcFetchForTests(chain.fetch)
+    if (paid.status !== 200) throw new Error('not paid: ' + JSON.stringify(paid.body))
+  }
   const done = await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: b.api_keys[env] })
   if (done.body.status !== 'completed') throw new Error('not completed: ' + JSON.stringify(done.body))
   return j.body as { id: string; listing_id: string }
@@ -41,6 +54,7 @@ describe('reviews & reputation', () => {
     expect(early.body.error.code).toBe('job_not_settled')
     await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: 'ok' } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, 1000) } })
     await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: buyer.api_keys.test })
 
     const rev = await call(app, 'POST', `/v1/jobs/${j.body.id}/reviews`, { key: buyer.api_keys.test, body: { rating: 5, comment: 'great' } })
@@ -58,7 +72,7 @@ describe('reviews & reputation', () => {
 
     const rep = await call(app, 'GET', `/v1/agents/${seller.agent.handle}/reputation`)
     expect(rep.status).toBe(200)
-    expect(rep.body.test.as_seller).toMatchObject({ jobs_completed: 1, distinct_counterparties: 1, volume_crd: 1000, rating_count: 1, rating_avg: 3.75, on_time_rate: 1 })
+    expect(rep.body.test.as_seller).toMatchObject({ jobs_completed: 1, distinct_counterparties: 1, volume_usdc: 1000, rating_count: 1, rating_avg: 3.75, on_time_rate: 1 })
     expect(rep.body.test.score).toBeGreaterThan(20)
     expect(rep.body.live.as_seller.jobs_completed).toBe(0)
     expect(rep.body.trust_tier).toBe(0)
@@ -75,11 +89,13 @@ describe('reviews & reputation', () => {
     expect([200, 404]).toContain(ev.status)
   })
 
-  it('promotes trust tier after 5 completed live jobs with 3 distinct counterparties', async () => {
+  it('promotes trust tier after 5 completed PAID live jobs from 3 distinct paying wallets; free jobs do not count', async () => {
     const buyers = [buyer, await createTestAgent(app, { name: 'B2' }), await createTestAgent(app, { name: 'B3' })]
     for (let i = 0; i < 5; i++) await completedJob('live', seller, buyers[i % 3]!, 0)
+    expect((await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body.trust_tier).toBe(0)
+    for (let i = 0; i < 5; i++) await completedJob('live', seller, buyers[i % 3]!, 10)
     const rep = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)
-    expect(rep.body.live.as_seller.jobs_completed).toBe(5)
+    expect(rep.body.live.as_seller.jobs_completed).toBe(10)
     expect(rep.body.live.as_seller.distinct_counterparties).toBe(3)
     expect(rep.body.trust_tier).toBe(1)
     const me = await call(app, 'GET', '/v1/agents/me', { key: seller.api_keys.live })

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, createTestAgent } from '../test/setup.js'
+import { installFakeChain } from '../test/chain.js'
+import { freshApp, createTestAgent, randomAddress } from '../test/setup.js'
 import type { App } from '../app.js'
 
 let app: App
@@ -33,15 +34,15 @@ describe('mcp', () => {
     expect(init.body.result.instructions).toContain('register_agent')
     const tools = await rpc('tools/list')
     const names = tools.body.result.tools.map((t: any) => t.name)
-    for (const n of ['register_agent', 'whoami', 'wallet', 'search_listings', 'create_listing', 'create_job', 'job_action', 'inbox', 'send_message', 'events', 'api_request', 'search_bounties', 'review_job']) expect(names).toContain(n)
+    for (const n of ['register_agent', 'whoami', 'payment_info', 'set_wallet_address', 'search_listings', 'create_listing', 'create_job', 'job_action', 'inbox', 'send_message', 'events', 'api_request', 'search_bounties', 'review_job']) expect(names).toContain(n)
     expect(tools.body.result.tools.length).toBeLessThan(40)
     const createJob = tools.body.result.tools.find((t: any) => t.name === 'create_job')
-    expect(createJob.description).toContain('escrow')
+    expect(createJob.description).toContain('wallet-to-wallet')
     expect(createJob.inputSchema.required).toContain('listing_id')
   })
 
   it('registers via tool, then uses authenticated tools end to end', async () => {
-    const reg = await rpc('tools/call', { name: 'register_agent', arguments: { name: 'MCP Seller', capabilities: ['translation'], framework: 'mcp-test' } })
+    const reg = await rpc('tools/call', { name: 'register_agent', arguments: { name: 'MCP Seller', capabilities: ['translation'], framework: 'mcp-test', wallet_address: randomAddress() } })
     expect(reg.status).toBe(200)
     expect(reg.body.result.isError).toBe(false)
     const created = reg.body.result.structuredContent
@@ -70,12 +71,24 @@ describe('mcp', () => {
     expect(acc.body.result.structuredContent.status).toBe('in_progress')
     const del = await rpc('tools/call', { name: 'job_action', arguments: { id: jobId, action: 'deliver', output: { translation: 'hallo' } } }, { key })
     expect(del.body.result.structuredContent.status).toBe('delivered')
+    const sealed = await rpc('tools/call', { name: 'job_action', arguments: { id: jobId, action: 'accept' } }, { key: buyer.api_keys.test })
+    expect(sealed.body.result.isError).toBe(true)
+    const terms = await rpc('tools/call', { name: 'job_action', arguments: { id: jobId, action: 'pay' } }, { key: buyer.api_keys.test })
+    expect(terms.body.result.isError).toBe(false)
+    expect(terms.body.result.structuredContent.pay_to.toLowerCase()).toBe(created.wallet_address.toLowerCase())
+    const chain = installFakeChain('test')
+    const tx = chain.pay(buyer.wallet_address!, terms.body.result.structuredContent.pay_to, terms.body.result.structuredContent.amount)
+    const paid = await rpc('tools/call', { name: 'job_action', arguments: { id: jobId, action: 'pay', transaction: tx } }, { key: buyer.api_keys.test })
+    expect(paid.body.result.isError).toBe(false)
+    expect(paid.body.result.structuredContent.output).toEqual({ translation: 'hallo' })
     const done = await rpc('tools/call', { name: 'job_action', arguments: { id: jobId, action: 'accept' } }, { key: buyer.api_keys.test })
     expect(done.body.result.structuredContent.status).toBe('completed')
-    const wallet = await rpc('tools/call', { name: 'wallet', arguments: {} }, { key })
-    expect(wallet.body.result.structuredContent.balances[0].available).toBe(100_000 + 300 - 9)
+    const info = await rpc('tools/call', { name: 'payment_info', arguments: {} }, { key })
+    expect(info.body.result.structuredContent.model).toBe('proof_of_payment')
+    const stl = await rpc('tools/call', { name: 'my_settlements', arguments: {} }, { key })
+    expect(stl.body.result.structuredContent.data[0].transaction).toBe(tx)
     const raw = await rpc('tools/call', { name: 'api_request', arguments: { method: 'GET', path: '/v1/jobs/' + jobId + '/events' } }, { key })
-    expect(raw.body.result.structuredContent.data.length).toBe(4)
+    expect(raw.body.result.structuredContent.data.length).toBe(5)
     const bad = await rpc('tools/call', { name: 'api_request', arguments: { method: 'GET', path: '/health' } }, { key })
     expect(bad.body.error ?? bad.body.result?.isError).toBeTruthy()
   })

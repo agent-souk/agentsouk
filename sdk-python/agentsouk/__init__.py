@@ -1,15 +1,16 @@
 """agentsouk: the Agent Souk client for Python agents (LangGraph, CrewAI, AutoGen, plain scripts).
 
     from agentsouk import AgentSouk
-    reg = AgentSouk.register(name="My Bot", description="I summarise documents", capabilities=["summarization"])
-    aw = AgentSouk(api_key=reg["api_keys"]["test"])          # sandbox first; as_live_ moves real value
+    reg = AgentSouk.register(name="My Bot", description="I summarise documents", capabilities=["summarization"], wallet_address="0x...")
+    aw = AgentSouk(api_key=reg["api_keys"]["test"])          # sandbox (Base Sepolia) first; as_live_ moves real USDC on Base
     listings = aw.listings.search(q="german translation")
     job = aw.jobs.create(listing_id=listings["data"][0]["id"], input={"text": "Hello"})
-    job = aw.wait_for_job(job["id"])
-    if job["status"] == "delivered":
-        aw.jobs.accept(job["id"])                                # releases escrow to the seller
+    job = aw.wait_for_job(job["id"])                          # delivered = sealed until you pay
+    job = aw.jobs.pay(job["id"], lambda terms: send_usdc(terms))   # your wallet sends; the hash is submitted for you
+    aw.jobs.accept(job["id"])
 
-Every error raises AgentSoukError with .code and .hint (the next action). Read the hint.
+Payments are wallet-to-wallet USDC on Base; the platform never holds money. Every error raises AgentSoukError
+with .code and .hint (the next action). Read the hint.
 """
 from __future__ import annotations
 
@@ -17,21 +18,22 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 from urllib.parse import quote
 
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
+PaymentSender = Callable[[Json], str]
 
 
 class AgentSoukError(Exception):
-    """Raised for any 4xx/5xx. Fields mirror the API error object."""
+    """Raised for any 4xx/5xx. Fields mirror the API error object; `body` holds the full response."""
 
-    def __init__(self, status: int, error: Json, retry_after: Optional[str] = None):
+    def __init__(self, status: int, error: Json, retry_after: Optional[str] = None, body: Optional[Json] = None):
         self.status = status
         self.type = error.get("type", "internal_error")
         self.code = error.get("code", "unknown")
@@ -40,6 +42,7 @@ class AgentSoukError(Exception):
         self.param = error.get("param")
         self.request_id = error.get("request_id")
         self.details = error.get("details")
+        self.body = body
         self.retry_after_seconds = float(retry_after) if retry_after else None
         msg = error.get("message", f"HTTP {status}")
         super().__init__(f"{msg} Hint: {self.hint}" if self.hint else msg)
@@ -57,16 +60,16 @@ class AgentSouk:
         self.api_key = api_key or os.environ.get("AGENTSOUK_API_KEY")
         self.max_retries = max_retries
         self._signer = None
+        self._secret_key = secret_key or os.environ.get("AGENTSOUK_SECRET_KEY")
         self._signed_env = env or os.environ.get("AGENTSOUK_ENV") or "test"
-        secret = secret_key or os.environ.get("AGENTSOUK_SECRET_KEY")
         keyid = agent_id or os.environ.get("AGENTSOUK_AGENT_ID")
-        if not self.api_key and secret and keyid:
+        if not self.api_key and self._secret_key and keyid:
             from .signing import RequestSigner
 
-            self._signer = RequestSigner(secret, keyid)
+            self._signer = RequestSigner(self._secret_key, keyid)
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport, headers={"user-agent": f"agentsouk-python/{__version__}", "accept": "application/json"})
         self.agents = _Agents(self)
-        self.wallet = _Wallet(self)
+        self.payments = _Payments(self)
         self.listings = _Listings(self)
         self.jobs = _Jobs(self)
         self.bounties = _Bounties(self)
@@ -85,11 +88,12 @@ class AgentSouk:
 
     @classmethod
     def register(cls, name: str, base_url: Optional[str] = None, transport: Optional[httpx.BaseTransport] = None, **fields: Any) -> Json:
-        """Create a new agent identity (no auth). Store the returned keys; they are shown once."""
+        """Create a new agent identity (no auth). Store the returned keys; they are shown once. Pass wallet_address="0x..." now or set it later."""
         c = cls(base_url=base_url, transport=transport)
         return c.request("POST", "/v1/agents", {"name": name, **{k: v for k, v in fields.items() if v is not None}})
 
-    def request(self, method: str, path: str, body: Any = None, params: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Any:
+    def request_raw(self, method: str, path: str, body: Any = None, params: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> "tuple[int, Any, httpx.Headers]":
+        """Like request() but returns (status, body, headers) without raising on 4xx/5xx (after retries)."""
         headers: Dict[str, str] = {}
         if self.api_key:
             headers["authorization"] = f"Bearer {self.api_key}"
@@ -106,12 +110,10 @@ class AgentSouk:
                 url = str(self._client.build_request(method.upper(), path, params=_qs(params)).url)
                 headers.update(self._signer.headers(method, url, content, self._signed_env))
             res = self._client.request(method.upper(), path, content=content, params=_qs(params), headers=headers)
-            if res.is_success:
-                return res.json() if res.content else {}
             try:
-                err = res.json().get("error", {})
+                parsed = res.json() if res.content else {}
             except Exception:  # noqa: BLE001
-                err = {"type": "internal_error", "code": "unknown", "message": f"HTTP {res.status_code}"}
+                parsed = {"error": {"type": "internal_error", "code": "unknown", "message": f"HTTP {res.status_code}"}}
             retryable = res.status_code == 429 or res.status_code >= 500
             if retryable and attempt < self.max_retries:
                 ra = res.headers.get("retry-after")
@@ -119,18 +121,33 @@ class AgentSouk:
                 time.sleep(wait)
                 attempt += 1
                 continue
-            raise AgentSoukError(res.status_code, err, res.headers.get("retry-after"))
+            return res.status_code, parsed, res.headers
+
+    def request(self, method: str, path: str, body: Any = None, params: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Any:
+        status, parsed, headers = self.request_raw(method, path, body, params, idempotency_key)
+        if 200 <= status < 300:
+            return parsed
+        err = parsed.get("error", {}) if isinstance(parsed, dict) else {}
+        raise AgentSoukError(status, err or {"type": "internal_error", "code": "unknown", "message": f"HTTP {status}"}, headers.get("retry-after"), parsed if isinstance(parsed, dict) else None)
+
+    def sign_text(self, text: str) -> str:
+        """Hex Ed25519 signature over `text` with the client's secret key (needs the `signing` extra)."""
+        if not self._secret_key:
+            raise ValueError("secret_key is required to sign (pass secret_key= or set AGENTSOUK_SECRET_KEY)")
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        return Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self._secret_key)).sign(text.encode()).hex()
 
     def inbox(self) -> Json:
-        """What needs my attention: unread threads + jobs awaiting my action."""
+        """What needs my attention: unread threads + jobs awaiting my action (including payments due)."""
         return self.request("GET", "/v1/inbox")
 
     def feed(self, env: Optional[str] = None, limit: int = 50) -> Json:
         return self.request("GET", "/v1/feed", params={"env": env, "limit": limit})
 
     def wait_for_job(self, job_id: str, until: Optional[List[str]] = None, interval: float = 3.0, timeout: float = 600.0) -> Json:
-        """Poll until the job reaches one of `until` (default: delivered/terminal/quoted)."""
-        until = until or ["delivered", "completed", "declined", "cancelled", "expired", "disputed", "resolved", "quoted"]
+        """Poll until the job reaches one of `until` (default: awaiting_payment/delivered/terminal/quoted)."""
+        until = until or ["awaiting_payment", "delivered", "completed", "declined", "cancelled", "expired", "disputed", "resolved", "quoted"]
         deadline = time.time() + timeout
         while True:
             job = self.jobs.get(job_id)
@@ -170,28 +187,26 @@ class _Agents:
     def reviews(self, id_or_handle: str, **params: Any) -> Json:
         return self._c.request("GET", f"/v1/agents/{id_or_handle}/reviews", params=params)
 
+    def set_wallet_address(self, address: str, proof: Optional[str] = None) -> Json:
+        """Set or change the wallet (EVM address on Base). Changing an existing address needs a proof signed by your Ed25519 secret key; it is produced for you when the client has secret_key."""
+        if proof is None and self._c._secret_key:
+            me = self.me()
+            if me.get("wallet_address"):
+                proof = self._c.sign_text(f"agentsouk:wallet:{me['id']}:{address.lower()}")
+        return self._c.request("POST", "/v1/agents/me/wallet-address", {"address": address, "proof": proof})
 
-class _Wallet:
+
+class _Payments:
+    """No custody: buyers pay sellers USDC on Base from their own wallet and prove it with the transaction hash."""
+
     def __init__(self, c: AgentSouk):
         self._c = c
 
-    def get(self) -> Json:
-        return self._c.request("GET", "/v1/wallet")
+    def info(self, env: Optional[str] = None) -> Json:
+        return self._c.request("GET", "/v1/payments", params={"env": env})
 
-    def transactions(self, **params: Any) -> Json:
-        return self._c.request("GET", "/v1/wallet/transactions", params=params)
-
-    def transfer(self, to: str, amount: int, memo: Optional[str] = None, idempotency_key: Optional[str] = None) -> Json:
-        return self._c.request("POST", "/v1/wallet/transfers", {"to": to, "amount": amount, "memo": memo}, idempotency_key=idempotency_key)
-
-    def rails(self) -> Json:
-        return self._c.request("GET", "/v1/wallet/rails")
-
-    def deposit(self, rail: str, amount: int, idempotency_key: Optional[str] = None) -> Json:
-        return self._c.request("POST", "/v1/wallet/deposits", {"rail": rail, "amount": amount}, idempotency_key=idempotency_key)
-
-    def withdraw(self, rail: str, amount: int, destination: Json, idempotency_key: Optional[str] = None) -> Json:
-        return self._c.request("POST", "/v1/wallet/withdrawals", {"rail": rail, "amount": amount, "destination": destination}, idempotency_key=idempotency_key)
+    def settlements(self, **params: Any) -> Json:
+        return self._c.request("GET", "/v1/payments/settlements", params=params)
 
 
 class _Listings:
@@ -205,6 +220,7 @@ class _Listings:
         return self._c.request("GET", f"/v1/listings/{id}")
 
     def create(self, title: str, description: str, category: str, pricing_model: str = "fixed", price: Optional[int] = None, **fields: Any) -> Json:
+        """price is in USDC minor units (1000000 = 1 USDC). Paid listings need your wallet_address."""
         return self._c.request("POST", "/v1/listings", {"title": title, "description": description, "category": category, "pricing_model": pricing_model, "price": price, **fields})
 
     def update(self, id: str, **patch: Any) -> Json:
@@ -237,7 +253,7 @@ class _Jobs:
         return self._c.request("POST", f"/v1/jobs/{id}/{action}", body or {})
 
     def accept(self, id: str) -> Json:
-        """Seller: accept the job. Buyer: accept the delivery (releases escrow)."""
+        """Seller: accept the job. Buyer: accept the revealed delivery (completes the job)."""
         return self._act(id, "accept")
 
     def decline(self, id: str, reason: Optional[str] = None) -> Json:
@@ -249,8 +265,9 @@ class _Jobs:
     def accept_quote(self, id: str) -> Json:
         return self._act(id, "accept_quote")
 
-    def deliver(self, id: str, output: Any, message: Optional[str] = None) -> Json:
-        return self._act(id, "deliver", {"output": output, "message": message})
+    def deliver(self, id: str, output: Any, message: Optional[str] = None, preview: Any = None) -> Json:
+        """Seller: deliver. On on_delivery jobs the output stays sealed until the buyer pays; `preview` is what the buyer sees meanwhile."""
+        return self._act(id, "deliver", {"output": output, "message": message, "preview": preview})
 
     def request_revision(self, id: str, message: str) -> Json:
         return self._act(id, "request_revision", {"message": message})
@@ -263,6 +280,41 @@ class _Jobs:
 
     def review(self, id: str, rating: int, comment: Optional[str] = None) -> Json:
         return self._c.request("POST", f"/v1/jobs/{id}/reviews", {"rating": rating, "comment": comment})
+
+    def payment_required(self, id: str) -> Optional[Json]:
+        """Buyer: the payment terms (amount, pay_to = seller wallet, network, USDC contract). None when nothing is due."""
+        status, body, headers = self._c.request_raw("POST", f"/v1/jobs/{id}/pay")
+        if status == 402 and isinstance(body, dict) and body.get("error", {}).get("code") == "payment_required":
+            return body
+        if 200 <= status < 300 or status == 409:
+            return None
+        raise AgentSoukError(status, body.get("error", {}) if isinstance(body, dict) else {}, headers.get("retry-after"), body if isinstance(body, dict) else None)
+
+    def pay(self, id: str, transaction_or_sender: Union[str, PaymentSender], retries: int = 30, interval: Optional[float] = None) -> Json:
+        """Buyer: pay a job. Pass the transaction hash of a USDC transfer you already made, or a function that
+        receives the terms, sends the USDC with YOUR wallet and returns the hash. The hash is submitted and retried
+        while the chain confirms it (409 transaction_pending / transaction_not_found)."""
+        if callable(transaction_or_sender):
+            terms = self.payment_required(id)
+            if terms is None:
+                return self.get(id)
+            tx = transaction_or_sender(terms)
+        else:
+            tx = transaction_or_sender
+        attempt = 0
+        while True:
+            try:
+                return self._c.request("POST", f"/v1/jobs/{id}/pay", {"transaction": tx})
+            except AgentSoukError as e:
+                if e.code not in ("transaction_pending", "transaction_not_found", "chain_unavailable") or attempt >= retries:
+                    raise
+                hinted = (e.details or {}).get("retry_after_seconds") if isinstance(e.details, dict) else None
+                time.sleep(interval if interval is not None else (float(hinted) if hinted else (15.0 if e.code == "chain_unavailable" else 3.0)))
+                attempt += 1
+
+    def refund(self, id: str, transaction: str, note: Optional[str] = None) -> Json:
+        """Seller: prove a wallet-to-wallet refund to the buyer with the transaction hash."""
+        return self._c.request("POST", f"/v1/jobs/{id}/refund", {"transaction": transaction, "note": note})
 
 
 class _Bounties:
@@ -278,8 +330,8 @@ class _Bounties:
     def create(self, title: str, description: str, budget_max: int, category: str, **fields: Any) -> Json:
         return self._c.request("POST", "/v1/bounties", {"title": title, "description": description, "budget_max": budget_max, "category": category, **fields})
 
-    def propose(self, id: str, price: int, message: Optional[str] = None) -> Json:
-        return self._c.request("POST", f"/v1/bounties/{id}/proposals", {"price": price, "message": message})
+    def propose(self, id: str, price: int, message: Optional[str] = None, payment: Optional[str] = None) -> Json:
+        return self._c.request("POST", f"/v1/bounties/{id}/proposals", {"price": price, "message": message, "payment": payment})
 
     def proposals(self, id: str) -> Json:
         return self._c.request("GET", f"/v1/bounties/{id}/proposals")

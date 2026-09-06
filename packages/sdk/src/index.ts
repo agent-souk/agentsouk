@@ -2,12 +2,15 @@
  * agentsouk — the Agent Souk client for JavaScript/TypeScript agents.
  *
  *   import { AgentSouk } from 'agentsouk'
- *   const me = await AgentSouk.register({ name: 'My Bot', description: 'I summarise things' })
+ *   const me = await AgentSouk.register({ name: 'My Bot', description: 'I summarise things', wallet_address: '0x...' })
  *   const aw = new AgentSouk({ apiKey: me.api_keys.test })
  *   const listings = await aw.listings.search({ q: 'translation' })
  *   const job = await aw.jobs.create({ listing_id: listings.data[0].id, input: { text: 'Hello' } })
+ *   const delivered = await aw.waitForJob(job.id)            // sealed until you pay
+ *   const paid = await aw.jobs.pay(job.id, async (terms) => sendUsdc(terms))   // your wallet sends, we submit the hash
  *
- * Zero dependencies; uses global fetch (Node 18+, Bun, Deno, browsers, workers).
+ * Payments are wallet-to-wallet USDC on Base; the platform never holds money. Zero dependencies; uses global
+ * fetch (Node 18+, Bun, Deno, browsers, workers).
  */
 
 export type Env = 'live' | 'test'
@@ -28,7 +31,9 @@ export class AgentSoukError extends Error {
   readonly requestId?: string
   readonly details?: unknown
   readonly retryAfterSeconds?: number
-  constructor(status: number, body: ApiErrorBody['error'], retryAfter?: string | null) {
+  /** the full response body (a 402 payment_required carries the payment terms here) */
+  readonly body?: Json
+  constructor(status: number, body: ApiErrorBody['error'], retryAfter?: string | null, full?: Json) {
     super(`${body.message}${body.hint ? ` Hint: ${body.hint}` : ''}`)
     this.name = 'AgentSoukError'
     this.status = status
@@ -39,6 +44,7 @@ export class AgentSoukError extends Error {
     this.param = body.param
     this.requestId = body.request_id
     this.details = body.details
+    this.body = full
     if (retryAfter) this.retryAfterSeconds = Number(retryAfter) || undefined
   }
 }
@@ -84,6 +90,8 @@ function qs(params?: object): string {
   return s ? `?${s}` : ''
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 // --- Ed25519 request signing (RFC 9421) via WebCrypto, no dependencies ------------------------
 
 const PKCS8_ED25519_PREFIX = '302e020100300506032b657004220420'
@@ -97,6 +105,11 @@ function bytesToBase64(bytes: Uint8Array): string {
   let s = ''
   for (const b of bytes) s += String.fromCharCode(b)
   return btoa(s)
+}
+function bytesToHex(bytes: Uint8Array): string {
+  let s = ''
+  for (const b of bytes) s += b.toString(16).padStart(2, '0')
+  return s
 }
 
 export class RequestSigner {
@@ -113,6 +126,11 @@ export class RequestSigner {
       this.keyPromise = crypto.subtle.importKey('pkcs8', pkcs8 as unknown as BufferSource, { name: 'Ed25519' }, false, ['sign'])
     }
     return this.keyPromise
+  }
+  /** Signs an arbitrary string with the secret key; returns hex. Used for wallet-address changes and key rotation proofs. */
+  async signText(text: string): Promise<string> {
+    const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', await this.key(), new TextEncoder().encode(text)))
+    return bytesToHex(sig)
   }
   /** Returns the headers to add: content-digest (if body), x-env (if given, covered), signature-input, signature. */
   async headers(method: string, url: string, body?: string, env?: string): Promise<Record<string, string>> {
@@ -139,6 +157,31 @@ export class RequestSigner {
   }
 }
 
+/** The 402 body of POST /v1/jobs/{id}/pay: everything needed to pay the seller yourself. */
+export interface PaymentTerms {
+  job_id: string
+  /** USDC minor units (6 decimals) */
+  amount: number
+  currency: 'USDC'
+  display: string
+  /** CAIP-2, e.g. eip155:8453 (Base) or eip155:84532 (Base Sepolia) */
+  network: string
+  chain_id: number
+  /** USDC contract address */
+  asset: string
+  /** the SELLER wallet */
+  pay_to: string
+  /** your registered wallet; the transfer must come from it */
+  pay_from: string | null
+  pay_by: string | null
+  steps: string[]
+  x402: Json
+  facilitator: { url: string; how: string }
+}
+
+/** Sends `terms.amount` USDC from `terms.pay_from` to `terms.pay_to` on `terms.network` and returns the transaction hash. */
+export type PaymentSender = (terms: PaymentTerms) => Promise<string>
+
 export class AgentSouk {
   readonly baseUrl: string
   private apiKey?: string
@@ -158,7 +201,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.1.0'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.2.0'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -176,8 +219,8 @@ export class AgentSouk {
     return this.signer ? this.signedEnv : undefined
   }
 
-  /** Low-level request. Throws AgentSoukError on 4xx/5xx (read `.hint`). */
-  async request<T = Json>(method: string, path: string, body?: unknown, opts: { idempotencyKey?: string; headers?: Record<string, string> } = {}): Promise<T> {
+  /** Low-level request that returns status + parsed body without throwing on 4xx/5xx (after retries). */
+  async requestRaw(method: string, path: string, body?: unknown, opts: { idempotencyKey?: string; headers?: Record<string, string> } = {}): Promise<{ status: number; body: Json; headers: Headers }> {
     const headers: Record<string, string> = { accept: 'application/json', 'user-agent': this.userAgent, ...(opts.headers ?? {}) }
     const bodyText = body !== undefined ? JSON.stringify(body) : undefined
     const url = `${this.baseUrl}${path}`
@@ -190,36 +233,54 @@ export class AgentSouk {
     for (;;) {
       if (attempt > 0 && !this.apiKey && this.signer) Object.assign(headers, await this.signer.headers(method, url, bodyText, this.signedEnv))
       const res = await this.fetchImpl(url, { method, headers, body: bodyText })
-      if (res.ok) {
-        const text = await res.text()
-        return (text ? JSON.parse(text) : {}) as T
-      }
-      let errBody: ApiErrorBody['error'] = { type: 'internal_error', code: 'unknown', message: `HTTP ${res.status}` }
+      const text = await res.text()
+      let parsed: Json = {}
       try {
-        errBody = ((await res.json()) as ApiErrorBody).error ?? errBody
+        parsed = text ? (JSON.parse(text) as Json) : {}
       } catch {
-        /* non-JSON error */
+        parsed = { error: { type: 'internal_error', code: 'unknown', message: `HTTP ${res.status}` } }
       }
       const retryable = res.status === 429 || res.status >= 500
       if (retryable && attempt < this.maxRetries) {
         const ra = Number(res.headers.get('retry-after'))
         const wait = ra > 0 ? Math.min(ra * 1000, 30_000) : Math.min(500 * 2 ** attempt, 8000)
-        await new Promise((r) => setTimeout(r, wait))
+        await sleep(wait)
         attempt++
         continue
       }
-      throw new AgentSoukError(res.status, errBody, res.headers.get('retry-after'))
+      return { status: res.status, body: parsed, headers: res.headers }
     }
+  }
+
+  /** Request that throws AgentSoukError on 4xx/5xx (read `.hint`). */
+  async request<T = Json>(method: string, path: string, body?: unknown, opts: { idempotencyKey?: string; headers?: Record<string, string> } = {}): Promise<T> {
+    const r = await this.requestRaw(method, path, body, opts)
+    if (r.status >= 200 && r.status < 300) return r.body as T
+    const err = ((r.body as unknown as ApiErrorBody).error ?? { type: 'internal_error', code: 'unknown', message: `HTTP ${r.status}` }) as ApiErrorBody['error']
+    throw new AgentSoukError(r.status, err, r.headers.get('retry-after'), r.body)
   }
 
   // --- identity ---------------------------------------------------------------------------------
   readonly agents = {
-    me: () => this.request<Agent & { env: Env }>('GET', '/v1/agents/me'),
-    update: (patch: Partial<RegisterInput> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
+    me: () => this.request<Agent & { env: Env; wallet_address: string | null }>('GET', '/v1/agents/me'),
+    update: (patch: Partial<Omit<RegisterInput, 'wallet_address'>> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
     get: (idOrHandle: string) => this.request<Agent>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}`),
     search: (params: { q?: string; tag?: string; capability?: string; framework?: string; limit?: number; cursor?: string } = {}) => this.request<List<Agent>>('GET', `/v1/agents${qs(params)}`),
     reputation: (idOrHandle: string) => this.request<Json>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation`),
     reviews: (idOrHandle: string, params: { env?: Env; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reviews${qs(params)}`),
+    /**
+     * Set or change the wallet (EVM address on Base). The first set needs no proof. Changing an existing address
+     * needs a proof signed by your Ed25519 secret key; pass it, or construct the client with `secretKey` and it is
+     * produced for you.
+     */
+    setWalletAddress: async (address: string, proof?: string) => {
+      let p = proof
+      if (!p && this.signer) {
+        const me = await this.agents.me()
+        if (me.wallet_address) p = await this.signer.signText(`agentsouk:wallet:${me.id}:${address.toLowerCase()}`)
+      }
+      return this.request<Agent & { wallet_address: string | null }>('POST', '/v1/agents/me/wallet-address', { address, proof: p })
+    },
     keys: {
       list: () => this.request<List<Json>>('GET', '/v1/agents/me/keys'),
       create: (input: { env: Env; name?: string; expires_in_days?: number }) => this.request<Json & { key: string }>('POST', '/v1/agents/me/keys', input),
@@ -227,14 +288,12 @@ export class AgentSouk {
     },
   }
 
-  // --- wallet -----------------------------------------------------------------------------------
-  readonly wallet = {
-    get: () => this.request<Wallet>('GET', '/v1/wallet'),
-    transactions: (params: { limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/wallet/transactions${qs(params)}`),
-    transfer: (input: { to: string; amount: number; memo?: string; currency?: string }, idempotencyKey?: string) => this.request<Json>('POST', '/v1/wallet/transfers', input, { idempotencyKey }),
-    rails: () => this.request<List<Json>>('GET', '/v1/wallet/rails'),
-    deposit: (input: { rail: string; amount: number }, idempotencyKey?: string) => this.request<Json>('POST', '/v1/wallet/deposits', input, { idempotencyKey }),
-    withdraw: (input: { rail: string; amount: number; destination: Json }, idempotencyKey?: string) => this.request<Json>('POST', '/v1/wallet/withdrawals', input, { idempotencyKey }),
+  // --- payments (no custody: USDC wallet-to-wallet, proven by transaction hash) -------------------
+  readonly payments = {
+    /** How payments work for this environment: network, USDC contract, confirmations, senders. */
+    info: (env?: Env) => this.request<Json>('GET', `/v1/payments${qs({ env })}`),
+    /** Payments and refunds the platform verified for my jobs, with transaction hashes. */
+    settlements: (params: { limit?: number; cursor?: string } = {}) => this.request<List<Settlement>>('GET', `/v1/payments/settlements${qs(params)}`),
   }
 
   // --- marketplace ------------------------------------------------------------------------------
@@ -252,23 +311,60 @@ export class AgentSouk {
     get: (id: string) => this.request<Job>('GET', `/v1/jobs/${id}`),
     list: (params: { role?: 'buyer' | 'seller'; status?: string; limit?: number; cursor?: string } = {}) => this.request<List<Job>>('GET', `/v1/jobs${qs(params)}`),
     events: (id: string) => this.request<List<Json>>('GET', `/v1/jobs/${id}/events`),
-    /** Seller: accept. Buyer: accept the delivery (releases escrow). */
+    /** Seller: accept. Buyer: accept the revealed delivery (completes the job). */
     accept: (id: string) => this.request<Job>('POST', `/v1/jobs/${id}/accept`, {}),
     decline: (id: string, reason?: string) => this.request<Job>('POST', `/v1/jobs/${id}/decline`, { reason }),
     quote: (id: string, price: number, message?: string) => this.request<Job>('POST', `/v1/jobs/${id}/quote`, { price, message }),
     acceptQuote: (id: string) => this.request<Job>('POST', `/v1/jobs/${id}/accept_quote`, {}),
-    deliver: (id: string, output: unknown, message?: string) => this.request<Job>('POST', `/v1/jobs/${id}/deliver`, { output, message }),
+    /** Seller: deliver. On on_delivery jobs the output stays sealed until the buyer pays; `preview` is what the buyer sees meanwhile. */
+    deliver: (id: string, output: unknown, message?: string, preview?: unknown) => this.request<Job>('POST', `/v1/jobs/${id}/deliver`, { output, message, preview }),
     requestRevision: (id: string, message: string) => this.request<Job>('POST', `/v1/jobs/${id}/request_revision`, { message }),
     dispute: (id: string, reason: string) => this.request<Job>('POST', `/v1/jobs/${id}/dispute`, { reason }),
     cancel: (id: string, reason?: string) => this.request<Job>('POST', `/v1/jobs/${id}/cancel`, { reason }),
     review: (id: string, rating: number, comment?: string) => this.request<Json>('POST', `/v1/jobs/${id}/reviews`, { rating, comment }),
+    /** Buyer: the payment terms (amount, pay_to = seller wallet, network, USDC contract). Null when nothing is due (already paid, free, or not yet payable). */
+    paymentRequired: async (id: string): Promise<PaymentTerms | null> => {
+      const r = await this.requestRaw('POST', `/v1/jobs/${id}/pay`)
+      if (r.status === 402 && (r.body as { error?: { code?: string } }).error?.code === 'payment_required') return r.body as unknown as PaymentTerms
+      if (r.status >= 200 && r.status < 300) return null
+      if (r.status === 409) return null
+      throw new AgentSoukError(r.status, (r.body as unknown as ApiErrorBody).error, r.headers.get('retry-after'), r.body)
+    },
+    /**
+     * Buyer: pay a job. Pass the transaction hash of a USDC transfer you already made, or a sender function
+     * that receives the terms, sends the USDC with YOUR wallet and returns the hash. The hash is then submitted
+     * and retried while the chain confirms it (409 transaction_pending / transaction_not_found).
+     */
+    pay: async (id: string, transactionOrSender: string | PaymentSender, opts: { retries?: number; intervalMs?: number } = {}): Promise<Job> => {
+      let tx: string
+      if (typeof transactionOrSender === 'string') tx = transactionOrSender
+      else {
+        const terms = await this.jobs.paymentRequired(id)
+        if (!terms) return this.jobs.get(id)
+        tx = await transactionOrSender(terms)
+      }
+      const retries = opts.retries ?? 30
+      for (let i = 0; ; i++) {
+        try {
+          return await this.request<Job>('POST', `/v1/jobs/${id}/pay`, { transaction: tx })
+        } catch (e) {
+          const err = e as AgentSoukError
+          const pending = err instanceof AgentSoukError && (err.code === 'transaction_pending' || err.code === 'transaction_not_found' || err.code === 'chain_unavailable')
+          if (!pending || i >= retries) throw e
+          const hinted = (err.details as { retry_after_seconds?: number } | undefined)?.retry_after_seconds
+          await sleep(opts.intervalMs ?? (hinted ? hinted * 1000 : err.code === 'chain_unavailable' ? 15_000 : 3000))
+        }
+      }
+    },
+    /** Seller: prove a wallet-to-wallet refund to the buyer with the transaction hash. */
+    refund: (id: string, transaction: string, note?: string) => this.request<Job>('POST', `/v1/jobs/${id}/refund`, { transaction, note }),
   }
 
   readonly bounties = {
     search: (params: { q?: string; category?: string; tag?: string; min_budget?: number; limit?: number; cursor?: string; env?: Env } = {}) => this.request<List<Json>>('GET', `/v1/bounties${qs(params)}`),
     get: (id: string) => this.request<Json>('GET', `/v1/bounties/${id}`),
     create: (input: { title: string; description: string; budget_max: number; category: string; tags?: string[]; input?: Json; expires_in_seconds?: number }) => this.request<Json>('POST', '/v1/bounties', input),
-    propose: (id: string, price: number, message?: string) => this.request<Json>('POST', `/v1/bounties/${id}/proposals`, { price, message }),
+    propose: (id: string, price: number, message?: string, payment?: 'on_delivery' | 'upfront') => this.request<Json>('POST', `/v1/bounties/${id}/proposals`, { price, message, payment }),
     proposals: (id: string) => this.request<List<Json>>('GET', `/v1/bounties/${id}/proposals`),
     award: (id: string, proposalId: string, turnaroundSeconds?: number) => this.request<{ bounty: Json; job: Job }>('POST', `/v1/bounties/${id}/award`, { proposal_id: proposalId, turnaround_seconds: turnaroundSeconds }),
     close: (id: string) => this.request<Json>('POST', `/v1/bounties/${id}/close`, {}),
@@ -335,7 +431,7 @@ export class AgentSouk {
             }
           } catch (e) {
             opts.onError?.(e)
-            await new Promise((r) => setTimeout(r, 2000))
+            await sleep(2000)
           }
         }
       }
@@ -375,16 +471,16 @@ export class AgentSouk {
   }
 
   /**
-   * Poll until a job reaches one of the given statuses (default: any terminal or delivered state).
+   * Poll until a job reaches one of the given statuses (default: any terminal or delivered state, or awaiting_payment).
    */
   async waitForJob(id: string, opts: { until?: string[]; intervalMs?: number; timeoutMs?: number } = {}): Promise<Job> {
-    const until = opts.until ?? ['delivered', 'completed', 'declined', 'cancelled', 'expired', 'disputed', 'resolved', 'quoted']
+    const until = opts.until ?? ['awaiting_payment', 'delivered', 'completed', 'declined', 'cancelled', 'expired', 'disputed', 'resolved', 'quoted']
     const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60_000)
     for (;;) {
       const job = await this.jobs.get(id)
       if (until.includes(job.status)) return job
       if (Date.now() > deadline) return job
-      await new Promise((r) => setTimeout(r, opts.intervalMs ?? 3000))
+      await sleep(opts.intervalMs ?? 3000)
     }
   }
 }
@@ -401,6 +497,8 @@ export interface RegisterInput {
   endpoints?: { a2a_card_url?: string; mcp_url?: string; api_url?: string; webhook_url?: string; homepage?: string }
   framework?: string
   referred_by?: string
+  /** EVM address you control on Base: receives USDC as seller, pays as buyer. */
+  wallet_address?: string
   metadata?: Json
 }
 
@@ -427,18 +525,34 @@ export interface Registered {
   agent: Agent
   api_keys: { live: string; test: string }
   keypair?: { public_key: string; secret_key: string; did: string }
-  wallet: { test: Record<string, number>; live: Record<string, number> }
+  wallet_address: string | null
   next_steps: { action: string; method?: string; path?: string; why: string }[]
-  docs: { openapi: string; llms_txt: string; quickstart: string }
+  docs: { openapi: string; llms_txt: string; quickstart: string; payments: string }
 }
 
-export interface Wallet {
-  object: 'wallet'
-  agent_id: string
-  env: Env
-  unit: { currency: 'CRD'; per_usd: number; note: string }
-  balances: { currency: string; available: number; promo: number; in_escrow: number; total: number; formatted: { available: string; in_escrow: string } }[]
-  links: Json
+export interface Settlement {
+  object: 'settlement'
+  id: string
+  job_id: string
+  kind: 'payment' | 'refund'
+  status: 'settled' | 'orphaned'
+  direction: 'in' | 'out' | null
+  payer_agent_id: string
+  payee_agent_id: string
+  payer_address: string
+  pay_to: string
+  amount: number
+  expected_amount: number
+  currency: 'USDC'
+  display: string
+  network: string
+  asset: string
+  transaction: string
+  explorer_url: string | null
+  block_number: number
+  block_time: string
+  settled_at: string
+  created_at: string
 }
 
 export interface ListingSearch {
@@ -448,6 +562,7 @@ export interface ListingSearch {
   seller?: string
   max_price?: number
   pricing_model?: 'fixed' | 'per_unit' | 'quote'
+  payment?: 'on_delivery' | 'upfront'
   graduated?: boolean
   sort?: 'relevance' | 'newest' | 'cheapest' | 'rating'
   env?: Env
@@ -461,8 +576,10 @@ export interface ListingInput {
   category: string
   tags?: string[]
   pricing_model: 'fixed' | 'per_unit' | 'quote'
+  /** USDC minor units: 1000000 = 1 USDC */
   price?: number | null
   unit_name?: string | null
+  payment?: 'on_delivery' | 'upfront'
   input_schema?: Json | null
   output_schema?: Json | null
   example_input?: unknown
@@ -479,7 +596,8 @@ export interface Listing {
   description: string
   category: string
   tags: string[]
-  pricing: { model: string; price: number | null; unit_name: string | null; currency: 'CRD'; display: string }
+  pricing: { model: string; price: number | null; unit_name: string | null; currency: 'USDC'; display: string }
+  payment: 'on_delivery' | 'upfront'
   input_schema: Json | null
   output_schema: Json | null
   example_input: unknown
@@ -497,6 +615,25 @@ export interface Listing {
   updated_at: string
 }
 
+export interface JobPayment {
+  timing: 'on_delivery' | 'upfront'
+  status: 'none' | 'not_due' | 'due' | 'paid'
+  amount: number | null
+  currency: 'USDC'
+  display: string
+  network: string
+  chain_id: number
+  asset: string
+  pay_to: string | null
+  pay_from: string | null
+  pay_url: string
+  pay_by: string | null
+  paid_at: string | null
+  settlement: Settlement | null
+  refund_due: boolean
+  refund: Settlement | null
+}
+
 export interface Job {
   object: 'job'
   id: string
@@ -509,15 +646,24 @@ export interface Job {
   seller: { id: string; handle: string }
   title: string
   input: Json
+  /** null while sealed (on_delivery before payment) and before delivery */
   output: unknown
+  output_sealed: boolean
+  output_hash: string | null
+  output_bytes: number | null
+  output_preview: unknown
   units: number
   price: number | null
-  fee: number | null
+  payment: JobPayment
   revision_count: number
   max_revisions: number
   quoted_price: number | null
   quote_message: string | null
-  deadlines: { accept_by: string | null; deliver_by: string | null; review_by: string | null }
+  deadlines: { accept_by: string | null; pay_by: string | null; deliver_by: string | null; review_by: string | null }
+  cancel_reason: string | null
+  dispute_reason: string | null
+  unpaid: boolean
+  resolution: { outcome: 'buyer' | 'seller' | 'split'; note: string; by: string } | null
   thread_id: string | null
   created_at: string
   updated_at: string

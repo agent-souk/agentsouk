@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, jobs, messages, threadParticipants, threads, type Env } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
@@ -175,7 +175,9 @@ export async function inbox(env: Env, agentId: string): Promise<{ unread_threads
   const unreadThreads = all.filter((t) => t.unread_count > 0)
   const unreadTotal = unreadThreads.reduce((s, t) => s + t.unread_count, 0)
   const sellerJobs = await db().query.jobs.findMany({ where: and(eq(jobs.env, env), eq(jobs.sellerAgentId, agentId), inArray(jobs.status, ['open', 'quote_requested', 'in_progress'])), orderBy: [asc(jobs.createdAt)], limit: 100 })
-  const buyerJobs = await db().query.jobs.findMany({ where: and(eq(jobs.env, env), eq(jobs.buyerAgentId, agentId), inArray(jobs.status, ['delivered', 'quoted'])), orderBy: [asc(jobs.createdAt)], limit: 100 })
+  const refundsDue = await db().query.jobs.findMany({ where: and(eq(jobs.env, env), eq(jobs.sellerAgentId, agentId), eq(jobs.refundDue, true), isNull(jobs.refundedAt)), orderBy: [asc(jobs.createdAt)], limit: 100 })
+  const buyerJobs = await db().query.jobs.findMany({ where: and(eq(jobs.env, env), eq(jobs.buyerAgentId, agentId), inArray(jobs.status, ['delivered', 'quoted', 'awaiting_payment'])), orderBy: [asc(jobs.createdAt)], limit: 100 })
+  const sealed = (j: (typeof buyerJobs)[number]) => j.payment === 'on_delivery' && (j.price ?? 0) > 0 && j.paidAt == null && j.output != null
   const awaiting: InboxJob[] = [
     ...sellerJobs.map((j) => ({
       id: j.id,
@@ -186,14 +188,28 @@ export async function inbox(env: Env, agentId: string): Promise<{ unread_threads
       action_needed: j.status === 'open' ? 'accept or decline: POST /v1/jobs/{id}/accept' : j.status === 'quote_requested' ? 'send a quote: POST /v1/jobs/{id}/quote' : 'deliver: POST /v1/jobs/{id}/deliver',
       deadline_at: j.status === 'in_progress' ? j.deadlineAt : j.acceptDeadlineAt,
     })),
+    ...refundsDue.map((j) => ({
+      id: j.id,
+      status: j.status,
+      title: j.title,
+      role: 'seller' as const,
+      counterparty_id: j.buyerAgentId,
+      action_needed: 'refund the buyer: send the USDC back to payment.pay_from, then POST /v1/jobs/{id}/refund {"transaction":"0x..."}',
+      deadline_at: null,
+    })),
     ...buyerJobs.map((j) => ({
       id: j.id,
       status: j.status,
       title: j.title,
       role: 'buyer' as const,
       counterparty_id: j.sellerAgentId,
-      action_needed: j.status === 'delivered' ? 'review the delivery: POST /v1/jobs/{id}/accept (or request_revision / dispute)' : 'accept the quote: POST /v1/jobs/{id}/accept_quote (or cancel)',
-      deadline_at: j.status === 'delivered' ? j.reviewDeadlineAt : j.acceptDeadlineAt,
+      action_needed:
+        j.status === 'awaiting_payment' || (j.status === 'delivered' && sealed(j))
+          ? `pay ${j.status === 'delivered' ? 'to reveal the sealed delivery' : 'to start the work'}: send USDC to payment.pay_to, then POST /v1/jobs/{id}/pay {"transaction":"0x..."} (or cancel)`
+          : j.status === 'delivered'
+            ? 'review the delivery: POST /v1/jobs/{id}/accept (or request_revision / dispute)'
+            : 'accept the quote: POST /v1/jobs/{id}/accept_quote (or cancel)',
+      deadline_at: j.status === 'delivered' ? (sealed(j) ? j.paymentDeadlineAt : j.reviewDeadlineAt) : j.status === 'awaiting_payment' ? j.paymentDeadlineAt : j.acceptDeadlineAt,
     })),
   ]
   return { unread_threads: unreadThreads, unread_total: unreadTotal, jobs_awaiting_my_action: awaiting }

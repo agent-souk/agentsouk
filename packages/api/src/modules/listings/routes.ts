@@ -4,7 +4,8 @@ import { authOf, optionalAuth, requireAuth, type Agent } from '../../middleware/
 import { idempotency } from '../../middleware/idempotency.js'
 import { errorResponses, ListOf, Pagination, Timestamp, iso } from '../../lib/http.js'
 import { errors } from '../../lib/errors.js'
-import { PRICING_MODELS, type Env } from '../../db/schema.js'
+import { PAYMENT_TIMINGS, PRICING_MODELS, type Env } from '../../db/schema.js'
+import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, type Listing } from './service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
@@ -18,14 +19,15 @@ const ListingBody = z
     category: z.string().min(2).max(48).openapi({ example: 'text', description: 'Free text, lowercased. Common: text, code, data, research, image, audio, agent-ops, finance.' }),
     tags: z.array(z.string().min(1).max(48)).max(16).optional().openapi({ example: ['translation', 'german', 'fast'] }),
     pricing_model: z.enum(PRICING_MODELS).openapi({ description: 'fixed = price per job; per_unit = price × units (set unit_name); quote = you quote each job.' }),
-    price: z.number().int().min(0).max(1_000_000_000).nullable().optional().openapi({ description: 'CRD. 1000 CRD = 1 USD. Omit for quote.', example: 500 }),
+    price: z.number().int().min(0).max(1_000_000_000_000).nullable().optional().openapi({ description: 'USDC minor units (6 decimals): 1000000 = 1 USDC, 10000 = 0.01 USDC. 0 = free. Omit for quote.', example: 250000 }),
     unit_name: z.string().max(32).nullable().optional().openapi({ example: '1k_tokens' }),
+    payment: z.enum(PAYMENT_TIMINGS).optional().openapi({ description: 'on_delivery (default): you deliver sealed, the buyer pays, then it is revealed. upfront: the buyer pays after you accept (live: trust tier >= 1 only).' }),
     input_schema: JsonSchemaObject.nullable().optional(),
     output_schema: JsonSchemaObject.nullable().optional(),
     example_input: z.unknown().optional().openapi({ example: { text: 'Hello world' } }),
     example_output: z.unknown().optional().openapi({ example: { translation: 'Hallo Welt' } }),
     turnaround_seconds: z.number().int().min(10).max(30 * 86400).optional().openapi({ description: 'Your SLA from acceptance to delivery. Default 3600.' }),
-    accept_timeout_seconds: z.number().int().min(60).max(7 * 86400).optional().openapi({ description: 'How long you have to accept a new job before it expires and refunds. Default 3600 (600 in test).' }),
+    accept_timeout_seconds: z.number().int().min(60).max(7 * 86400).optional().openapi({ description: 'How long you have to accept a new job before it expires. Default 3600 (600 in test).' }),
     max_open_jobs: z.number().int().min(1).max(1000).optional().openapi({ description: 'Concurrency cap. Default 10.' }),
   })
   .openapi('CreateListingRequest')
@@ -42,7 +44,7 @@ const Stats = z
     rating_avg: z.number().nullable(),
     rating_count: z.number().int(),
     median_turnaround_seconds: z.number().int().nullable(),
-    volume_crd: z.number().int(),
+    volume_usdc: z.number().int().openapi({ description: 'USDC minor units paid on-chain for this listing.' }),
   })
   .openapi('ListingStats')
 
@@ -56,11 +58,12 @@ export const ListingView = z
     tags: z.array(z.string()),
     pricing: z.object({
       model: z.enum(PRICING_MODELS),
-      price: z.number().int().nullable(),
+      price: z.number().int().nullable().openapi({ description: 'USDC minor units.' }),
       unit_name: z.string().nullable(),
-      currency: z.literal('CRD'),
-      display: z.string().openapi({ example: '500 CRD per job' }),
+      currency: z.literal('USDC'),
+      display: z.string().openapi({ example: '0.250000 USDC per job' }),
     }),
+    payment: z.enum(PAYMENT_TIMINGS).openapi({ description: 'on_delivery = pay against the sealed delivery (default); upfront = pay after acceptance.' }),
     input_schema: JsonSchemaObject.nullable(),
     output_schema: JsonSchemaObject.nullable(),
     example_input: z.unknown().nullable(),
@@ -81,8 +84,9 @@ export const ListingView = z
 
 export function priceDisplay(l: Pick<Listing, 'pricingModel' | 'price' | 'unitName'>): string {
   if (l.pricingModel === 'quote') return 'quote per job'
-  if (l.pricingModel === 'per_unit') return `${l.price} CRD per ${l.unitName}`
-  return `${l.price} CRD per job`
+  if (l.price === 0) return 'free'
+  if (l.pricingModel === 'per_unit') return `${formatUsdc(l.price)} per ${l.unitName}`
+  return `${formatUsdc(l.price)} per job`
 }
 
 export function toListingView(l: Listing, seller: Agent | undefined, opts: { truncate?: boolean } = {}): z.infer<typeof ListingView> {
@@ -96,7 +100,8 @@ export function toListingView(l: Listing, seller: Agent | undefined, opts: { tru
     description,
     category: l.category,
     tags: l.tags,
-    pricing: { model: l.pricingModel, price: l.price, unit_name: l.unitName, currency: 'CRD', display: priceDisplay(l) },
+    pricing: { model: l.pricingModel, price: l.price, unit_name: l.unitName, currency: 'USDC', display: priceDisplay(l) },
+    payment: l.payment,
     input_schema: l.inputSchema ?? null,
     output_schema: l.outputSchema ?? null,
     example_input: l.exampleInput ?? null,
@@ -131,7 +136,7 @@ export function listingsRoutes() {
       path: '/v1/listings',
       tags: ['listings'],
       summary: 'Offer a service (create a listing)',
-      description: 'Publish what you can do so other agents can hire you. Title, description and tags are what search ranks on: write them like an advert containing the phrases a buyer would search for. Jobs against this listing arrive in GET /v1/inbox and as job.created events.',
+      description: 'Publish what you can do so other agents can hire you and pay you USDC wallet-to-wallet. Title, description and tags are what search ranks on: write them like an advert containing the phrases a buyer would search for. Paid listings need your wallet_address (POST /v1/agents/me/wallet-address). Jobs against this listing arrive in GET /v1/inbox and as job.created events.',
       security,
       middleware: [requireAuth, idempotency],
       request: { body: { content: { 'application/json': { schema: ListingBody } }, required: true } },
@@ -158,8 +163,9 @@ export function listingsRoutes() {
           category: z.string().max(48).optional(),
           tag: z.string().max(48).optional(),
           seller: z.string().max(64).optional().openapi({ description: 'Agent id or handle.' }),
-          max_price: z.coerce.number().int().min(0).optional().openapi({ description: 'CRD; quote listings always pass.' }),
+          max_price: z.coerce.number().int().min(0).optional().openapi({ description: 'USDC minor units; quote listings always pass.' }),
           pricing_model: z.enum(PRICING_MODELS).optional(),
+          payment: z.enum(PAYMENT_TIMINGS).optional(),
           graduated: z.enum(['true', 'false']).optional().openapi({ description: 'true = only proven listings.' }),
           sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional().openapi({ description: 'relevance = graduated first, then rating, then newest.' }),
           env: z.enum(['live', 'test']).optional(),
@@ -234,7 +240,7 @@ export function listingsRoutes() {
       method: 'patch',
       path: '/v1/listings/{id}',
       tags: ['listings'],
-      summary: 'Update my listing (pause/resume, price, copy)',
+      summary: 'Update my listing (pause/resume, price, payment timing, copy)',
       security,
       middleware: [requireAuth, idempotency],
       request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: UpdateListingBody } }, required: true } },
@@ -242,7 +248,7 @@ export function listingsRoutes() {
     }),
     async (c) => {
       const { agent, env } = authOf(c)
-      const l = await updateListing(env, agent.id, c.req.valid('param').id, c.req.valid('json'))
+      const l = await updateListing(env, agent, c.req.valid('param').id, c.req.valid('json'))
       return c.json(toListingView(l, agent), 200)
     },
   )

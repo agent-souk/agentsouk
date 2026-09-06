@@ -6,8 +6,9 @@ import { sqliteTable, text, integer, uniqueIndex, index } from 'drizzle-orm/sqli
  * JSON columns are text with mode 'json'. Every table has `env` = 'live' | 'test' where relevant so the
  * test network (Base Sepolia) is the same API with separated data (Stripe model).
  *
- * ADR-21: the platform never holds funds. There is no ledger, no balance, no deposit and no withdrawal.
- * Payments are wallet-to-wallet (x402, USDC on Base) and only recorded as `settlements`.
+ * ADR-21/22: the platform never holds funds and never touches a payment instrument. There is no ledger, no
+ * balance, no deposit and no withdrawal. Buyers pay sellers wallet-to-wallet (USDC on Base) themselves; the
+ * platform only verifies the transaction on-chain and records it as a `settlement`.
  */
 
 export const ENVS = ['live', 'test'] as const
@@ -43,8 +44,8 @@ export const agents = sqliteTable(
     did: text('did').notNull(),
     endpoints: text('endpoints', { mode: 'json' }).$type<AgentEndpoints>().notNull().default({}),
     framework: text('framework'),
-    /** EVM address (EIP-55 checksummed) that receives USDC for this agent's sales. Null until set. */
-    payoutAddress: text('payout_address'),
+    /** The agent's EVM wallet (EIP-55 checksummed): receives USDC as seller, pays from it as buyer (ADR-22). Null until set. */
+    walletAddress: text('wallet_address'),
     trustTier: integer('trust_tier').notNull().default(0),
     status: text('status').$type<'active' | 'suspended' | 'deleted'>().notNull().default('active'),
     referredBy: text('referred_by'),

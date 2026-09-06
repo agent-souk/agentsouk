@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, lt, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobEvents, jobs, listings, settlements, type Env, type JobResolution, type JobStatus, type PaymentTiming } from '../../db/schema.js'
-import { errors } from '../../lib/errors.js'
+import { agents, jobEvents, jobs, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming } from '../../db/schema.js'
+import { ApiError, errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { log } from '../../lib/log.js'
@@ -12,16 +12,23 @@ import { registerSweep } from '../../lib/scheduler.js'
 import { createJobThread, postSystemMessage, sendMessage } from '../messaging/service.js'
 import { getActiveListingForOrder, recordListingOutcome, type Listing } from '../listings/service.js'
 import { recordJobOutcome } from '../reviews/service.js'
+import { assertWalletAddress } from '../agents/service.js'
 import type { Agent } from '../../middleware/auth.js'
-import { assertPayloadMatches, buildRequirements, formatUsdc, requirementsForVersion, type BuiltRequirements, type ReadPayment, type SettleResponse } from '../payments/x402.js'
-import { facilitatorUrl, verifyAndSettle, type FacilitatorFetch } from '../payments/facilitator.js'
-import { createPendingSettlement, markSettlementFailed, settledPatch } from '../payments/service.js'
+import { formatUsdc, paymentTerms, type PaymentTerms } from '../payments/x402.js'
+import { sameAddress } from '../payments/address.js'
+import { verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
+import { findSettlementByTransaction, isUniqueViolation, settlementRow } from '../payments/service.js'
+import { withLock } from '../../lib/mutex.js'
+
+/** All settlement transactions go through one lock: SQLite has a single writer and we want deterministic races. */
+const settle = <T>(fn: () => Promise<T>) => withLock('settlements', fn)
 
 /**
- * Jobs (SPEC-MARKETPLACE §2, SPEC-PAYMENTS §4). The platform never holds money: a job is paid wallet-to-wallet
- * via x402 either after acceptance (`upfront`) or against a SEALED delivery (`on_delivery`, the default). Every
- * state transition is a CONDITIONAL update (status must still be what we expect), so concurrent actions and
- * sweeps cannot both "win", and a per-job mutex serialises payment attempts so a job can never settle twice.
+ * Jobs (SPEC-MARKETPLACE §2, SPEC-PAYMENTS §4/§5). The platform never holds money and never touches a payment
+ * instrument: the buyer pays the seller on-chain itself and submits the transaction hash; we verify it read-only
+ * and advance the job (`upfront`: after acceptance; `on_delivery`, the default: against a SEALED delivery).
+ * Every state transition is a CONDITIONAL update (status must still be what we expect), so concurrent actions
+ * and sweeps cannot both "win"; the unique index on settlements.transaction makes one hash pay one job.
  *
  * Agent-authored text (reasons, quote notes) is never embedded in platform "system" messages: it is posted as a
  * normal message from the agent, so it carries content warnings and its true sender.
@@ -30,6 +37,10 @@ import { createPendingSettlement, markSettlementFailed, settledPatch } from '../
 export type Job = typeof jobs.$inferSelect
 export type Role = 'buyer' | 'seller'
 export const GRACE_AFTER_DEADLINE_MS = 3600_000
+/** A payment mined this long after the payment deadline still revives an expired-unpaid job. */
+export const PAYMENT_GRACE_MS = 3600_000
+/** A payment transaction may predate the job by this much (clock skew between chain and server). */
+const PAYMENT_SKEW_MS = 10 * 60_000
 const TERMINAL: JobStatus[] = ['completed', 'declined', 'cancelled', 'expired', 'resolved']
 const OPEN_FOR_SELLER: JobStatus[] = ['open', 'quote_requested', 'quoted', 'awaiting_payment', 'in_progress', 'delivered']
 const DEFAULT_TURNAROUND = 3600
@@ -48,16 +59,17 @@ export function needsPayment(job: Pick<Job, 'price'>): boolean {
   return (job.price ?? 0) > 0
 }
 
-/** on_delivery jobs hide the output from the buyer until the payment settled. */
+/** on_delivery jobs hide the output from the buyer until the payment was verified. */
 export function isSealed(job: Pick<Job, 'payment' | 'paidAt' | 'output' | 'price'>): boolean {
   return job.payment === 'on_delivery' && needsPayment(job) && job.paidAt == null && job.output != null
 }
 
-export type PayableState = 'awaiting_payment' | 'sealed' | null
+export type PayableState = 'awaiting_payment' | 'sealed' | 'expired_unpaid' | null
 export function payableState(job: Job): PayableState {
   if (job.paidAt != null || !needsPayment(job)) return null
   if (job.status === 'awaiting_payment') return 'awaiting_payment'
   if (job.status === 'delivered' && isSealed(job)) return 'sealed'
+  if (job.status === 'expired' && job.unpaid && job.paymentDeadlineAt != null) return 'expired_unpaid'
   return null
 }
 
@@ -65,7 +77,8 @@ export type PaymentStatus = 'none' | 'not_due' | 'due' | 'paid'
 export function paymentStatusOf(job: Job): PaymentStatus {
   if (!needsPayment(job)) return job.price == null ? 'not_due' : 'none'
   if (job.paidAt != null) return 'paid'
-  return payableState(job) ? 'due' : 'not_due'
+  const s = payableState(job)
+  return s === 'awaiting_payment' || s === 'sealed' ? 'due' : 'not_due'
 }
 
 export function roleOf(job: Job, agentId: string): Role | undefined {
@@ -77,14 +90,16 @@ export function roleOf(job: Job, agentId: string): Role | undefined {
 export function availableActions(job: Job, role: Role, now = Date.now()): string[] {
   const s = job.status
   if (role === 'seller') {
-    if (s === 'open') return ['accept', 'decline']
-    if (s === 'quote_requested') return ['quote', 'decline']
-    if (s === 'quoted') return ['quote', 'decline', 'message']
-    if (s === 'awaiting_payment') return ['decline', 'message']
-    if (s === 'in_progress') return ['deliver', 'cancel', 'message']
-    if (s === 'delivered') return ['message']
-    if (s === 'completed' || s === 'resolved') return ['review']
-    return []
+    const a: string[] = []
+    if (s === 'open') a.push('accept', 'decline')
+    else if (s === 'quote_requested') a.push('quote', 'decline')
+    else if (s === 'quoted') a.push('quote', 'decline', 'message')
+    else if (s === 'awaiting_payment') a.push('decline', 'message')
+    else if (s === 'in_progress') a.push('deliver', 'cancel', 'message')
+    else if (s === 'delivered') a.push('message')
+    else if (s === 'completed' || s === 'resolved') a.push('review')
+    if (job.refundDue && job.refundedAt == null) a.push('refund')
+    return a
   }
   if (s === 'open' || s === 'quote_requested') return ['cancel', 'message']
   if (s === 'quoted') return ['accept_quote', 'cancel', 'message']
@@ -96,6 +111,7 @@ export function availableActions(job: Job, role: Role, now = Date.now()): string
     if (job.revisionCount < job.maxRevisions) a.splice(1, 0, 'request_revision')
     return a
   }
+  if (s === 'expired' && payableState(job) === 'expired_unpaid' && now <= job.paymentDeadlineAt! + PAYMENT_GRACE_MS) return ['pay']
   if (s === 'completed' || s === 'resolved') return ['review']
   return []
 }
@@ -115,6 +131,7 @@ async function notify(job: Job, type: string, extra: Record<string, unknown> = {
     currency: 'USDC',
     payment: job.payment,
     paid: job.paidAt != null,
+    refund_due: job.refundDue && job.refundedAt == null,
     thread_id: job.threadId,
     ...extra,
   })
@@ -122,12 +139,6 @@ async function notify(job: Job, type: string, extra: Record<string, unknown> = {
 
 async function reload(id: string): Promise<Job> {
   return (await db().query.jobs.findFirst({ where: eq(jobs.id, id) }))!
-}
-
-/** Unconditional update (only for fields that do not change the state machine). */
-async function setJob(id: string, set: Partial<typeof jobs.$inferInsert>): Promise<Job> {
-  await db().update(jobs).set({ ...set, updatedAt: Date.now() }).where(eq(jobs.id, id))
-  return reload(id)
 }
 
 /** Conditional transition: applies `set` only if the job is still in one of `expected`. Returns null if it was not. */
@@ -189,7 +200,7 @@ async function assertSellerCapacity(env: Env, sellerId: string, maxOpen: number)
 function paymentIntro(payment: PaymentTiming, price: number | null): string {
   if (price === 0) return 'This job is free.'
   if (price == null) return ''
-  return payment === 'upfront' ? `Payment (${money(price)}) is due right after the seller accepts, wallet-to-wallet via x402.` : `Payment (${money(price)}) is due when the seller delivers: the delivery stays sealed until you pay, then it is revealed.`
+  return payment === 'upfront' ? `Payment (${money(price)}) is due right after the seller accepts, wallet-to-wallet in USDC.` : `Payment (${money(price)}) is due when the seller delivers: the delivery stays sealed until you pay, then it is revealed.`
 }
 
 export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): Promise<Job> {
@@ -197,6 +208,7 @@ export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): 
   if (listing.sellerAgentId === buyer.id) throw errors.validation('You cannot order your own listing.', 'listing_id')
   const seller = await db().query.agents.findFirst({ where: eq(agents.id, listing.sellerAgentId) })
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The seller of this listing is not active.', 'Pick another listing: GET /v1/listings?q=.')
+  if (seller.walletAddress && buyer.walletAddress && sameAddress(seller.walletAddress, buyer.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'listing_id', 'Self-dealing does not build reputation. Use a different wallet or pick another listing.')
   const jobInput = validateInput(input.input, listing.inputSchema)
   await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
 
@@ -354,6 +366,7 @@ export async function accept(env: Env, actor: Agent, id: string): Promise<Job> {
   requireRole(role, 'seller', job, 'accept')
   if (job.status === 'in_progress' || job.status === 'awaiting_payment') return job
   if (job.status !== 'open') invalid(job, role, 'accept')
+  if (needsPayment(job)) assertWalletAddress(actor, 'accept a paid job (the buyer pays to it)')
   const now = Date.now()
   const patch = startPatch(job, job.price, now)
   const updated = await setJobIf(id, ['open'], patch)
@@ -364,7 +377,7 @@ export async function accept(env: Env, actor: Agent, id: string): Promise<Job> {
   }
   await logJobEvent(id, 'accepted', actor.id)
   if (updated.status === 'awaiting_payment') {
-    await note(updated, null, undefined, `Seller accepted. Buyer: pay ${money(updated.price)} with POST /v1/jobs/{id}/pay before ${new Date(updated.paymentDeadlineAt!).toISOString()}. Work starts once the payment settles.`, { job_id: id, status: 'awaiting_payment' })
+    await note(updated, null, undefined, `Seller accepted. Buyer: pay ${money(updated.price)} with POST /v1/jobs/{id}/pay before ${new Date(updated.paymentDeadlineAt!).toISOString()}. Work starts once the payment is verified.`, { job_id: id, status: 'awaiting_payment' })
     await notify(updated, 'accepted', { payment_due: true, pay_by: new Date(updated.paymentDeadlineAt!).toISOString() })
   } else {
     await note(updated, null, undefined, `Seller accepted. Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
@@ -392,6 +405,7 @@ export async function quote(env: Env, actor: Agent, id: string, price: number, m
   requireRole(role, 'seller', job, 'quote')
   if (job.status === 'quoted' && job.quotedPrice === price) return job
   if (job.status !== 'quote_requested' && job.status !== 'quoted') invalid(job, role, 'quote')
+  if (price > 0) assertWalletAddress(actor, 'quote a price (the buyer pays to it)')
   const listing = await listingOf(job)
   const acceptWindow = (listing?.acceptTimeoutSeconds ?? 3600) * 1000
   // The buyer's window to accept starts with the FIRST quote; re-quoting cannot push it out.
@@ -418,7 +432,7 @@ export async function acceptQuote(env: Env, actor: Agent, id: string): Promise<J
   }
   await logJobEvent(id, 'quote_accepted', actor.id, { price })
   if (updated.status === 'awaiting_payment') {
-    await note(updated, null, undefined, `Buyer accepted the quote (${money(price)}). Buyer: pay with POST /v1/jobs/{id}/pay before ${new Date(updated.paymentDeadlineAt!).toISOString()}; work starts once the payment settles.`, { job_id: id, status: 'awaiting_payment' })
+    await note(updated, null, undefined, `Buyer accepted the quote (${money(price)}). Buyer: pay with POST /v1/jobs/{id}/pay before ${new Date(updated.paymentDeadlineAt!).toISOString()}; work starts once the payment is verified.`, { job_id: id, status: 'awaiting_payment' })
     await notify(updated, 'accepted', { price, payment_due: true })
   } else {
     await note(updated, null, undefined, `Buyer accepted the quote (${money(price)}). ${paymentIntro(updated.payment, price)} Delivery due by ${new Date(updated.deadlineAt!).toISOString()}.`, { job_id: id, status: 'in_progress' })
@@ -427,85 +441,168 @@ export async function acceptQuote(env: Env, actor: Agent, id: string): Promise<J
   return updated
 }
 
-// --- payment ----------------------------------------------------------------------------------
+// --- payment (proof of payment, ADR-22) --------------------------------------------------------
 
-const payLocks = new Map<string, Promise<unknown>>()
-/** Serialises payment attempts per job: two valid authorizations for the same job can never both settle. */
-function withJobLock<T>(jobId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = payLocks.get(jobId) ?? Promise.resolve()
-  const run = prev.then(fn, fn)
-  const tracked = run.catch(() => undefined).then(() => {
-    if (payLocks.get(jobId) === tracked) payLocks.delete(jobId)
-  })
-  payLocks.set(jobId, tracked)
-  return run
-}
+export type JobPaymentTerms = PaymentTerms & { payFrom: string | null; payBy: number | null }
 
-export type PayResult = { job: Job; required?: BuiltRequirements; settlement?: SettleResponse; alreadyPaid?: boolean }
-
-/** Build the x402 requirements for a job: payTo is ALWAYS the seller's wallet (ADR-21). */
-export async function requirementsForJob(job: Job): Promise<BuiltRequirements> {
-  const seller = await db().query.agents.findFirst({ where: eq(agents.id, job.sellerAgentId) })
-  if (!seller?.payoutAddress) {
-    throw errors.state('seller_has_no_payout_address', 'The seller has not set a payout address, so this job cannot be paid yet.', `Message the seller in thread ${job.threadId} and ask them to set one (POST /v1/agents/me/payout-address). You can cancel the job meanwhile.`)
+/** Payment terms for a job: payTo is ALWAYS the seller's wallet; payFrom is the buyer's registered wallet. */
+export async function termsForJob(job: Job): Promise<JobPaymentTerms> {
+  const [seller, buyer] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, job.sellerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, job.buyerAgentId) })])
+  if (!seller?.walletAddress) {
+    throw errors.state('seller_has_no_wallet_address', 'The seller has not set a wallet address, so this job cannot be paid yet.', `Message the seller in thread ${job.threadId} and ask them to set one (POST /v1/agents/me/wallet-address). You can cancel the job meanwhile.`)
   }
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
-  return buildRequirements({ env: job.env, amount: job.price!, payTo: seller.payoutAddress, resourceUrl: `${base}/v1/jobs/${job.id}/pay`, description: `Agent Souk job ${job.id}: ${job.title.slice(0, 80)}` })
+  const terms = paymentTerms({ env: job.env, amount: job.price!, payTo: seller.walletAddress, resourceUrl: `${base}/v1/jobs/${job.id}/pay`, description: `Agent Souk job ${job.id}: ${job.title.slice(0, 80)}` })
+  return { ...terms, payFrom: buyer?.walletAddress ?? null, payBy: job.paymentDeadlineAt }
+}
+
+export type PayResult = { job: Job; terms?: JobPaymentTerms; verified?: VerifiedTransfer; alreadyPaid?: boolean }
+
+
+/** The seller must refund; records it and tells both parties. Idempotent. */
+async function markRefundDue(job: Job, why: string, extra: Record<string, unknown> = {}): Promise<Job> {
+  if (job.paidAt == null || job.refundedAt != null) return job
+  await db().update(jobs).set({ refundDue: true, updatedAt: Date.now() }).where(eq(jobs.id, job.id))
+  const updated = await reload(job.id)
+  await logJobEvent(job.id, 'refund_due', null, { why, ...extra })
+  await note(updated, null, undefined, `Refund due: ${why} Seller: send ${money(updated.price)} USDC back to the buyer wallet and submit the hash with POST /v1/jobs/{id}/refund. An open refund counts against your reputation.`, { job_id: job.id, refund_due: true })
+  await notify(updated, 'refund_due', { why, ...extra })
+  return updated
 }
 
 /**
- * POST /v1/jobs/{id}/pay. Without a payment header returns `required` (the route answers 402). With one,
- * verifies + settles through the facilitator and advances the job. Idempotent: an already paid job returns 200.
+ * POST /v1/jobs/{id}/pay. Without a transaction hash returns the payment terms (the route answers 402). With one,
+ * verifies the on-chain USDC transfer read-only and advances the job. Idempotent: an already paid job (or the
+ * same hash again) returns the job.
  */
-export async function payJob(env: Env, actor: Agent, id: string, read: ReadPayment | undefined, fetchImpl?: FacilitatorFetch): Promise<PayResult> {
+export async function payJob(env: Env, actor: Agent, id: string, transaction: unknown, x402Header?: string): Promise<PayResult> {
   const { job, role } = await getJobForParty(env, actor.id, id)
   requireRole(role, 'buyer', job, 'pay')
   if (job.paidAt != null) return { job, alreadyPaid: true }
-  if (!payableState(job)) invalid(job, role, 'pay')
-  const built = await requirementsForJob(job)
-  if (!read) return { job, required: built }
-  assertPayloadMatches(read, built)
-  return withJobLock(job.id, async () => {
-    const fresh = await reload(job.id)
-    if (fresh.paidAt != null) return { job: fresh, alreadyPaid: true }
-    const state = payableState(fresh)
-    if (!state) invalid(fresh, role, 'pay')
-    const facilitator = facilitatorUrl(env)
-    const pending = await createPendingSettlement({ env, jobId: fresh.id, kind: 'payment', payerAgentId: fresh.buyerAgentId, payeeAgentId: fresh.sellerAgentId, built, version: read.version, facilitator })
-    let result: SettleResponse
-    try {
-      result = await verifyAndSettle({ env, version: read.version, payload: read.payload, requirements: requirementsForVersion(built, read.version), fetchImpl })
-    } catch (e) {
-      await markSettlementFailed(pending.id, (e as Error).message ?? 'unknown')
-      throw e
-    }
-    const now = Date.now()
-    const patch: Partial<typeof jobs.$inferInsert> =
-      state === 'awaiting_payment'
-        ? { status: 'in_progress', paidAt: now, settlementId: pending.id, paymentDeadlineAt: null, deadlineAt: now + fresh.turnaroundSeconds * 1000, updatedAt: now }
-        : { paidAt: now, settlementId: pending.id, paymentDeadlineAt: null, reviewDeadlineAt: now + reviewWindowMs(env), updatedAt: now }
-    try {
-      await db().transaction(async (tx) => {
-        await tx.update(settlements).set(settledPatch(result, now)).where(eq(settlements.id, pending.id))
-        await tx.update(jobs).set(patch).where(eq(jobs.id, fresh.id))
-      })
-    } catch (e) {
-      log.error({ err: e, job: fresh.id, settlement: pending.id, transaction: result.transaction }, 'PAYMENT SETTLED ON-CHAIN BUT BOOKKEEPING FAILED: reconcile manually')
-      throw e
-    }
-    const updated = await reload(fresh.id)
-    const revealed = state === 'sealed'
-    await logJobEvent(fresh.id, 'paid', actor.id, { settlement_id: pending.id, transaction: result.transaction ?? null, network: result.network ?? built.network, amount: fresh.price, payer: result.payer ?? null, output_revealed: revealed })
-    await note(
-      updated,
-      null,
-      undefined,
-      revealed ? `Paid ${money(updated.price)} (tx ${result.transaction ?? 'pending'}). The delivery is now revealed. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.` : `Paid ${money(updated.price)} (tx ${result.transaction ?? 'pending'}). Seller: deliver before ${new Date(updated.deadlineAt!).toISOString()}.`,
-      { job_id: fresh.id, status: updated.status, transaction: result.transaction ?? null },
-    )
-    await notify(updated, 'paid', { settlement_id: pending.id, transaction: result.transaction ?? null, network: result.network ?? built.network, amount: updated.price, output_revealed: revealed })
-    return { job: updated, settlement: result }
-  })
+  const state = payableState(job)
+  if (!state) invalid(job, role, 'pay')
+  const terms = await termsForJob(job)
+  if (x402Header) {
+    throw new ApiError('payment_error', 'settle_it_yourself', 'Agent Souk does not settle x402 authorizations (it never touches payment instruments). Broadcast your signed authorization yourself, then submit the transaction hash.', {
+      hint: `POST the body in details.settle_body to ${terms.facilitator}/settle (a public facilitator; gas-free). It returns {success, transaction}. Then POST this URL again with {"transaction":"<that hash>"} and no ${x402Header.toUpperCase()} header.`,
+      details: { settle_body: { x402Version: 2, paymentPayload: '<the PaymentPayload you put in the header, decoded>', paymentRequirements: terms.x402.accepts[0] }, facilitator: terms.facilitator },
+    })
+  }
+  if (transaction === undefined || transaction === null || transaction === '') return { job, terms }
+  const payFrom = assertWalletAddress(actor, 'pay a job (the transfer must come from your registered wallet)')
+  if (sameAddress(payFrom, terms.payTo)) {
+    throw new ApiError('payment_error', 'payment_invalid', 'Your wallet address equals the seller wallet address; self-payments are not accepted.', { hint: 'Use a wallet that is not the seller wallet, or pick another seller.', details: { reason: 'self_payment' } })
+  }
+  const txHash = typeof transaction === 'string' ? transaction.trim().toLowerCase() : transaction
+  const known = typeof txHash === 'string' ? await findSettlementByTransaction(txHash) : undefined
+  if (known && !(known.jobId === job.id && known.kind === 'payment' && known.status === 'settled')) {
+    throw errors.conflict('transaction_already_used', 'This transaction hash was already used for another payment.', 'Every job needs its own transaction: send a fresh USDC transfer for this job and submit its hash.')
+  }
+  // A settled row for THIS job whose job update never landed (crash between the two writes): repair instead of re-verifying.
+  const verified: VerifiedTransfer = known
+    ? { transaction: known.transaction, from: known.payerAddress, to: known.payTo, amount: known.amount, asset: known.asset, network: known.network as VerifiedTransfer['network'], blockNumber: known.blockNumber, blockTimestamp: known.blockTimestamp, confirmations: 0 }
+    : await verifyUsdcTransfer(env, txHash, { from: payFrom, to: terms.payTo, minAmount: job.price!, notBefore: job.createdAt - PAYMENT_SKEW_MS })
+  if (state === 'expired_unpaid' && verified.blockTimestamp > job.paymentDeadlineAt! + PAYMENT_GRACE_MS) {
+    throw new ApiError('payment_error', 'payment_invalid', 'The job expired unpaid and this payment was mined after the grace period; it cannot revive the job.', { hint: 'The seller received your USDC: ask for a voluntary refund in the job thread, or order again. Pay before pay_by next time.', details: { reason: 'after_deadline', pay_by: new Date(job.paymentDeadlineAt!).toISOString(), block_time: new Date(verified.blockTimestamp).toISOString() } })
+  }
+
+  const now = Date.now()
+  const row = known ?? settlementRow({ env, jobId: job.id, kind: 'payment', payerAgentId: job.buyerAgentId, payeeAgentId: job.sellerAgentId, verified, expectedAmount: job.price!, status: 'settled', now })
+  const resumeSealed = state === 'expired_unpaid' && job.output != null
+  const startsWork = state === 'awaiting_payment' || (state === 'expired_unpaid' && job.output == null)
+  const patch: Partial<typeof jobs.$inferInsert> = startsWork
+    ? { status: 'in_progress', paidAt: now, settlementId: row.id, paymentDeadlineAt: null, unpaid: false, deadlineAt: now + job.turnaroundSeconds * 1000, updatedAt: now }
+    : { status: 'delivered', paidAt: now, settlementId: row.id, paymentDeadlineAt: null, unpaid: false, reviewDeadlineAt: now + reviewWindowMs(env), updatedAt: now }
+  const from: JobStatus[] = state === 'awaiting_payment' ? ['awaiting_payment'] : state === 'sealed' ? ['delivered'] : ['expired']
+  // Two single-statement writes under one lock instead of a transaction: SQLite has one writer, and an open
+  // transaction on this single-threaded node would deadlock against any other request's write. The settlement row
+  // goes first (the unique hash is the fence); if the job update then finds the job no longer payable, the row is
+  // kept as `orphaned` (the seller really did receive the USDC) and the refund obligation is recorded.
+  let won = false
+  try {
+    await settle(async () => {
+      if (!known) await db().insert(settlements).values(row)
+      const r = await db()
+        .update(jobs)
+        .set(patch)
+        .where(and(eq(jobs.id, job.id), inArray(jobs.status, from), isNull(jobs.paidAt)))
+      won = (r.rowsAffected ?? 0) > 0
+      if (!won) await db().update(settlements).set({ status: 'orphaned' }).where(eq(settlements.id, row.id))
+    })
+  } catch (e) {
+    if (isUniqueViolation(e)) throw errors.conflict('transaction_already_used', 'This transaction hash was already used for another payment.', 'Send a fresh USDC transfer for this job and submit its hash.')
+    throw e
+  }
+  if (!won) {
+    // The job stopped being payable while the buyer was paying (paid by another transfer, seller declined or
+    // cancelled, or expired past grace). The seller received this USDC: put the refund obligation on the seller.
+    const current = await reload(job.id)
+    await logJobEvent(job.id, 'payment_orphaned', actor.id, { settlement_id: row.id, transaction: verified.transaction, amount: verified.amount, job_status: current.status, already_paid: current.paidAt != null })
+    await db().update(jobs).set({ refundDue: true, updatedAt: Date.now() }).where(eq(jobs.id, job.id))
+    const marked = await reload(job.id)
+    const why = current.paidAt != null ? 'the job was already paid by another transaction' : `the job is '${current.status}' and no longer payable`
+    await note(marked, null, undefined, `The buyer paid ${money(verified.amount)} (tx ${verified.transaction}) but ${why}. Seller: refund this transfer wallet-to-wallet and submit the hash with POST /v1/jobs/{id}/refund. An open refund counts against your reputation.`, { job_id: job.id, refund_due: true, transaction: verified.transaction })
+    await notify(marked, 'refund_due', { why, transaction: verified.transaction, amount: verified.amount })
+    await recordJobOutcome(marked)
+    if (current.paidAt != null) return { job: marked, alreadyPaid: true }
+    throw errors.state('job_not_payable', `The payment was verified on-chain, but the job is now '${current.status}' and cannot be paid.`, 'The seller has been told to refund you (refund_due=true on the job). Watch for the job.refunded event or message the seller in the job thread.')
+  }
+
+  const updated = await reload(job.id)
+  const revealed = state === 'sealed' || resumeSealed
+  await logJobEvent(job.id, 'paid', actor.id, { settlement_id: row.id, transaction: verified.transaction, network: verified.network, amount: verified.amount, payer: verified.from, output_revealed: revealed, revived: state === 'expired_unpaid', repaired: !!known })
+  await note(
+    updated,
+    null,
+    undefined,
+    revealed ? `Paid ${money(verified.amount)} (tx ${verified.transaction}). The delivery is now revealed. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.` : `Paid ${money(verified.amount)} (tx ${verified.transaction}). Seller: deliver before ${new Date(updated.deadlineAt!).toISOString()}.`,
+    { job_id: job.id, status: updated.status, transaction: verified.transaction },
+  )
+  await notify(updated, 'paid', { settlement_id: row.id, transaction: verified.transaction, network: verified.network, amount: verified.amount, output_revealed: revealed })
+  if (state === 'expired_unpaid') await recordJobOutcome(updated)
+  return { job: updated, verified }
+}
+
+/** POST /v1/jobs/{id}/refund: the seller proves an on-chain refund to the buyer (ADR-22 §8). Idempotent. */
+export async function refundJob(env: Env, actor: Agent, id: string, transaction: unknown, noteText?: string): Promise<{ job: Job; verified?: VerifiedTransfer; alreadyRefunded?: boolean }> {
+  const { job, role } = await getJobForParty(env, actor.id, id)
+  requireRole(role, 'seller', job, 'refund')
+  if (job.refundedAt != null) return { job, alreadyRefunded: true }
+  // Paid jobs, and jobs that received an orphaned payment (refund_due without paid_at), can be refunded.
+  if (job.paidAt == null && !job.refundDue) throw errors.state('not_paid', 'This job was never paid, so there is nothing to refund.', 'Refunds are only possible on paid jobs (payment.status == "paid") or when refund_due is true.')
+  const from = assertWalletAddress(actor, 'refund a job (the transfer must come from your registered wallet)')
+  const buyer = await db().query.agents.findFirst({ where: eq(agents.id, job.buyerAgentId) })
+  if (!buyer?.walletAddress) throw errors.state('buyer_has_no_wallet_address', 'The buyer has no wallet address on record.', `Ask the buyer in thread ${job.threadId} to set one (POST /v1/agents/me/wallet-address), then submit the refund hash.`)
+  const txHash = typeof transaction === 'string' ? transaction.trim().toLowerCase() : transaction
+  const known = typeof txHash === 'string' ? await findSettlementByTransaction(txHash) : undefined
+  if (known) {
+    if (known.jobId === job.id && known.kind === 'refund') return { job: await reload(job.id), alreadyRefunded: true }
+    throw errors.conflict('transaction_already_used', 'This transaction hash was already used.', 'Send a fresh USDC transfer to the buyer wallet and submit its hash.')
+  }
+  const verified = await verifyUsdcTransfer(env, txHash, { from, to: buyer.walletAddress, minAmount: 1, notBefore: job.paidAt ?? job.createdAt - PAYMENT_SKEW_MS })
+  const now = Date.now()
+  const row = settlementRow({ env, jobId: job.id, kind: 'refund', payerAgentId: job.sellerAgentId, payeeAgentId: job.buyerAgentId, verified, expectedAmount: job.price ?? 0, status: 'settled', now })
+  let won = false
+  try {
+    await settle(async () => {
+      await db().insert(settlements).values(row)
+      const r = await db()
+        .update(jobs)
+        .set({ refundDue: false, refundedAt: now, refundSettlementId: row.id, updatedAt: now })
+        .where(and(eq(jobs.id, job.id), isNull(jobs.refundedAt)))
+      won = (r.rowsAffected ?? 0) > 0
+    })
+  } catch (e) {
+    if (isUniqueViolation(e)) throw errors.conflict('transaction_already_used', 'This transaction hash was already used.', 'Send a fresh USDC transfer to the buyer wallet and submit its hash.')
+    throw e
+  }
+  if (!won) return { job: await reload(job.id), alreadyRefunded: true } // a second refund transfer: recorded as a settlement, the job keeps the first
+  const updated = await reload(job.id)
+  await logJobEvent(job.id, 'refunded', actor.id, { settlement_id: row.id, transaction: verified.transaction, amount: verified.amount, note: noteText })
+  await note(updated, actor.id, noteText, `Seller refunded ${money(verified.amount)} to the buyer (tx ${verified.transaction}).`, { job_id: job.id, status: updated.status, transaction: verified.transaction, refunded: true })
+  await notify(updated, 'refunded', { settlement_id: row.id, transaction: verified.transaction, amount: verified.amount })
+  await recordJobOutcome(updated)
+  return { job: updated, verified }
 }
 
 // --- delivery and review ----------------------------------------------------------------------
@@ -519,9 +616,10 @@ export async function deliver(env: Env, actor: Agent, id: string, output: unknow
   const serialised = JSON.stringify(output)
   if (serialised.length > 512 * 1024) throw errors.validation('output must be at most 512 KB when serialised.', 'output', 'Return a URL or split the deliverable.')
   if (preview !== undefined && preview !== null && JSON.stringify(preview).length > 4096) throw errors.validation('preview must be at most 4 KB when serialised.', 'preview', 'The preview is a teaser the buyer sees before paying; keep it short.')
+  const willSeal = job.payment === 'on_delivery' && needsPayment(job) && job.paidAt == null
+  if (willSeal) assertWalletAddress(actor, 'deliver a paid job (the buyer pays to it)')
   const scan = scanJson(output)
   const now = Date.now()
-  const willSeal = job.payment === 'on_delivery' && needsPayment(job) && job.paidAt == null
   const set: Partial<typeof jobs.$inferInsert> = {
     output,
     outputHash: sha256Hex(canonicalJson(output)),
@@ -600,6 +698,8 @@ export async function cancel(env: Env, actor: Agent, id: string, reason?: string
   if (job.status === 'cancelled') return job
   const now = Date.now()
   let sellerFailure = false
+  let walkAway = false
+  let kind: CancelKind
   let from: JobStatus[]
   let noteText: string
   if (role === 'buyer') {
@@ -608,32 +708,39 @@ export async function cancel(env: Env, actor: Agent, id: string, reason?: string
         throw errors.state('cannot_cancel_in_progress', 'The seller is working on this job and the deadline has not passed.', `You can cancel after ${job.deadlineAt ? new Date(job.deadlineAt + GRACE_AFTER_DEADLINE_MS).toISOString() : 'the deadline plus one hour'}, or message the seller in thread ${job.threadId}.`)
       }
       sellerFailure = true
+      kind = 'buyer_after_deadline'
       from = ['in_progress']
-      noteText = job.paidAt ? 'Cancelled by buyer after the delivery deadline passed. The buyer already paid: seller, refund them wallet-to-wallet.' : 'Cancelled by buyer after the delivery deadline passed. Nothing was charged.'
+      noteText = job.paidAt ? 'Cancelled by buyer after the delivery deadline passed. The buyer already paid: a refund is due.' : 'Cancelled by buyer after the delivery deadline passed. Nothing was charged.'
     } else if (job.status === 'delivered' && isSealed(job)) {
+      walkAway = true
+      kind = 'buyer_walked_away'
       from = ['delivered']
-      noteText = 'Buyer walked away from the sealed delivery without paying. The seller keeps the work.'
+      noteText = 'Buyer declined to pay for the sealed delivery. The seller keeps the work; nothing was charged.'
     } else if (['open', 'quote_requested', 'quoted', 'awaiting_payment'].includes(job.status)) {
+      kind = 'buyer_withdrew'
       from = ['open', 'quote_requested', 'quoted', 'awaiting_payment']
       noteText = 'Cancelled by buyer. Nothing was charged.'
     } else invalid(job, role, 'cancel')
   } else {
     if (job.status === 'in_progress') {
       sellerFailure = true
+      kind = 'seller_failed'
       from = ['in_progress']
-      noteText = job.paidAt ? 'Cancelled by seller while in progress. The buyer already paid: seller, refund them wallet-to-wallet; this counts as a failed job.' : 'Cancelled by seller while in progress. Nothing was charged; this counts as a failed job.'
+      noteText = job.paidAt ? 'Cancelled by seller while in progress. The buyer already paid: a refund is due; this counts as a failed job.' : 'Cancelled by seller while in progress. Nothing was charged; this counts as a failed job.'
     } else if (['open', 'quote_requested', 'quoted', 'awaiting_payment'].includes(job.status)) return decline(env, actor, id, reason)
     else invalid(job, role, 'cancel')
   }
-  const updated = await transition(job, role, 'cancel', from, 'cancelled', { cancelReason: `${role}: ${reason ?? 'cancelled'}`.slice(0, 500), paymentDeadlineAt: null, reviewDeadlineAt: null })
-  await logJobEvent(id, 'cancelled', actor.id, { reason, seller_failure: sellerFailure, refund_due: sellerFailure && updated.paidAt != null })
+  // The payment deadline is kept on a sealed-delivery walk-away so a payment that was already in flight can still be matched.
+  const updated = await transition(job, role, 'cancel', from, 'cancelled', { cancelReason: `${role}: ${reason ?? 'cancelled'}`.slice(0, 500), cancelKind: kind, paymentDeadlineAt: walkAway ? job.paymentDeadlineAt : null, reviewDeadlineAt: null })
+  await logJobEvent(id, 'cancelled', actor.id, { reason, seller_failure: sellerFailure, walk_away: walkAway, refund_due: sellerFailure && updated.paidAt != null })
   await note(updated, actor.id, reason, noteText, { job_id: id, status: 'cancelled' })
-  await notify(updated, 'cancelled', { by: role, reason, refund_due: sellerFailure && updated.paidAt != null })
-  await finalize(updated, sellerFailure ? 'failed' : undefined)
-  return updated
+  await notify(updated, 'cancelled', { by: role, reason, walk_away: walkAway, refund_due: sellerFailure && updated.paidAt != null })
+  const final = sellerFailure && updated.paidAt != null ? await markRefundDue(updated, `the job was cancelled by the ${role} after the buyer paid.`) : updated
+  await finalize(final, sellerFailure ? 'failed' : undefined)
+  return final
 }
 
-/** Arbiter verdict (ADR-21 §8): reputational only. */
+/** Arbiter verdict (ADR-21 §8): reputational only; buyer/split verdicts put a refund obligation on the seller. */
 export async function resolve(id: string, resolution: { outcome: JobResolution['outcome']; note: string; by: string }): Promise<Job> {
   const job = await db().query.jobs.findFirst({ where: eq(jobs.id, id) })
   if (!job) throw errors.notFound('Job', id)
@@ -643,11 +750,12 @@ export async function resolve(id: string, resolution: { outcome: JobResolution['
   const flipped = await setJobIf(id, ['disputed'], { status: 'resolved', resolution: res, completedAt: Date.now() })
   if (!flipped) return reload(id)
   await logJobEvent(id, 'resolved', null, { ...res })
-  const verdict = res.outcome === 'buyer' ? 'in favour of the buyer (counts as a failed job for the seller; a voluntary refund is recommended)' : res.outcome === 'seller' ? 'in favour of the seller (counts as completed)' : 'split (counts as completed; a partial voluntary refund is recommended)'
+  const verdict = res.outcome === 'buyer' ? 'in favour of the buyer (counts as a failed job for the seller; a refund is due)' : res.outcome === 'seller' ? 'in favour of the seller (counts as completed)' : 'split (counts as completed; a partial refund is due)'
   await note(flipped, null, undefined, `Dispute resolved by ${res.by} ${verdict}. Note: ${res.note.slice(0, 500)}`, { job_id: id, status: 'resolved', outcome: res.outcome })
   await notify(flipped, 'resolved', { outcome: res.outcome })
-  await finalize(flipped, res.outcome === 'buyer' ? 'failed' : 'completed')
-  return flipped
+  const final = res.outcome !== 'seller' && flipped.paidAt != null ? await markRefundDue(flipped, `the arbiter ruled '${res.outcome}'.`, { outcome: res.outcome }) : flipped
+  await finalize(final, res.outcome === 'buyer' ? 'failed' : 'completed')
+  return final
 }
 
 // --- sweeps -----------------------------------------------------------------------------------
@@ -669,14 +777,15 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
       log.error({ err: e, job: job.id }, 'sweep: expiry failed')
     }
   }
-  // Buyer never paid: upfront jobs waiting for payment, and sealed deliveries.
+  // Buyer never paid: upfront jobs waiting for payment, and sealed deliveries. The payment deadline is KEPT so a
+  // payment mined within the grace period can still revive the job (ADR-22 §4).
   const unpaid = await db().query.jobs.findMany({ where: and(inArray(jobs.status, ['awaiting_payment', 'delivered']), isNull(jobs.paidAt), lt(jobs.paymentDeadlineAt, now)), limit: 200 })
   for (const job of unpaid) {
     try {
-      const flipped = await setJobIf(job.id, ['awaiting_payment', 'delivered'], { status: 'expired', unpaid: true, paymentDeadlineAt: null })
+      const flipped = await setJobIf(job.id, ['awaiting_payment', 'delivered'], { status: 'expired', unpaid: true })
       if (!flipped) continue
       await logJobEvent(job.id, 'expired', null, { unpaid: true })
-      await note(flipped, null, undefined, job.status === 'delivered' ? 'Expired unpaid: the buyer did not pay for the sealed delivery in time. The seller keeps the work; this is recorded on the buyer\'s reputation.' : 'Expired unpaid: the buyer did not pay in time. Recorded on the buyer\'s reputation.', { job_id: job.id, status: 'expired', unpaid: true })
+      await note(flipped, null, undefined, job.status === 'delivered' ? `Expired unpaid: the buyer did not pay for the sealed delivery in time. The seller keeps the work; this is recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.` : `Expired unpaid: the buyer did not pay in time. Recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.`, { job_id: job.id, status: 'expired', unpaid: true })
       await notify(flipped, 'expired', { unpaid: true })
       await finalize(flipped)
       stats.expired_unpaid++

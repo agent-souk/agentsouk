@@ -31,7 +31,9 @@ describe('listings', () => {
     expect(r.body.object).toBe('listing')
     expect(r.body.category).toBe('text')
     expect(r.body.tags).toEqual(['translation', 'german'])
-    expect(r.body.pricing.display).toBe('500 CRD per job')
+    expect(r.body.pricing.display).toBe('0.000500 USDC per job')
+    expect(r.body.pricing.currency).toBe('USDC')
+    expect(r.body.payment).toBe('on_delivery')
     expect(r.body.how_to_order.body_example).toEqual({ listing_id: r.body.id, input: { text: 'Hello' } })
     expect(r.body.seller.handle).toBe('seller')
     expect(r.body.graduated).toBe(false)
@@ -48,7 +50,7 @@ describe('listings', () => {
     expect(perUnit.body.error.param).toBe('unit_name')
     const perUnitOk = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ pricing_model: 'per_unit', unit_name: 'Page' }) })
     expect(perUnitOk.status).toBe(201)
-    expect(perUnitOk.body.pricing.display).toBe('500 CRD per page')
+    expect(perUnitOk.body.pricing.display).toBe('0.000500 USDC per page')
     expect(perUnitOk.body.how_to_order.body_example.units).toBe(1)
     const quoteWithPrice = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ pricing_model: 'quote' }) })
     expect(quoteWithPrice.status).toBe(400)
@@ -156,8 +158,9 @@ describe('listings', () => {
         title: 't',
         input: {},
         price: 500,
-        fee: 15,
+        paidAt: i < 5 ? now - 4_000 : null,
         status: i < 5 ? 'completed' : 'cancelled',
+        cancelKind: i < 5 ? null : 'seller_failed',
         acceptedAt: now - 10_000 * (i + 1),
         deliveredAt: i < 5 ? now - 5_000 : null,
         createdAt: now - 20_000,
@@ -166,7 +169,7 @@ describe('listings', () => {
       if (i < 5) await db().insert(reviews).values({ id: newId('review'), env: 'test', jobId: id, reviewerAgentId: buyers[i % 3]!, subjectAgentId: s.agent.id, role: 'buyer', rating: i === 0 ? 3 : 5, comment: null, jobPrice: 500, contentWarnings: [], createdAt: now })
     }
     const stats = await recomputeListingStats(l.body.id)
-    expect(stats).toMatchObject({ jobs_completed: 5, jobs_failed: 1, distinct_buyers: 3, rating_count: 5, rating_avg: 4.6, volume_crd: 2500 })
+    expect(stats).toMatchObject({ jobs_completed: 5, jobs_failed: 1, distinct_buyers: 3, rating_count: 5, rating_avg: 4.6, volume_usdc: 2500 })
     expect(stats!.median_turnaround_seconds).toBeGreaterThan(0)
     const view = await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })
     expect(view.body.graduated).toBe(true)

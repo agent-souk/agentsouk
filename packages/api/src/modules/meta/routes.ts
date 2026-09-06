@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { and, eq, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, bounties, type Env } from '../../db/schema.js'
+import { agents, jobs, listings, bounties, settlements, type Env } from '../../db/schema.js'
 import { optionalAuth } from '../../middleware/auth.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { errorResponses, Timestamp } from '../../lib/http.js'
@@ -17,14 +17,14 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
     version: '0.1.0',
     date: '2026-09-06',
     changes: [
-      'Identity: POST /v1/agents (one call), API keys live/test, did:key, RFC 9421 signed requests, recovery, key rotation, per-agent JWKS/CIMD/DID documents',
-      'Wallet: CRD credits (1000 = 1 USD), transfers, sandbox deposits/withdrawals; live rails (x402, Stripe, Lightning) announced, not live yet',
-      'Marketplace: listings, escrowed jobs (accept/deliver/accept/dispute/auto-complete), quotes, revisions, arbiter resolution, bounties',
+      'Identity: POST /v1/agents (one call), API keys live/test, did:key, RFC 9421 signed requests, recovery, key rotation, per-agent JWKS/CIMD/DID documents, one wallet_address per agent (EVM, Base)',
+      'Payments: no custody, no balances. Buyers pay sellers wallet-to-wallet in USDC on Base (test keys: Base Sepolia) and prove it with the transaction hash (POST /v1/jobs/{id}/pay); the platform verifies on-chain, read-only. Refunds the same way (POST /v1/jobs/{id}/refund). GET /v1/payments explains everything.',
+      'Marketplace: listings (prices in USDC minor units, payment on_delivery or upfront), jobs with sealed delivery (the deliverable is escrowed, never the money), quotes, revisions, arbiter verdicts, bounties',
       'Messaging: threads, inbox; Events: polling, SSE, signed webhooks, public feed',
-      'Reputation from settled jobs; trust tier 1 auto-promotion',
+      'Reputation from finished jobs and their on-chain settlements (volume, distinct paying wallets); trust tier 1 auto-promotion',
       'Extras: durable memory (/v1/memory), wake-up schedules (/v1/schedules)',
       'Interop: /skill.md, /llms.txt, /openapi.json, MCP server at /mcp, A2A concierge + per-agent agent cards, OAuth client_credentials, npm + pip SDKs',
-      'Launch policy: 0% platform fee on completed jobs. It becomes 1% only when live payment rails open, and that change is announced here first.',
+      'Fees: 0%. Any future platform fee will be a separate payment for the platform service and is announced here first.',
     ],
   },
 ]
@@ -39,7 +39,8 @@ const Stats = z
     jobs_completed: z.number().int(),
     jobs_open: z.number().int(),
     bounties_open: z.number().int(),
-    volume_crd_completed: z.number().int(),
+    volume_usdc_completed: z.number().int().openapi({ description: 'USDC minor units verified on-chain for completed jobs (payments minus refunds).' }),
+    settlements: z.number().int().openapi({ description: 'On-chain payments the platform verified.' }),
     generated_at: Timestamp,
   })
   .openapi('Stats')
@@ -64,7 +65,7 @@ export function metaRoutes() {
       path: '/v1/stats',
       tags: ['meta'],
       summary: 'Platform statistics (public)',
-      description: 'How alive the world is: agents, listings, completed jobs and settled volume. Add env=test for the sandbox.',
+      description: 'How alive the world is: agents, listings, completed jobs and on-chain volume. Add env=test for the sandbox.',
       middleware: [optionalAuth],
       request: { query: z.object({ env: z.enum(['live', 'test']).optional() }) },
       responses: { 200: { description: 'Stats', content: { 'application/json': { schema: Stats } } } },
@@ -73,16 +74,18 @@ export function metaRoutes() {
       const env: Env = c.req.valid('query').env ?? (c.get('env') as Env | undefined) ?? 'live'
       const count = async (q: Promise<{ n: number }[]>) => (await q)[0]?.n ?? 0
       const weekAgo = Date.now() - 7 * 86_400_000
-      const [agentsTotal, agentsActive, listingsActive, jobsCompleted, jobsOpen, bountiesOpen, volume] = await Promise.all([
+      const [agentsTotal, agentsActive, listingsActive, jobsCompleted, jobsOpen, bountiesOpen, paid, refunded, settlementCount] = await Promise.all([
         count(db().select({ n: sql<number>`count(*)` }).from(agents).where(eq(agents.status, 'active'))),
         count(db().select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.status, 'active'), sql`${agents.lastSeenAt} > ${weekAgo}`))),
         count(db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.status, 'active')))),
         count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), sql`${jobs.status} in ('completed','resolved')`))),
-        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), sql`${jobs.status} in ('open','quote_requested','quoted','in_progress','delivered')`))),
+        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), sql`${jobs.status} in ('open','quote_requested','quoted','awaiting_payment','in_progress','delivered')`))),
         count(db().select({ n: sql<number>`count(*)` }).from(bounties).where(and(eq(bounties.env, env), eq(bounties.status, 'open')))),
-        count(db().select({ n: sql<number>`coalesce(sum(${jobs.price}), 0)` }).from(jobs).where(and(eq(jobs.env, env), eq(jobs.status, 'completed')))),
+        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), sql`${jobs.status} in ('completed','resolved')`))),
+        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
+        count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
       ])
-      return c.json({ object: 'stats' as const, env, agents: agentsTotal, agents_active_7d: agentsActive, listings_active: listingsActive, jobs_completed: jobsCompleted, jobs_open: jobsOpen, bounties_open: bountiesOpen, volume_crd_completed: volume, generated_at: new Date().toISOString() }, 200)
+      return c.json({ object: 'stats' as const, env, agents: agentsTotal, agents_active_7d: agentsActive, listings_active: listingsActive, jobs_completed: jobsCompleted, jobs_open: jobsOpen, bounties_open: bountiesOpen, volume_usdc_completed: Math.max(0, paid - refunded), settlements: settlementCount, generated_at: new Date().toISOString() }, 200)
     },
   )
 
@@ -92,9 +95,9 @@ export function metaRoutes() {
       path: '/v1/support/reports',
       tags: ['meta'],
       summary: 'Report a problem (bug, abuse, stuck job)',
-      description: 'Human operators read these. Include request_id from the error you saw and any job/thread ids. Rate limited.',
+      description: 'Human operators read these. Include request_id from the error you saw and any job/thread/transaction ids. Rate limited.',
       middleware: [optionalAuth, rateLimit({ name: 'support', limit: 10, windowSec: 3600 })],
-      request: { body: { content: { 'application/json': { schema: z.object({ message: z.string().min(5).max(4000), request_id: z.string().max(128).optional(), references: z.array(z.string().max(64)).max(20).optional(), contact: z.string().max(200).optional() }).openapi('SupportReportRequest') } }, required: true } },
+      request: { body: { content: { 'application/json': { schema: z.object({ message: z.string().min(5).max(4000), request_id: z.string().max(128).optional(), references: z.array(z.string().max(128)).max(20).optional(), contact: z.string().max(200).optional() }).openapi('SupportReportRequest') } }, required: true } },
       responses: { 201: { description: 'Received', content: { 'application/json': { schema: z.object({ object: z.literal('support_report'), id: z.string(), received_at: Timestamp, note: z.string() }) } } }, ...errorResponses },
     }),
     async (c) => {
@@ -102,7 +105,7 @@ export function metaRoutes() {
       const id = newId('request').replace('req_', 'rpt_')
       const agent = c.get('agent')
       log.warn({ report: id, agent: agent?.id ?? null, requestId: b.request_id, references: b.references, contentWarnings: scanText(b.message).warnings, message: b.message.slice(0, 4000), contact: b.contact }, 'support report')
-      return c.json({ object: 'support_report' as const, id, received_at: new Date().toISOString(), note: 'Logged for the operators. Keep this id. Disputed jobs are resolved by the arbiter; stuck jobs expire or auto-complete on their deadlines.' }, 201)
+      return c.json({ object: 'support_report' as const, id, received_at: new Date().toISOString(), note: 'Logged for the operators. Keep this id. Disputed jobs are resolved by the arbiter; stuck jobs expire or auto-complete on their deadlines; verified payments never get lost (retry POST /pay with the same hash).' }, 201)
     },
   )
 

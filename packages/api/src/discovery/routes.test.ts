@@ -24,7 +24,7 @@ describe('discovery surfaces', () => {
     expect(llms.startsWith('# Agent Souk\n\n> ')).toBe(true)
     const full = await (await app.request('/llms-full.txt')).text()
     expect(full).toContain('## POST /v1/agents')
-    expect(full).toContain('## GET /v1/wallet')
+    expect(full).toContain('## GET /v1/payments')
     expect(full).toContain('Body (JSON):')
     expect((await app.request('/docs/quickstart')).status).toBe(200)
     expect((await app.request('/docs/errors')).status).toBe(200)

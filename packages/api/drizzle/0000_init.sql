@@ -1,3 +1,59 @@
+CREATE TABLE `agents` (
+	`id` text PRIMARY KEY NOT NULL,
+	`handle` text NOT NULL,
+	`name` text NOT NULL,
+	`description` text,
+	`capabilities` text DEFAULT '[]' NOT NULL,
+	`tags` text DEFAULT '[]' NOT NULL,
+	`public_key` text NOT NULL,
+	`did` text NOT NULL,
+	`endpoints` text DEFAULT '{}' NOT NULL,
+	`framework` text,
+	`wallet_address` text,
+	`trust_tier` integer DEFAULT 0 NOT NULL,
+	`status` text DEFAULT 'active' NOT NULL,
+	`referred_by` text,
+	`metadata` text,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	`last_seen_at` integer
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `agents_handle` ON `agents` (`handle`);--> statement-breakpoint
+CREATE UNIQUE INDEX `agents_public_key` ON `agents` (`public_key`);--> statement-breakpoint
+CREATE INDEX `agents_created` ON `agents` (`created_at`);--> statement-breakpoint
+CREATE TABLE `api_keys` (
+	`id` text PRIMARY KEY NOT NULL,
+	`agent_id` text NOT NULL,
+	`env` text NOT NULL,
+	`key_hash` text NOT NULL,
+	`prefix` text NOT NULL,
+	`name` text,
+	`scopes` text DEFAULT '["*"]' NOT NULL,
+	`status` text DEFAULT 'active' NOT NULL,
+	`last_used_at` integer,
+	`expires_at` integer,
+	`created_at` integer NOT NULL,
+	`revoked_at` integer,
+	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `api_keys_hash` ON `api_keys` (`key_hash`);--> statement-breakpoint
+CREATE INDEX `api_keys_agent` ON `api_keys` (`agent_id`);--> statement-breakpoint
+CREATE TABLE `idempotency_keys` (
+	`id` text PRIMARY KEY NOT NULL,
+	`agent_id` text NOT NULL,
+	`key` text NOT NULL,
+	`method` text NOT NULL,
+	`path` text NOT NULL,
+	`request_hash` text NOT NULL,
+	`status` integer,
+	`response_body` text,
+	`created_at` integer NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idempotency_agent_key` ON `idempotency_keys` (`agent_id`,`key`);--> statement-breakpoint
+CREATE INDEX `idempotency_created` ON `idempotency_keys` (`created_at`);--> statement-breakpoint
 CREATE TABLE `agent_reputation` (
 	`agent_id` text NOT NULL,
 	`env` text NOT NULL,
@@ -36,6 +92,7 @@ CREATE TABLE `bounty_proposals` (
 	`bounty_id` text NOT NULL,
 	`seller_agent_id` text NOT NULL,
 	`price` integer NOT NULL,
+	`payment` text DEFAULT 'on_delivery' NOT NULL,
 	`message` text,
 	`status` text DEFAULT 'pending' NOT NULL,
 	`content_warnings` text DEFAULT '[]' NOT NULL,
@@ -90,7 +147,7 @@ CREATE TABLE `jobs` (
 	`output` text,
 	`units` integer DEFAULT 1 NOT NULL,
 	`price` integer,
-	`fee` integer,
+	`payment` text DEFAULT 'on_delivery' NOT NULL,
 	`status` text NOT NULL,
 	`revision_count` integer DEFAULT 0 NOT NULL,
 	`max_revisions` integer DEFAULT 2 NOT NULL,
@@ -99,13 +156,22 @@ CREATE TABLE `jobs` (
 	`accept_deadline_at` integer,
 	`deadline_at` integer,
 	`review_deadline_at` integer,
+	`payment_deadline_at` integer,
+	`paid_at` integer,
+	`turnaround_seconds` integer DEFAULT 3600 NOT NULL,
+	`settlement_id` text,
+	`output_hash` text,
+	`output_bytes` integer,
+	`output_preview` text,
+	`unpaid` integer DEFAULT false NOT NULL,
+	`refund_due` integer DEFAULT false NOT NULL,
+	`refund_settlement_id` text,
+	`refunded_at` integer,
 	`cancel_reason` text,
+	`cancel_kind` text,
 	`dispute_reason` text,
 	`resolution` text,
 	`thread_id` text,
-	`escrow_transaction_id` text,
-	`release_transaction_id` text,
-	`refund_transaction_id` text,
 	`created_at` integer NOT NULL,
 	`accepted_at` integer,
 	`delivered_at` integer,
@@ -119,6 +185,7 @@ CREATE INDEX `jobs_buyer` ON `jobs` (`buyer_agent_id`,`status`);--> statement-br
 CREATE INDEX `jobs_seller` ON `jobs` (`seller_agent_id`,`status`);--> statement-breakpoint
 CREATE INDEX `jobs_listing` ON `jobs` (`listing_id`);--> statement-breakpoint
 CREATE INDEX `jobs_status_deadlines` ON `jobs` (`status`,`accept_deadline_at`,`review_deadline_at`);--> statement-breakpoint
+CREATE INDEX `jobs_payment_deadline` ON `jobs` (`status`,`payment_deadline_at`);--> statement-breakpoint
 CREATE TABLE `listings` (
 	`id` text PRIMARY KEY NOT NULL,
 	`env` text NOT NULL,
@@ -130,6 +197,7 @@ CREATE TABLE `listings` (
 	`pricing_model` text NOT NULL,
 	`price` integer,
 	`unit_name` text,
+	`payment` text DEFAULT 'on_delivery' NOT NULL,
 	`input_schema` text,
 	`output_schema` text,
 	`example_input` text,
@@ -178,6 +246,32 @@ CREATE TABLE `reviews` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `reviews_job_reviewer` ON `reviews` (`job_id`,`reviewer_agent_id`);--> statement-breakpoint
 CREATE INDEX `reviews_subject` ON `reviews` (`subject_agent_id`,`created_at`);--> statement-breakpoint
+CREATE TABLE `settlements` (
+	`id` text PRIMARY KEY NOT NULL,
+	`env` text NOT NULL,
+	`job_id` text NOT NULL,
+	`kind` text NOT NULL,
+	`payer_agent_id` text NOT NULL,
+	`payee_agent_id` text NOT NULL,
+	`payer_address` text NOT NULL,
+	`pay_to` text NOT NULL,
+	`amount` integer NOT NULL,
+	`expected_amount` integer NOT NULL,
+	`asset` text NOT NULL,
+	`network` text NOT NULL,
+	`transaction` text NOT NULL,
+	`block_number` integer NOT NULL,
+	`block_timestamp` integer NOT NULL,
+	`status` text DEFAULT 'settled' NOT NULL,
+	`created_at` integer NOT NULL,
+	`settled_at` integer NOT NULL,
+	FOREIGN KEY (`job_id`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `settlements_tx` ON `settlements` (`transaction`);--> statement-breakpoint
+CREATE INDEX `settlements_job` ON `settlements` (`job_id`);--> statement-breakpoint
+CREATE INDEX `settlements_payer` ON `settlements` (`payer_agent_id`,`id`);--> statement-breakpoint
+CREATE INDEX `settlements_payee` ON `settlements` (`payee_agent_id`,`id`);--> statement-breakpoint
 CREATE TABLE `thread_participants` (
 	`thread_id` text NOT NULL,
 	`agent_id` text NOT NULL,
@@ -235,4 +329,36 @@ CREATE TABLE `webhooks` (
 	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE INDEX `webhooks_agent` ON `webhooks` (`agent_id`);
+CREATE INDEX `webhooks_agent` ON `webhooks` (`agent_id`);--> statement-breakpoint
+CREATE TABLE `agent_memory` (
+	`agent_id` text NOT NULL,
+	`key` text NOT NULL,
+	`value` text NOT NULL,
+	`size` integer NOT NULL,
+	`expires_at` integer,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `agent_memory_pk` ON `agent_memory` (`agent_id`,`key`);--> statement-breakpoint
+CREATE INDEX `agent_memory_expires` ON `agent_memory` (`expires_at`);--> statement-breakpoint
+CREATE TABLE `schedules` (
+	`id` text PRIMARY KEY NOT NULL,
+	`env` text NOT NULL,
+	`agent_id` text NOT NULL,
+	`name` text,
+	`run_at` integer NOT NULL,
+	`interval_seconds` integer,
+	`payload` text NOT NULL,
+	`status` text DEFAULT 'active' NOT NULL,
+	`run_count` integer DEFAULT 0 NOT NULL,
+	`max_runs` integer,
+	`last_run_at` integer,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `schedules_due` ON `schedules` (`status`,`run_at`);--> statement-breakpoint
+CREATE INDEX `schedules_agent` ON `schedules` (`agent_id`);
