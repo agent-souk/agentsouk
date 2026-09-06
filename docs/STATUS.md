@@ -64,12 +64,28 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
 | Müll-Lieferung erzeugt `jobs_unpaid` | **Erledigt**: Walk-away ohne Makel, nur stilles Verstreichen zählt |
 | CDP-JWT pro Aufruf | **Entfällt** (kein Facilitator-Client mehr) |
 
+### LIVE seit 2026-09-06 ~21:00 Uhr: `https://agentsouk-api.fly.dev`
+
+- Fly-App `agentsouk-api`, Region `fra`, eine Maschine (`shared-cpu-1x`, 512 MB), Volume `agentsouk_data` (3 GB),
+  Image `deployment-01M1W1C0PZ0H1RVMWVXCWQDH9K`. Secrets gesetzt (`SECRET_PEPPER`, `SERVER_SIGNING_SEED`,
+  `ADMIN_TOKEN`, `PUBLIC_BASE_URL=https://agentsouk-api.fly.dev`). Der Admin-Token liegt lokal in
+  `~/.agentsouk-ops/agentsouk-api.env` (nicht im Repo).
+- Rauchtest gegen die Live-Adresse bestanden (17/17): health, skill.md, /v1/payments (test + live), Registrierung
+  mit Wallet, Listing, Job, versiegelte Lieferung, 402-Terms, unbekannter Hash → `transaction_not_found` über den
+  **echten** Sepolia-RPC, Inbox, Walk-away, MCP, OpenAPI. Der Chain-Reader wurde außerdem lokal gegen einen echten
+  USDC-Transfer auf Base Sepolia verifiziert (518 ms, 172 Bestätigungen).
+- IPs: v4 (shared) `66.241.124.182`, v6 `2a09:8280:1::185:2f1c:0`. Zertifikat für `api.agentsouk.dev` ist
+  angefordert, wartet auf DNS. **Nick muss in Cloudflare setzen (DNS only, graue Wolke):**
+  `CNAME api → pekyl2r.agentsouk-api.fly.dev` (oder `A 66.241.124.182` + `AAAA 2a09:8280:1::185:2f1c:0`).
+  Danach: `fly certs check api.agentsouk.dev -a agentsouk-api`, dann `fly secrets set PUBLIC_BASE_URL=https://api.agentsouk.dev -a agentsouk-api`
+  (Neustart automatisch), Rauchtest erneut gegen die Domain.
+- Noch nicht mit echtem Faucet-USDC durchgespielt (Circle-Faucet braucht Browser/Captcha): dafür braucht es zwei
+  Wallets mit Sepolia-USDC; alle Prüfpfade sind mit der Fake-Chain und der echte Lesepfad mit einem realen Transfer getestet.
+
 ### Nächste Schritte (Reihenfolge)
 
-1. Kurzes adversariales Review der neuen Zahlungslogik (1–2 Agenten, siehe Session-Limit-Hinweis), Findings einbauen.
-2. Deploy nach Fly.io `fra` (`fly launch --no-deploy`, Volume, Secrets, `fly deploy`), `api.agentsouk.dev`
-   per CNAME in Cloudflare (Nick), `fly certs add`. Rauchtest gegen Base Sepolia mit echtem Faucet-USDC:
-   zwei Wegwerf-Wallets, Listing, Job, Transfer, `pay` mit Hash.
+1. Findings des adversarialen Reviews (läuft/lief am 2026-09-06 abends, Notizen im Session-Scratchpad) einbauen, Tests, Checkpoint.
+2. Nick: DNS-Eintrag setzen (oben). Dann Domain umschalten und Rauchtest gegen `api.agentsouk.dev`.
 3. npm/PyPI 0.2.0 veröffentlichen (`packages/sdk`: `npm publish`; `sdk-python`: `python -m build && twine upload`).
 4. MCP-Registry (`packages/api/server.json`, TXT-Record auf agentsouk.dev), ClawHub-Skill, Repo öffentlich,
    Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6.

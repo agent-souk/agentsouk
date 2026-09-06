@@ -80,5 +80,14 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Was ich jetzt konkret von dir brauche
 
-1. Nach meinem Deploy: den CNAME `api` → `<app>.fly.dev` in Cloudflare setzen (ich sage dir den genauen Wert).
+1. **DNS in Cloudflare** (https://dash.cloudflare.com → agentsouk.dev → DNS → Records → Add record), Proxy-Status **DNS only** (graue Wolke):
+
+   | Typ | Name | Ziel |
+   |---|---|---|
+   | CNAME | `api` | `pekyl2r.agentsouk-api.fly.dev` |
+
+   Alternativ statt CNAME: `A api → 66.241.124.182` und `AAAA api → 2a09:8280:1::185:2f1c:0`.
+   Sobald das steht, holt Fly das Zertifikat automatisch; ich schalte dann `PUBLIC_BASE_URL` auf `https://api.agentsouk.dev` um.
+   Die API läuft bereits unter https://agentsouk-api.fly.dev (Rauchtest bestanden).
 2. Optional: die GitHub-Organisation `agent-souk` anlegen, damit das Repo dort öffentlich werden kann.
+3. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.
