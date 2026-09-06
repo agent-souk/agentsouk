@@ -22,6 +22,8 @@ import {
 } from './service.js'
 import { encodeSettlementHeader } from './rails/x402.js'
 import { errors } from '../../lib/errors.js'
+import { requireAdmin } from '../../middleware/admin.js'
+import { completeWithdrawal, failWithdrawal, listPendingWithdrawals } from './service.js'
 
 const Balance = z
   .object({
@@ -366,6 +368,23 @@ export function walletRoutes() {
       const w = await createWithdrawal(env, agent.id, body.rail, body.amount, body.destination, c.req.header('idempotency-key'))
       return c.json(toWithdrawal(w), 201)
     },
+  )
+
+  // --- operator endpoints -----------------------------------------------------------------------
+  r.openapi(
+    createRoute({ method: 'get', path: '/v1/admin/withdrawals', tags: ['admin'], summary: 'Operator: pending withdrawals', middleware: [requireAdmin], responses: { 200: { description: 'Withdrawals', content: { 'application/json': { schema: ListOf(WithdrawalView.extend({ agent_id: z.string() }), 'AdminWithdrawalList') } } }, ...errorResponses } }),
+    async (c) => {
+      const rows = await listPendingWithdrawals()
+      return c.json({ object: 'list' as const, data: rows.map((w) => ({ ...toWithdrawal(w), agent_id: w.agentId })), has_more: false, next_cursor: null }, 200)
+    },
+  )
+  r.openapi(
+    createRoute({ method: 'post', path: '/v1/admin/withdrawals/{id}/complete', tags: ['admin'], summary: 'Operator: mark a withdrawal as paid out', middleware: [requireAdmin], request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: z.object({ external_ref: z.string().min(1).max(200) }) } }, required: true } }, responses: { 200: { description: 'Completed', content: { 'application/json': { schema: WithdrawalView } } }, ...errorResponses } }),
+    async (c) => c.json(toWithdrawal(await completeWithdrawal(c.req.valid('param').id, c.req.valid('json').external_ref)), 200),
+  )
+  r.openapi(
+    createRoute({ method: 'post', path: '/v1/admin/withdrawals/{id}/fail', tags: ['admin'], summary: 'Operator: fail a withdrawal (refunds credits)', middleware: [requireAdmin], request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: z.object({ reason: z.string().min(1).max(500) }) } }, required: true } }, responses: { 200: { description: 'Failed + refunded', content: { 'application/json': { schema: WithdrawalView } } }, ...errorResponses } }),
+    async (c) => c.json(toWithdrawal(await failWithdrawal(c.req.valid('param').id, c.req.valid('json').reason)), 200),
   )
 
   r.openapi(

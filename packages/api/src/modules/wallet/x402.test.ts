@@ -74,6 +74,29 @@ describe('x402 deposits', () => {
     expect(late.status).toBe(409)
   })
 
+  it('operators complete or fail x402 withdrawals; failure refunds', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'admin-token-1234567890abcdef' })
+    const dep = await call(app, 'POST', '/v1/wallet/deposits', { key: a.api_keys.live, body: { rail: 'x402', amount: 5000 } })
+    await payDepositX402('live', a.agent.id, dep.body.id, 'p', facilitator({ isValid: true }, { success: true, transaction: '0x1' }))
+    const w1 = await call(app, 'POST', '/v1/wallet/withdrawals', { key: a.api_keys.live, body: { rail: 'x402', amount: 2000, destination: { asset: 'USDC', network: 'base', address: '0x3333333333333333333333333333333333333333' } } })
+    expect(w1.status, JSON.stringify(w1.body)).toBe(201)
+    expect(w1.body.status).toBe('pending')
+    const w2 = await call(app, 'POST', '/v1/wallet/withdrawals', { key: a.api_keys.live, body: { rail: 'x402', amount: 1000, destination: { address: '0x4444444444444444444444444444444444444444' } } })
+    expect((await call(app, 'GET', '/v1/wallet', { key: a.api_keys.live })).body.balances[0].available).toBe(2000)
+    const h = { 'x-admin-token': 'admin-token-1234567890abcdef' }
+    expect((await call(app, 'GET', '/v1/admin/withdrawals')).status).toBe(401)
+    const pending = await call(app, 'GET', '/v1/admin/withdrawals', { headers: h })
+    expect(pending.body.data).toHaveLength(2)
+    const done = await call(app, 'POST', `/v1/admin/withdrawals/${w1.body.id}/complete`, { headers: h, body: { external_ref: '0xpayout' } })
+    expect(done.body.status).toBe('completed')
+    const failed = await call(app, 'POST', `/v1/admin/withdrawals/${w2.body.id}/fail`, { headers: h, body: { reason: 'invalid address' } })
+    expect(failed.body.status).toBe('failed')
+    expect((await call(app, 'GET', '/v1/wallet', { key: a.api_keys.live })).body.balances[0].available).toBe(3000)
+    const ev = await call(app, 'GET', '/v1/events?types=withdrawal.completed,withdrawal.failed', { key: a.api_keys.live })
+    expect(ev.body.data.map((e: any) => e.type)).toEqual(['withdrawal.completed', 'withdrawal.failed'])
+    _setConfigForTests({ ADMIN_TOKEN: undefined })
+  })
+
   it('is coming_soon when unconfigured', async () => {
     _setConfigForTests({ X402_PAY_TO: undefined })
     const rails = await call(app, 'GET', '/v1/wallet/rails')

@@ -398,6 +398,51 @@ export async function createWithdrawal(env: Env, agentId: string, rail: Rail, am
   return row as Withdrawal
 }
 
+// --- operator processing of withdrawals ----------------------------------------------------------
+
+export async function listPendingWithdrawals(limit = 100): Promise<Withdrawal[]> {
+  return db().query.withdrawals.findMany({ where: inArray(withdrawals.status, ['pending', 'processing']), orderBy: [desc(withdrawals.id)], limit })
+}
+
+/** Operator marks a withdrawal as paid out externally (funds already left the rail reserve at creation). */
+export async function completeWithdrawal(id: string, externalRef: string): Promise<Withdrawal> {
+  const w = await db().query.withdrawals.findFirst({ where: eq(withdrawals.id, id) })
+  if (!w) throw errors.notFound('Withdrawal', id)
+  if (w.status === 'completed') return w
+  if (w.status !== 'pending' && w.status !== 'processing') throw errors.state('withdrawal_final', `Withdrawal is ${w.status}.`)
+  const now = Date.now()
+  await db().update(withdrawals).set({ status: 'completed', externalRef, updatedAt: now }).where(eq(withdrawals.id, id))
+  await emit(w.env, w.agentId, 'withdrawal.completed', { withdrawal_id: id, amount: w.amount, rail: w.rail, external_ref: externalRef })
+  return (await db().query.withdrawals.findFirst({ where: eq(withdrawals.id, id) }))!
+}
+
+/** Operator fails a withdrawal: credits are returned to the agent. */
+export async function failWithdrawal(id: string, reason: string): Promise<Withdrawal> {
+  const w = await db().query.withdrawals.findFirst({ where: eq(withdrawals.id, id) })
+  if (!w) throw errors.notFound('Withdrawal', id)
+  if (w.status === 'failed' || w.status === 'cancelled') return w
+  if (w.status === 'completed') throw errors.state('withdrawal_final', 'Withdrawal already completed.')
+  await ledger().post({
+    env: w.env,
+    type: 'adjustment',
+    currency: w.currency,
+    amount: w.amount,
+    legs: [
+      { account: railAccount(w.rail, w.currency), delta: -w.amount },
+      { account: agentAccount(w.agentId, 'available', w.currency), delta: +w.amount },
+    ],
+    initiatorAgentId: null,
+    idempotencyKey: `withdrawal:${id}:refund`,
+    referenceType: 'withdrawal',
+    referenceId: id,
+    memo: `withdrawal failed: ${reason}`.slice(0, 500),
+  })
+  const now = Date.now()
+  await db().update(withdrawals).set({ status: 'failed', failureReason: reason.slice(0, 500), updatedAt: now }).where(eq(withdrawals.id, id))
+  await emit(w.env, w.agentId, 'withdrawal.failed', { withdrawal_id: id, amount: w.amount, rail: w.rail, reason, hint: 'The credits are back in your wallet. Check the destination and try again.' })
+  return (await db().query.withdrawals.findFirst({ where: eq(withdrawals.id, id) }))!
+}
+
 export async function listWithdrawals(env: Env, agentId: string, limit: number, cursor?: string): Promise<Withdrawal[]> {
   const conds = [eq(withdrawals.env, env), eq(withdrawals.agentId, agentId)]
   if (cursor) conds.push(lt(withdrawals.id, cursor))

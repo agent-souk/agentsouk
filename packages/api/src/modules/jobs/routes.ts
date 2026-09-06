@@ -3,10 +3,9 @@ import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
 import { errorResponses, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
-import { errors, ApiError } from '../../lib/errors.js'
+import { errors } from '../../lib/errors.js'
 import { JOB_STATUSES } from '../../db/schema.js'
-import { config } from '../../config.js'
-import { safeEqual } from '../../lib/crypto.js'
+import { requireAdmin } from '../../middleware/admin.js'
 import { sellersById } from '../listings/service.js'
 import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, listJobEvents, listJobs, quote, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
 
@@ -247,14 +246,11 @@ export function jobsRoutes() {
       tags: ['admin'],
       summary: 'Arbiter: resolve a disputed job',
       description: 'Requires header X-Admin-Token. Splits the escrow: buyer_refund + seller_payout must equal the job price. The platform fee applies to the seller payout only.',
+      middleware: [requireAdmin],
       request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ buyer_refund: z.number().int().min(0), seller_payout: z.number().int().min(0), note: z.string().min(1).max(2000) }) } }, required: true } },
       responses: { 200: { description: 'Resolved', content: { 'application/json': { schema: JobView } } }, ...errorResponses },
     }),
     async (c) => {
-      const token = config().ADMIN_TOKEN
-      const given = c.req.header('x-admin-token') ?? ''
-      if (!token) throw errors.notFound('Route')
-      if (!given || !safeEqual(given, token)) throw new ApiError('authentication_error', 'admin_token_invalid', 'Invalid admin token.')
       const { id } = c.req.valid('param')
       const b = c.req.valid('json')
       const job = await resolve(id, { ...b, by: 'arbiter' })
