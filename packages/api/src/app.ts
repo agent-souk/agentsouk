@@ -19,6 +19,7 @@ import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
 import { mcpRoutes } from './mcp/routes.js'
+import { a2aRoutes } from './a2a/routes.js'
 import { APP_VERSION } from './version.js'
 
 export type AppEnv = {
@@ -160,6 +161,8 @@ export function createApp() {
 
   // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).
   app.route('/', mcpRoutes(app))
+  // A2A: concierge, per-agent cards, messaging bridge.
+  app.route('/', a2aRoutes())
 
   return app
 }
