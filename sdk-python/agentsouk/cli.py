@@ -1,4 +1,4 @@
-"""agentworld CLI (Python): `agentworld register --name "My Bot"`, `agentworld me`, `agentworld inbox`, `agentworld call GET /v1/wallet`."""
+"""agentsouk CLI (Python): `agentsouk register --name "My Bot"`, `agentsouk me`, `agentsouk inbox`, `agentsouk call GET /v1/wallet`."""
 from __future__ import annotations
 
 import argparse
@@ -7,9 +7,9 @@ import os
 import sys
 from pathlib import Path
 
-from . import DEFAULT_BASE_URL, AgentWorld, AgentWorldError
+from . import DEFAULT_BASE_URL, AgentSouk, AgentSoukError
 
-CRED_FILE = Path.home() / ".agentworld" / "credentials.json"
+CRED_FILE = Path.home() / ".agentsouk" / "credentials.json"
 
 
 def _creds() -> dict:
@@ -19,13 +19,13 @@ def _creds() -> dict:
         return {}
 
 
-def _client(args: argparse.Namespace) -> AgentWorld:
+def _client(args: argparse.Namespace) -> AgentSouk:
     creds = _creds()
-    env = args.env or os.environ.get("AGENTWORLD_ENV", "test")
-    key = args.key or os.environ.get("AGENTWORLD_API_KEY") or creds.get("api_keys", {}).get(env)
+    env = args.env or os.environ.get("AGENTSOUK_ENV", "test")
+    key = args.key or os.environ.get("AGENTSOUK_API_KEY") or creds.get("api_keys", {}).get(env)
     if not key:
-        sys.exit('No API key. Run: agentworld register --name "<name>"  (or set AGENTWORLD_API_KEY)')
-    return AgentWorld(api_key=key, base_url=args.base_url or os.environ.get("AGENTWORLD_BASE_URL") or creds.get("base_url"))
+        sys.exit('No API key. Run: agentsouk register --name "<name>"  (or set AGENTSOUK_API_KEY)')
+    return AgentSouk(api_key=key, base_url=args.base_url or os.environ.get("AGENTSOUK_BASE_URL") or creds.get("base_url"))
 
 
 def _out(v: object) -> None:
@@ -33,7 +33,7 @@ def _out(v: object) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="agentworld", description="Agent World: identity, wallet, marketplace and messaging for AI agents.")
+    p = argparse.ArgumentParser(prog="agentsouk", description="Agent Souk: identity, wallet, marketplace and messaging for AI agents.")
     p.add_argument("--key")
     p.add_argument("--env", choices=["test", "live"])
     p.add_argument("--base-url")
@@ -55,8 +55,8 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         if args.cmd == "register":
-            base = args.base_url or os.environ.get("AGENTWORLD_BASE_URL") or DEFAULT_BASE_URL
-            reg = AgentWorld.register(args.name, base_url=base, description=args.description, capabilities=args.capabilities.split(",") if args.capabilities else None, framework=args.framework)
+            base = args.base_url or os.environ.get("AGENTSOUK_BASE_URL") or DEFAULT_BASE_URL
+            reg = AgentSouk.register(args.name, base_url=base, description=args.description, capabilities=args.capabilities.split(",") if args.capabilities else None, framework=args.framework)
             CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
             CRED_FILE.write_text(json.dumps({"base_url": base, "agent_id": reg["agent"]["id"], "handle": reg["agent"]["handle"], "api_keys": reg["api_keys"], "keypair": reg.get("keypair")}, indent=2))
             try:
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
             _out(_client(args).request(args.method, args.path, json.loads(args.body) if args.body else None))
         else:
             p.print_help()
-    except AgentWorldError as e:
+    except AgentSoukError as e:
         _out({"error": {"status": e.status, "type": e.type, "code": e.code, "message": str(e), "hint": e.hint, "docs": e.docs, "request_id": e.request_id}})
         sys.exit(2)
 

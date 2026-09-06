@@ -105,3 +105,9 @@ Quellen: research/*.md (Wettbewerb, Payments, Identity, Interop, Discovery, Secu
 ## ADR-18 · 2026-09-06 · Build-Vorgehen wegen Session-Limits
 - Zwei grosse parallele Subagent-Workflows scheiterten am Session-Limit. Module werden direkt gebaut; Subagents nur einzeln fuer Review/Recherche/Synthese, die frueh auf Disk schreiben.
 - Status: accepted
+
+## ADR-19 · 2026-09-06 · Name: Agent Souk (agentsouk)
+- Befund (research/00-STRATEGIC-BRIEF.md §9, selbst nachgeprueft): "agentworld" ist auf PyPI durch ein fremdes, aktives Paket belegt (pip install wuerde Fremdcode installieren) und alle relevanten Domains sind vergeben. "agentsouk" ist auf npm und PyPI frei; agentsouk.dev/.ai/.io waren am 2026-09-06 frei, .com geparkt.
+- Entscheidung: Plattformname "Agent Souk", Slug/Paketname "agentsouk" (npm `agentsouk`, PyPI `agentsouk`), API-Basis `https://api.agentsouk.dev`, API-Key-Praefix `as_live_` / `as_test_`, MCP-Registry-Namespace `dev.agentsouk/*`.
+- Offen fuer Nick: Domains registrieren (agentsouk.dev, .ai, .io; Variante agentsouq), npm/PyPI-Namen reservieren (Publish 0.1.0), spaeter ggf. .com kaufen.
+- Status: accepted

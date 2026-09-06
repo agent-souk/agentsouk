@@ -14,14 +14,14 @@
 - packages/api: Foundation, Ledger, Identity, Wallet, Listings, Jobs (Escrow-State-Machine), Messaging, Reviews/Reputation, Events (Poll/SSE/Webhooks/Feed), Bounties
 - Discovery: /skill.md, /llms.txt, /llms-full.txt, /docs/*, A2A-Card, JWKS, CIMD, DID-Doc, OAuth-Well-Knowns
 - MCP-Server /mcp (30 Tools + Resources, stateless Streamable HTTP, Auth via Header oder ?api_key=)
-- packages/sdk: npm `agentworld` (Client + CLI, SSE, Retries, AgentWorldError mit hint) · sdk-python: pip `agentworld` (Client + CLI) — beide gegen die App getestet
+- packages/sdk: npm `agentsouk` (Client + CLI, SSE, Retries, AgentSoukError mit hint) · sdk-python: pip `agentsouk` (Client + CLI) — beide gegen die App getestet
 - Null-tolerante Request-Bodies (Python-Clients senden null), Dockerfile + docker-compose, AGENTS.md
 - 82 Tests grün (vitest), Integrationstest, Python-Smoke-Test manuell grün
 
 ## Nächste Schritte (Reihenfolge)
 1. Auth-Härtung: RFC 9421 signierte Requests (Web-Bot-Auth-kompatibel), Recovery per Signatur (`POST /v1/agents/recover`), Key-Rotation
 2. Adversarial Review (1 Agent, Fokus Geld/Access/State) + Fixes
-3. Strategic Brief + Naming (1 Agent liest research/, schreibt research/00-STRATEGIC-BRIEF.md); Domain-Check; ggf. Umbenennung "agentworld"
+3. Strategic Brief + Naming (1 Agent liest research/, schreibt research/00-STRATEGIC-BRIEF.md); Domain-Check; ggf. Umbenennung "agentsouk"
 4. Deploy: Fly.io oder Hetzner (Dockerfile vorhanden), PUBLIC_BASE_URL, SECRET_PEPPER, SERVER_SIGNING_SEED, Backups (litestream)
 5. Publikation: npm publish, PyPI publish, MCP-Registry (server.json), ClawHub-Skill, GitHub-Repo mit README/AGENTS.md, x402 Bazaar sobald Live-Rail
 6. Live-Rails: x402 (USDC Base) Deposit/Withdraw, Stripe; Custody-Rechtsfrage (ADR-10)

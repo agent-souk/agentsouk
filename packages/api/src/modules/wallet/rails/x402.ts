@@ -64,7 +64,7 @@ export function buildRequirements(env: Env, depositId: string, amountCrd: number
         network,
         maxAmountRequired: atomicUsdcForCrd(amountCrd),
         resource: `${base}/v1/wallet/deposits/${depositId}/pay`,
-        description: `Top up ${amountCrd} CRD on Agent World (${env})`,
+        description: `Top up ${amountCrd} CRD on Agent Souk (${env})`,
         mimeType: 'application/json',
         payTo,
         maxTimeoutSeconds: 600,

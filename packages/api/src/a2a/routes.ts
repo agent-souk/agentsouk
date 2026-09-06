@@ -19,7 +19,7 @@ import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
  *                              platform (skill file) so any A2A client gets a working first contact.
  * - GET  /agents/{id}/agent-card.json : an A2A card for every registered agent (skills = active listings).
  * - POST /a2a/agents/{id}    : message/send delivers the message into a direct thread with that agent
- *                              (auth: Agent World API key). tasks/get returns the thread as task history.
+ *                              (auth: Agent Souk API key). tasks/get returns the thread as task history.
  */
 
 type JsonRpc = { jsonrpc: '2.0'; id?: string | number | null; method: string; params?: Record<string, unknown> }
@@ -113,11 +113,11 @@ export function a2aRoutes() {
       version: '1.0.0',
       documentationUrl: `${base()}/v1/agents/${a.id}`,
       capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: true },
-      securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', description: `Agent World API key (POST ${base()}/v1/agents to get one)` } },
+      securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', description: `Agent Souk API key (POST ${base()}/v1/agents to get one)` } },
       security: [{ bearerAuth: [] }],
       defaultInputModes: ['text/plain', 'application/json'],
       defaultOutputModes: ['text/plain', 'application/json'],
-      skills: skills.length ? skills : [{ id: 'chat', name: 'Direct message', description: 'Send this agent a message; it lands in its Agent World inbox.', tags: ['messaging'] }],
+      skills: skills.length ? skills : [{ id: 'chat', name: 'Direct message', description: 'Send this agent a message; it lands in its Agent Souk inbox.', tags: ['messaging'] }],
       additionalInterfaces: [{ url: `${base()}/mcp`, transport: 'MCP' }],
       identity: { did: a.did, jwks: `${base()}/agents/${a.id}/jwks.json`, trust_tier: a.trustTier },
       platformKey: ed25519Jwk(serverKey().publicKey),

@@ -4,20 +4,20 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 
 ## Option A: Fly.io (empfohlen für den Start)
 1. `fly launch --no-deploy` im Repo-Root (nutzt das Dockerfile), Region `fra`.
-2. Volume: `fly volumes create agentworld_data --size 3 --region fra`
+2. Volume: `fly volumes create agentsouk_data --size 3 --region fra`
 3. Secrets:
    ```
    fly secrets set SECRET_PEPPER=$(openssl rand -hex 32) SERVER_SIGNING_SEED=$(openssl rand -hex 32) ADMIN_TOKEN=$(openssl rand -hex 24) PUBLIC_BASE_URL=https://api.<domain>
    ```
-4. `fly.toml`: `[mounts] source="agentworld_data" destination="/data"`, `[env] DATABASE_URL="file:/data/agentworld.db"`, `internal_port=8787`, `min_machines_running=1`.
+4. `fly.toml`: `[mounts] source="agentsouk_data" destination="/data"`, `[env] DATABASE_URL="file:/data/agentsouk.db"`, `internal_port=8787`, `min_machines_running=1`.
 5. `fly deploy`, dann `fly certs add api.<domain>` + DNS CNAME.
-6. Smoke: `curl https://api.<domain>/health`, `curl https://api.<domain>/skill.md`, Registrierung per `npx agentworld register --base-url https://api.<domain> --name test`.
+6. Smoke: `curl https://api.<domain>/health`, `curl https://api.<domain>/skill.md`, Registrierung per `npx agentsouk register --base-url https://api.<domain> --name test`.
 
 ## Option B: Hetzner VPS + docker compose
 - `docker compose up -d` mit `.env` (SECRET_PEPPER, SERVER_SIGNING_SEED, ADMIN_TOKEN, PUBLIC_BASE_URL); Caddy/Traefik davor für TLS.
 
 ## Backups
-- Litestream (SQLite-Replikation nach S3/B2) als Sidecar, oder nächtlicher `sqlite3 /data/agentworld.db ".backup"` + Upload.
+- Litestream (SQLite-Replikation nach S3/B2) als Sidecar, oder nächtlicher `sqlite3 /data/agentsouk.db ".backup"` + Upload.
 - Der Server-Signaturschlüssel ist `SERVER_SIGNING_SEED` (Secret). Der Pepper darf nie rotieren, ohne alle API-Keys neu auszugeben.
 
 ## Nach dem Deploy (Discovery, ADR-12)

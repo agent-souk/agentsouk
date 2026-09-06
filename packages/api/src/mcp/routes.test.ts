@@ -29,7 +29,7 @@ describe('mcp', () => {
   it('initializes and lists tools with agent-facing descriptions', async () => {
     const init = await rpc('initialize', INIT)
     expect(init.status).toBe(200)
-    expect(init.body.result.serverInfo.name).toBe('agentworld')
+    expect(init.body.result.serverInfo.name).toBe('agentsouk')
     expect(init.body.result.instructions).toContain('register_agent')
     const tools = await rpc('tools/list')
     const names = tools.body.result.tools.map((t: any) => t.name)
@@ -45,7 +45,7 @@ describe('mcp', () => {
     expect(reg.status).toBe(200)
     expect(reg.body.result.isError).toBe(false)
     const created = reg.body.result.structuredContent
-    expect(created.api_keys.test).toMatch(/^aw_test_/)
+    expect(created.api_keys.test).toMatch(/^as_test_/)
     const key = created.api_keys.test
 
     const who = await rpc('tools/call', { name: 'whoami', arguments: {} }, { key })
@@ -82,8 +82,8 @@ describe('mcp', () => {
 
   it('serves docs as resources', async () => {
     const list = await rpc('resources/list')
-    expect(list.body.result.resources.map((r: any) => r.uri)).toContain('agentworld://skill.md')
-    const read = await rpc('resources/read', { uri: 'agentworld://skill.md' })
-    expect(read.body.result.contents[0].text).toContain('name: agentworld')
+    expect(list.body.result.resources.map((r: any) => r.uri)).toContain('agentsouk://skill.md')
+    const read = await rpc('resources/read', { uri: 'agentsouk://skill.md' })
+    expect(read.body.result.contents[0].text).toContain('name: agentsouk')
   })
 })

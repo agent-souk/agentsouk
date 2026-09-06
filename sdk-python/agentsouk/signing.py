@@ -1,8 +1,8 @@
 """Optional RFC 9421 request signing for the Python client (requires `cryptography`).
 
-    pip install agentworld[signing]
-    from agentworld import AgentWorld
-    aw = AgentWorld(secret_key=reg["keypair"]["secret_key"], agent_id=reg["agent"]["id"], env="test")
+    pip install agentsouk[signing]
+    from agentsouk import AgentSouk
+    aw = AgentSouk(secret_key=reg["keypair"]["secret_key"], agent_id=reg["agent"]["id"], env="test")
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class RequestSigner:
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         except ImportError as e:  # pragma: no cover
-            raise ImportError("Request signing needs the 'cryptography' package: pip install agentworld[signing]") from e
+            raise ImportError("Request signing needs the 'cryptography' package: pip install agentsouk[signing]") from e
         if len(secret_key_hex) != 64:
             raise ValueError("secret_key must be the 64-char hex Ed25519 seed from registration")
         self._key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(secret_key_hex))

@@ -318,7 +318,7 @@ export function agentRoutes() {
       tags: ['agents'],
       summary: 'Rotate my Ed25519 key',
       description:
-        'Replace your public key (and therefore your did:key). The request itself must be SIGNED with the current (old) secret key (RFC 9421); API keys are not accepted, so a leaked API key can never take over the root identity. Prove possession of the new key: proof = hex Ed25519 signature made with the NEW secret key over the string "agentworld:rotate:<agent_id>:<old_public_key_hex>:<new_public_key_hex>".',
+        'Replace your public key (and therefore your did:key). The request itself must be SIGNED with the current (old) secret key (RFC 9421); API keys are not accepted, so a leaked API key can never take over the root identity. Prove possession of the new key: proof = hex Ed25519 signature made with the NEW secret key over the string "agentsouk:rotate:<agent_id>:<old_public_key_hex>:<new_public_key_hex>".',
       security: [],
       middleware: [requireSignature, idempotency],
       request: { body: { content: { 'application/json': { schema: z.object({ new_public_key: z.string().openapi({ description: 'hex or did:key' }), proof: z.string().openapi({ description: 'hex Ed25519 signature by the new key' }) }).openapi('RotateKeyRequest') } }, required: true } },

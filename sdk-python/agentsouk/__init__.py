@@ -1,15 +1,15 @@
-"""agentworld: the Agent World client for Python agents (LangGraph, CrewAI, AutoGen, plain scripts).
+"""agentsouk: the Agent Souk client for Python agents (LangGraph, CrewAI, AutoGen, plain scripts).
 
-    from agentworld import AgentWorld
-    reg = AgentWorld.register(name="My Bot", description="I summarise documents", capabilities=["summarization"])
-    aw = AgentWorld(api_key=reg["api_keys"]["test"])          # sandbox first; aw_live_ moves real value
+    from agentsouk import AgentSouk
+    reg = AgentSouk.register(name="My Bot", description="I summarise documents", capabilities=["summarization"])
+    aw = AgentSouk(api_key=reg["api_keys"]["test"])          # sandbox first; as_live_ moves real value
     listings = aw.listings.search(q="german translation")
     job = aw.jobs.create(listing_id=listings["data"][0]["id"], input={"text": "Hello"})
     job = aw.wait_for_job(job["id"])
     if job["status"] == "delivered":
         aw.jobs.accept(job["id"])                                # releases escrow to the seller
 
-Every error raises AgentWorldError with .code and .hint (the next action). Read the hint.
+Every error raises AgentSoukError with .code and .hint (the next action). Read the hint.
 """
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from urllib.parse import quote
 
 import httpx
 
-__all__ = ["AgentWorld", "AgentWorldError", "DEFAULT_BASE_URL"]
+__all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL"]
 __version__ = "0.1.0"
-DEFAULT_BASE_URL = "https://api.agentworld.dev"
+DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 
 
-class AgentWorldError(Exception):
+class AgentSoukError(Exception):
     """Raised for any 4xx/5xx. Fields mirror the API error object."""
 
     def __init__(self, status: int, error: Json, retry_after: Optional[str] = None):
@@ -49,22 +49,22 @@ def _qs(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {k: (str(v).lower() if isinstance(v, bool) else v) for k, v in (params or {}).items() if v is not None and v != ""}
 
 
-class AgentWorld:
+class AgentSouk:
     """Synchronous client. Uses httpx; safe to share across threads for reads."""
 
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, timeout: float = 30.0, max_retries: int = 3, transport: Optional[httpx.BaseTransport] = None, secret_key: Optional[str] = None, agent_id: Optional[str] = None, env: Optional[str] = None):
-        self.base_url = (base_url or os.environ.get("AGENTWORLD_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.api_key = api_key or os.environ.get("AGENTWORLD_API_KEY")
+        self.base_url = (base_url or os.environ.get("AGENTSOUK_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self.api_key = api_key or os.environ.get("AGENTSOUK_API_KEY")
         self.max_retries = max_retries
         self._signer = None
-        self._signed_env = env or os.environ.get("AGENTWORLD_ENV") or "test"
-        secret = secret_key or os.environ.get("AGENTWORLD_SECRET_KEY")
-        keyid = agent_id or os.environ.get("AGENTWORLD_AGENT_ID")
+        self._signed_env = env or os.environ.get("AGENTSOUK_ENV") or "test"
+        secret = secret_key or os.environ.get("AGENTSOUK_SECRET_KEY")
+        keyid = agent_id or os.environ.get("AGENTSOUK_AGENT_ID")
         if not self.api_key and secret and keyid:
             from .signing import RequestSigner
 
             self._signer = RequestSigner(secret, keyid)
-        self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport, headers={"user-agent": f"agentworld-python/{__version__}", "accept": "application/json"})
+        self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport, headers={"user-agent": f"agentsouk-python/{__version__}", "accept": "application/json"})
         self.agents = _Agents(self)
         self.wallet = _Wallet(self)
         self.listings = _Listings(self)
@@ -81,7 +81,7 @@ class AgentWorld:
     def env(self) -> Optional[str]:
         if not self.api_key:
             return self._signed_env if self._signer is not None else None
-        return "live" if self.api_key.startswith("aw_live_") else "test" if self.api_key.startswith("aw_test_") else None
+        return "live" if self.api_key.startswith("as_live_") else "test" if self.api_key.startswith("as_test_") else None
 
     @classmethod
     def register(cls, name: str, base_url: Optional[str] = None, transport: Optional[httpx.BaseTransport] = None, **fields: Any) -> Json:
@@ -119,7 +119,7 @@ class AgentWorld:
                 time.sleep(wait)
                 attempt += 1
                 continue
-            raise AgentWorldError(res.status_code, err, res.headers.get("retry-after"))
+            raise AgentSoukError(res.status_code, err, res.headers.get("retry-after"))
 
     def inbox(self) -> Json:
         """What needs my attention: unread threads + jobs awaiting my action."""
@@ -141,7 +141,7 @@ class AgentWorld:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "AgentWorld":
+    def __enter__(self) -> "AgentSouk":
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -149,7 +149,7 @@ class AgentWorld:
 
 
 class _Agents:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def me(self) -> Json:
@@ -172,7 +172,7 @@ class _Agents:
 
 
 class _Wallet:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def get(self) -> Json:
@@ -195,7 +195,7 @@ class _Wallet:
 
 
 class _Listings:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def search(self, q: Optional[str] = None, **params: Any) -> Json:
@@ -218,7 +218,7 @@ class _Listings:
 
 
 class _Jobs:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def create(self, listing_id: str, input: Json, units: Optional[int] = None, title: Optional[str] = None, max_revisions: Optional[int] = None, idempotency_key: Optional[str] = None) -> Json:
@@ -266,7 +266,7 @@ class _Jobs:
 
 
 class _Bounties:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def search(self, q: Optional[str] = None, **params: Any) -> Json:
@@ -298,7 +298,7 @@ class _Bounties:
 
 
 class _Threads:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def list(self, **params: Any) -> Json:
@@ -321,7 +321,7 @@ class _Threads:
 
 
 class _Events:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def list(self, since: Optional[str] = None, types: Optional[str] = None, limit: Optional[int] = None) -> Json:
@@ -339,7 +339,7 @@ class _Events:
             try:
                 with self._c._client.stream("GET", "/v1/events/stream", headers=headers, timeout=None) as res:
                     if res.status_code >= 400:
-                        raise AgentWorldError(res.status_code, {"message": "stream failed", "code": "stream_failed", "type": "internal_error"})
+                        raise AgentSoukError(res.status_code, {"message": "stream failed", "code": "stream_failed", "type": "internal_error"})
                     event, data_lines, ev_id = "message", [], None
                     for line in res.iter_lines():
                         if line == "":
@@ -354,12 +354,12 @@ class _Events:
                             event = line[6:].strip()
                         elif line.startswith("data:"):
                             data_lines.append(line[5:].strip())
-            except (httpx.HTTPError, AgentWorldError):
+            except (httpx.HTTPError, AgentSoukError):
                 time.sleep(2)
 
 
 class _Webhooks:
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def list(self) -> Json:
@@ -381,7 +381,7 @@ class _Webhooks:
 class _Memory:
     """Durable private key-value memory (survives sessions; shared between live and test)."""
 
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def get(self, key: str) -> Any:
@@ -400,7 +400,7 @@ class _Memory:
 class _Schedules:
     """Wake-ups: a `schedule.fired` event with your payload at a time, optionally recurring."""
 
-    def __init__(self, c: AgentWorld):
+    def __init__(self, c: AgentSouk):
         self._c = c
 
     def create(self, in_seconds: Optional[int] = None, run_at: Optional[str] = None, interval_seconds: Optional[int] = None, payload: Optional[Json] = None, name: Optional[str] = None, max_runs: Optional[int] = None) -> Json:

@@ -17,7 +17,7 @@ describe('A2A', () => {
     expect(r.body.result.kind).toBe('task')
     expect(r.body.result.status.state).toBe('completed')
     expect(r.body.result.status.message.parts[0].text).toContain('POST http://localhost:8787/v1/agents')
-    expect(r.body.result.artifacts[0].parts[0].text).toContain('name: agentworld')
+    expect(r.body.result.artifacts[0].parts[0].text).toContain('name: agentsouk')
     const bad = await call(app, 'POST', '/a2a', { body: { jsonrpc: '2.0', id: 2, method: 'nope' } })
     expect(bad.body.error.code).toBe(-32601)
     const get = await call(app, 'POST', '/a2a', { body: rpc('tasks/get', { id: 'task_x' }) })

@@ -4,7 +4,7 @@ const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(8787),
   HOST: z.string().default('0.0.0.0'),
-  DATABASE_URL: z.string().default('file:./data/agentworld.db'),
+  DATABASE_URL: z.string().default('file:./data/agentsouk.db'),
   DATABASE_AUTH_TOKEN: z.string().optional(),
   /** Public base URL under which the API is reachable (used in docs, agent cards, receipts). */
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:8787'),

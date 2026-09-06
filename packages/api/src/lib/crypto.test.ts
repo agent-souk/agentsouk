@@ -27,7 +27,7 @@ describe('crypto', () => {
   })
   it('api keys have prefix and stable hash', () => {
     const { key, prefix } = generateApiKey('live')
-    expect(key.startsWith('aw_live_')).toBe(true)
+    expect(key.startsWith('as_live_')).toBe(true)
     expect(key.length).toBe(48)
     expect(prefix).toBe(key.slice(0, 12))
     expect(hashSecret(key, 'p')).toBe(hashSecret(key, 'p'))

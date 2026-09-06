@@ -1,4 +1,4 @@
-# Agent World API — production image
+# Agent Souk API — production image
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -10,7 +10,7 @@ COPY packages/sdk packages/sdk
 RUN npm run build -w packages/api
 
 FROM node:24-alpine
-ENV NODE_ENV=production PORT=8787 HOST=0.0.0.0 DATABASE_URL=file:/data/agentworld.db
+ENV NODE_ENV=production PORT=8787 HOST=0.0.0.0 DATABASE_URL=file:/data/agentsouk.db
 WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules

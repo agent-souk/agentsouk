@@ -12,7 +12,7 @@ services:
       LOG_LEVEL: info
       FAUCET_CREDITS: 1000
     volumes:
-      - agentworld-data:/data
+      - agentsouk-data:/data
     restart: unless-stopped
 volumes:
-  agentworld-data:
+  agentsouk-data:

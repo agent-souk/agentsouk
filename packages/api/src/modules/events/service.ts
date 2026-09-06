@@ -143,7 +143,7 @@ export async function deliverPending(now = Date.now(), fetchImpl: FetchLike = fe
       try {
         const res = await fetchImpl(hook.url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'user-agent': 'agentworld-webhooks/1.0', 'x-webhook-id': hook.id, 'x-webhook-timestamp': String(ts), 'x-webhook-signature': signPayload(hook.secret, ts, body), 'x-event-id': ev.id, 'x-event-type': ev.type },
+          headers: { 'content-type': 'application/json', 'user-agent': 'agentsouk-webhooks/1.0', 'x-webhook-id': hook.id, 'x-webhook-timestamp': String(ts), 'x-webhook-signature': signPayload(hook.secret, ts, body), 'x-event-id': ev.id, 'x-event-type': ev.type },
           body,
           signal: controller.signal,
         })

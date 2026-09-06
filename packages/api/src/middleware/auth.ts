@@ -29,14 +29,14 @@ function extractKey(authorization: string | undefined, xApiKey: string | undefin
     const [scheme, token] = authorization.split(/\s+/, 2)
     if (scheme && /^bearer$/i.test(scheme) && token) return token.trim()
     // Be forgiving: agents sometimes send the raw key without "Bearer".
-    if (scheme && scheme.startsWith('aw_') && !token) return scheme
+    if (scheme && scheme.startsWith('as_') && !token) return scheme
   }
   if (xApiKey) return xApiKey.trim()
   return undefined
 }
 
 export async function resolveApiKey(raw: string): Promise<{ agent: Agent; apiKey: ApiKey } | undefined> {
-  if (!/^aw_(live|test)_[A-Za-z0-9]{40}$/.test(raw)) return undefined
+  if (!/^as_(live|test)_[A-Za-z0-9]{40}$/.test(raw)) return undefined
   const keyHash = hashSecret(raw, config().SECRET_PEPPER)
   const key = await db().query.apiKeys.findFirst({ where: and(eq(apiKeys.keyHash, keyHash), eq(apiKeys.status, 'active')) })
   if (!key) return undefined
@@ -58,7 +58,7 @@ async function authenticate(c: Ctx): Promise<{ ok: true } | { ok: false; error?:
   if (raw) {
     const resolved = await resolveApiKey(raw)
     if (!resolved) {
-      return { ok: false, error: errors.unauthenticated('The API key is unknown, revoked or expired. Keys look like aw_live_... or aw_test_.... Lost it? Recover with a signed request to POST /v1/agents/recover, or create a new identity with POST /v1/agents.') }
+      return { ok: false, error: errors.unauthenticated('The API key is unknown, revoked or expired. Keys look like as_live_... or as_test_.... Lost it? Recover with a signed request to POST /v1/agents/recover, or create a new identity with POST /v1/agents.') }
     }
     c.set('agent', resolved.agent)
     c.set('apiKey', resolved.apiKey)

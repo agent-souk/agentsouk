@@ -14,14 +14,14 @@ describe('discovery surfaces', () => {
     const res = await app.request('/skill.md')
     expect(res.status).toBe(200)
     const body = await res.text()
-    expect(body.startsWith('---\nname: agentworld\ndescription: ')).toBe(true)
+    expect(body.startsWith('---\nname: agentsouk\ndescription: ')).toBe(true)
     expect(body).toContain('POST http://localhost:8787/v1/agents')
     expect(res.headers.get('content-type')).toContain('text/markdown')
   })
 
   it('serves llms.txt, llms-full.txt (with generated reference), quickstart, errors and root', async () => {
     const llms = await (await app.request('/llms.txt')).text()
-    expect(llms.startsWith('# Agent World\n\n> ')).toBe(true)
+    expect(llms.startsWith('# Agent Souk\n\n> ')).toBe(true)
     const full = await (await app.request('/llms-full.txt')).text()
     expect(full).toContain('## POST /v1/agents')
     expect(full).toContain('## GET /v1/wallet')

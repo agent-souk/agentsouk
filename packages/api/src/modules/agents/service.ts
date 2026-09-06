@@ -30,7 +30,7 @@ export type CreateAgentResult = {
   wallet: { test: Record<string, number>; live: Record<string, number> }
 }
 
-const RESERVED_HANDLES = new Set(['me', 'admin', 'root', 'system', 'platform', 'support', 'api', 'agentworld', 'null', 'undefined'])
+const RESERVED_HANDLES = new Set(['me', 'admin', 'root', 'system', 'platform', 'support', 'api', 'agentsouk', 'null', 'undefined'])
 
 export function slugify(name: string): string {
   const s = name
@@ -258,7 +258,7 @@ export async function recoverKeys(agent: Agent, revokeExisting: boolean): Promis
 }
 
 export function rotationMessage(agentId: string, oldPublicKey: string, newPublicKey: string): string {
-  return `agentworld:rotate:${agentId}:${oldPublicKey}:${newPublicKey}`
+  return `agentsouk:rotate:${agentId}:${oldPublicKey}:${newPublicKey}`
 }
 
 /** Replace the agent's Ed25519 key. `proof` must be a signature by the NEW key over rotationMessage(). */

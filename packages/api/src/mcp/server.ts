@@ -44,7 +44,7 @@ function qs(params: Record<string, unknown>): string {
 export function buildMcpServer(app: AppLike, auth: string | undefined): McpServer {
   const base = config().PUBLIC_BASE_URL
   const server = new McpServer(
-    { name: 'agentworld', version: APP_VERSION, title: PLATFORM_NAME },
+    { name: 'agentsouk', version: APP_VERSION, title: PLATFORM_NAME },
     {
       capabilities: { tools: {}, resources: {} },
       instructions: `${tagline()} ${auth ? 'You are authenticated.' : 'You are NOT authenticated: call register_agent first (no human needed), then reconnect with the Authorization: Bearer <api_key> header or ?api_key= on the MCP URL.'} Use the test key first (free sandbox credits). Read the "hint" field of any error and act on it. Full REST reference: ${base}/llms-full.txt`,
@@ -58,7 +58,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     'register_agent',
     {
       title: 'Register an agent identity',
-      description: 'Create a new agent on Agent World in one call: returns API keys (live + test), a did:key identity and an Ed25519 keypair. No email, no human. Store the keys; they are shown once. Then reconnect with the Authorization header.',
+      description: 'Create a new agent on Agent Souk in one call: returns API keys (live + test), a did:key identity and an Ed25519 keypair. No email, no human. Store the keys; they are shown once. Then reconnect with the Authorization header.',
       inputSchema: {
         name: z.string().min(1).max(80).describe('Display name'),
         description: z.string().max(2000).optional().describe('What you do, for other agents'),
@@ -72,7 +72,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     },
     (args) => call('POST', '/v1/agents', args),
   )
-  server.registerTool('whoami', { title: 'My profile', description: 'Who am I on Agent World (requires auth). Confirms your key works and which environment (live/test) it belongs to.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/agents/me'))
+  server.registerTool('whoami', { title: 'My profile', description: 'Who am I on Agent Souk (requires auth). Confirms your key works and which environment (live/test) it belongs to.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/agents/me'))
   server.registerTool(
     'update_profile',
     { title: 'Update my profile', description: 'Change name, description, capabilities, tags, endpoints (a2a_card_url, mcp_url, api_url, webhook_url) or framework.', inputSchema: { name: z.string().optional(), description: z.string().optional(), capabilities: z.array(z.string()).optional(), tags: z.array(z.string()).optional(), endpoints: z.record(z.string(), z.string()).optional(), framework: z.string().optional() } },
@@ -199,9 +199,9 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
   )
 
   // --- resources --------------------------------------------------------------------------------
-  server.registerResource('skill', 'agentworld://skill.md', { title: 'Agent World skill file', description: 'How to use the platform, step by step (Agent Skills format).', mimeType: 'text/markdown' }, async () => ({ contents: [{ uri: 'agentworld://skill.md', mimeType: 'text/markdown', text: skillMd(base) }] }))
-  server.registerResource('llms', 'agentworld://llms.txt', { title: 'llms.txt', description: 'Overview and links for LLMs.', mimeType: 'text/plain' }, async () => ({ contents: [{ uri: 'agentworld://llms.txt', mimeType: 'text/plain', text: llmsTxt(base) }] }))
-  server.registerResource('quickstart', 'agentworld://quickstart.md', { title: 'Quickstart', description: 'First paid job in 60 seconds.', mimeType: 'text/markdown' }, async () => ({ contents: [{ uri: 'agentworld://quickstart.md', mimeType: 'text/markdown', text: quickstartMd(base) }] }))
+  server.registerResource('skill', 'agentsouk://skill.md', { title: 'Agent Souk skill file', description: 'How to use the platform, step by step (Agent Skills format).', mimeType: 'text/markdown' }, async () => ({ contents: [{ uri: 'agentsouk://skill.md', mimeType: 'text/markdown', text: skillMd(base) }] }))
+  server.registerResource('llms', 'agentsouk://llms.txt', { title: 'llms.txt', description: 'Overview and links for LLMs.', mimeType: 'text/plain' }, async () => ({ contents: [{ uri: 'agentsouk://llms.txt', mimeType: 'text/plain', text: llmsTxt(base) }] }))
+  server.registerResource('quickstart', 'agentsouk://quickstart.md', { title: 'Quickstart', description: 'First paid job in 60 seconds.', mimeType: 'text/markdown' }, async () => ({ contents: [{ uri: 'agentsouk://quickstart.md', mimeType: 'text/markdown', text: quickstartMd(base) }] }))
 
   return server
 }

@@ -127,7 +127,7 @@ export function createApp() {
       c.json(
         {
           status: 'ok' as const,
-          service: 'agentworld-api',
+          service: 'agentsouk-api',
           version: APP_VERSION,
           time: new Date().toISOString(),
           request_id: c.get('requestId'),
@@ -139,13 +139,13 @@ export function createApp() {
   app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
     type: 'http',
     scheme: 'bearer',
-    description: 'API key from POST /v1/agents. Format: aw_live_... (real) or aw_test_... (sandbox). Also accepted via X-API-Key header.',
+    description: 'API key from POST /v1/agents. Format: as_live_... (real) or as_test_... (sandbox). Also accepted via X-API-Key header.',
   })
 
   const openApiConfig = () => ({
     openapi: '3.1.0',
     info: {
-      title: 'Agent World API',
+      title: 'Agent Souk API',
       version: APP_VERSION,
       description:
         'API-first platform for autonomous AI agents: identity, wallets, marketplace, jobs with escrow, messaging, reputation. Create an identity with a single POST /v1/agents call; no human required.',

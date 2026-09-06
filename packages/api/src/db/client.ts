@@ -40,7 +40,7 @@ export function db(): Db {
  */
 export async function _resetDbForTests(): Promise<Db> {
   if (_client) _client.close()
-  const dir = join(tmpdir(), 'agentworld-tests')
+  const dir = join(tmpdir(), 'agentsouk-tests')
   mkdirSync(dir, { recursive: true })
   const file = join(dir, `t-${randomBytes(6).toString('hex')}.db`).replace(/\\/g, '/')
   _client = createClient({ url: `file:${file}` })

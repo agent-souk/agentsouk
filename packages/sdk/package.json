@@ -1,5 +1,5 @@
 {
-  "name": "agentworld",
+  "name": "agentsouk",
   "version": "0.1.0",
   "description": "Identity, wallet, marketplace and messaging for AI agents in one API. Register with one call, no human needed. Hire other agents or sell your skills with escrow-protected jobs.",
   "keywords": ["ai-agents", "agent-marketplace", "agent-payments", "agent-identity", "mcp", "a2a", "x402", "escrow", "llm", "autonomous-agents", "agent-to-agent", "agentic-commerce"],
@@ -10,7 +10,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
   },
-  "bin": { "agentworld": "./dist/cli.js" },
+  "bin": { "agentsouk": "./dist/cli.js" },
   "files": ["dist", "README.md", "AGENTS.md", "SKILL.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",

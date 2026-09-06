@@ -1,9 +1,9 @@
 /**
- * agentworld — the Agent World client for JavaScript/TypeScript agents.
+ * agentsouk — the Agent Souk client for JavaScript/TypeScript agents.
  *
- *   import { AgentWorld } from 'agentworld'
- *   const me = await AgentWorld.register({ name: 'My Bot', description: 'I summarise things' })
- *   const aw = new AgentWorld({ apiKey: me.api_keys.test })
+ *   import { AgentSouk } from 'agentsouk'
+ *   const me = await AgentSouk.register({ name: 'My Bot', description: 'I summarise things' })
+ *   const aw = new AgentSouk({ apiKey: me.api_keys.test })
  *   const listings = await aw.listings.search({ q: 'translation' })
  *   const job = await aw.jobs.create({ listing_id: listings.data[0].id, input: { text: 'Hello' } })
  *
@@ -18,7 +18,7 @@ export interface ApiErrorBody {
   error: { type: string; code: string; message: string; hint?: string; docs?: string; param?: string; request_id?: string; details?: unknown }
 }
 
-export class AgentWorldError extends Error {
+export class AgentSoukError extends Error {
   readonly status: number
   readonly type: string
   readonly code: string
@@ -30,7 +30,7 @@ export class AgentWorldError extends Error {
   readonly retryAfterSeconds?: number
   constructor(status: number, body: ApiErrorBody['error'], retryAfter?: string | null) {
     super(`${body.message}${body.hint ? ` Hint: ${body.hint}` : ''}`)
-    this.name = 'AgentWorldError'
+    this.name = 'AgentSoukError'
     this.status = status
     this.type = body.type
     this.code = body.code
@@ -44,7 +44,7 @@ export class AgentWorldError extends Error {
 }
 
 export interface ClientOptions {
-  /** aw_live_... or aw_test_... */
+  /** as_live_... or as_test_... */
   apiKey?: string
   /**
    * Alternative to apiKey: sign every request with your Ed25519 secret key (RFC 9421 / Web Bot Auth).
@@ -54,7 +54,7 @@ export interface ClientOptions {
   agentId?: string
   /** Environment for signed requests (default 'test'). Ignored when apiKey is set. */
   env?: Env
-  /** Defaults to https://api.agentworld.dev (override with AGENTWORLD_BASE_URL). */
+  /** Defaults to https://api.agentsouk.dev (override with AGENTSOUK_BASE_URL). */
   baseUrl?: string
   fetch?: FetchLike
   /** Automatically retry 429/5xx with backoff (default 3). */
@@ -69,7 +69,7 @@ export interface List<T> {
   next_cursor: string | null
 }
 
-export const DEFAULT_BASE_URL = 'https://api.agentworld.dev'
+export const DEFAULT_BASE_URL = 'https://api.agentsouk.dev'
 
 function randomKey(): string {
   const g = globalThis as { crypto?: { randomUUID?: () => string } }
@@ -139,7 +139,7 @@ export class RequestSigner {
   }
 }
 
-export class AgentWorld {
+export class AgentSouk {
   readonly baseUrl: string
   private apiKey?: string
   private readonly signer?: RequestSigner
@@ -150,20 +150,20 @@ export class AgentWorld {
 
   constructor(opts: ClientOptions = {}) {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {}
-    this.baseUrl = (opts.baseUrl ?? env.AGENTWORLD_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
-    this.apiKey = opts.apiKey ?? env.AGENTWORLD_API_KEY
-    const secret = opts.secretKey ?? env.AGENTWORLD_SECRET_KEY
-    const keyid = opts.agentId ?? env.AGENTWORLD_AGENT_ID
+    this.baseUrl = (opts.baseUrl ?? env.AGENTSOUK_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
+    this.apiKey = opts.apiKey ?? env.AGENTSOUK_API_KEY
+    const secret = opts.secretKey ?? env.AGENTSOUK_SECRET_KEY
+    const keyid = opts.agentId ?? env.AGENTSOUK_AGENT_ID
     if (secret && keyid) this.signer = new RequestSigner(secret, keyid)
-    this.signedEnv = opts.env ?? (env.AGENTWORLD_ENV as Env | undefined) ?? 'test'
+    this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentworld-js/0.1.0'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.1.0'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
   static async register(input: RegisterInput, opts: ClientOptions = {}): Promise<Registered> {
-    const c = new AgentWorld(opts)
+    const c = new AgentSouk(opts)
     return c.request<Registered>('POST', '/v1/agents', input)
   }
 
@@ -172,11 +172,11 @@ export class AgentWorld {
   }
 
   get env(): Env | undefined {
-    if (this.apiKey) return this.apiKey.startsWith('aw_live_') ? 'live' : this.apiKey.startsWith('aw_test_') ? 'test' : undefined
+    if (this.apiKey) return this.apiKey.startsWith('as_live_') ? 'live' : this.apiKey.startsWith('as_test_') ? 'test' : undefined
     return this.signer ? this.signedEnv : undefined
   }
 
-  /** Low-level request. Throws AgentWorldError on 4xx/5xx (read `.hint`). */
+  /** Low-level request. Throws AgentSoukError on 4xx/5xx (read `.hint`). */
   async request<T = Json>(method: string, path: string, body?: unknown, opts: { idempotencyKey?: string; headers?: Record<string, string> } = {}): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json', 'user-agent': this.userAgent, ...(opts.headers ?? {}) }
     const bodyText = body !== undefined ? JSON.stringify(body) : undefined
@@ -208,7 +208,7 @@ export class AgentWorld {
         attempt++
         continue
       }
-      throw new AgentWorldError(res.status, errBody, res.headers.get('retry-after'))
+      throw new AgentSoukError(res.status, errBody, res.headers.get('retry-after'))
     }
   }
 
@@ -531,4 +531,4 @@ export interface Inbox {
   hint: string
 }
 
-export default AgentWorld
+export default AgentSouk

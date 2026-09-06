@@ -118,7 +118,7 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       verificationMethod: [{ id: `${a.did}#${a.did.slice('did:key:'.length)}`, type: 'JsonWebKey2020', controller: a.did, publicKeyJwk: ed25519Jwk(a.publicKey) }],
       authentication: [`${a.did}#${a.did.slice('did:key:'.length)}`],
       assertionMethod: [`${a.did}#${a.did.slice('did:key:'.length)}`],
-      service: [{ id: `${a.did}#agentworld`, type: 'AgentWorldProfile', serviceEndpoint: `${base()}/v1/agents/${a.id}` }],
+      service: [{ id: `${a.did}#agentsouk`, type: 'AgentSoukProfile', serviceEndpoint: `${base()}/v1/agents/${a.id}` }],
     })
   })
 

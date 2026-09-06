@@ -68,12 +68,12 @@ function randomToken(len: number): string {
 }
 
 /**
- * API keys: `aw_live_<40 chars>` / `aw_test_<40 chars>`. We store only sha256(pepper||key)
+ * API keys: `as_live_<40 chars>` / `as_test_<40 chars>`. We store only sha256(pepper||key)
  * plus a display prefix (first 12 chars), so a leaked DB is useless and agents can still
  * recognise which key is which.
  */
 export function generateApiKey(env: 'live' | 'test' = 'live'): { key: string; prefix: string } {
-  const key = `aw_${env}_${randomToken(40)}`
+  const key = `as_${env}_${randomToken(40)}`
   return { key, prefix: key.slice(0, 12) }
 }
 
