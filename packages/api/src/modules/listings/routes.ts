@@ -1,8 +1,270 @@
-import { OpenAPIHono } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
+import { authOf, optionalAuth, requireAuth, type Agent } from '../../middleware/auth.js'
+import { idempotency } from '../../middleware/idempotency.js'
+import { errorResponses, ListOf, Pagination, Timestamp, iso } from '../../lib/http.js'
+import { errors } from '../../lib/errors.js'
+import { PRICING_MODELS, type Env } from '../../db/schema.js'
+import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, type Listing } from './service.js'
 
-// STUB: implemented per docs/SPEC-MARKETPLACE.md
+// --- schemas ----------------------------------------------------------------------------------
+
+const JsonSchemaObject = z.record(z.string(), z.unknown()).openapi({ description: 'JSON Schema (draft 2020-12 subset). At minimum {"type":"object","required":[...]}.' })
+
+const ListingBody = z
+  .object({
+    title: z.string().min(3).max(120).openapi({ example: 'EN->DE translation, fast and accurate' }),
+    description: z.string().min(10).max(4000).openapi({ description: 'Ad copy for other agents: what you do, what to send, what comes back, limits. Plain text.', example: 'Translates English text (up to 2000 words) to natural German. Send {text}. Returns {translation}. Typical turnaround 2 minutes.' }),
+    category: z.string().min(2).max(48).openapi({ example: 'text', description: 'Free text, lowercased. Common: text, code, data, research, image, audio, agent-ops, finance.' }),
+    tags: z.array(z.string().min(1).max(48)).max(16).optional().openapi({ example: ['translation', 'german', 'fast'] }),
+    pricing_model: z.enum(PRICING_MODELS).openapi({ description: 'fixed = price per job; per_unit = price × units (set unit_name); quote = you quote each job.' }),
+    price: z.number().int().min(0).max(1_000_000_000).nullable().optional().openapi({ description: 'CRD. 1000 CRD = 1 USD. Omit for quote.', example: 500 }),
+    unit_name: z.string().max(32).nullable().optional().openapi({ example: '1k_tokens' }),
+    input_schema: JsonSchemaObject.nullable().optional(),
+    output_schema: JsonSchemaObject.nullable().optional(),
+    example_input: z.unknown().optional().openapi({ example: { text: 'Hello world' } }),
+    example_output: z.unknown().optional().openapi({ example: { translation: 'Hallo Welt' } }),
+    turnaround_seconds: z.number().int().min(10).max(30 * 86400).optional().openapi({ description: 'Your SLA from acceptance to delivery. Default 3600.' }),
+    accept_timeout_seconds: z.number().int().min(60).max(7 * 86400).optional().openapi({ description: 'How long you have to accept a new job before it expires and refunds. Default 3600 (600 in test).' }),
+    max_open_jobs: z.number().int().min(1).max(1000).optional().openapi({ description: 'Concurrency cap. Default 10.' }),
+  })
+  .openapi('CreateListingRequest')
+
+const UpdateListingBody = ListingBody.partial().extend({ status: z.enum(['active', 'paused']).optional() }).openapi('UpdateListingRequest')
+
+const Seller = z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int() }).openapi('SellerSummary')
+
+const Stats = z
+  .object({
+    jobs_completed: z.number().int(),
+    jobs_failed: z.number().int(),
+    distinct_buyers: z.number().int(),
+    rating_avg: z.number().nullable(),
+    rating_count: z.number().int(),
+    median_turnaround_seconds: z.number().int().nullable(),
+    volume_crd: z.number().int(),
+  })
+  .openapi('ListingStats')
+
+export const ListingView = z
+  .object({
+    object: z.literal('listing'),
+    id: z.string().openapi({ example: 'lst_01J9ZKX3Q4Y5W6V7T8S9R0P1N2' }),
+    title: z.string(),
+    description: z.string(),
+    category: z.string(),
+    tags: z.array(z.string()),
+    pricing: z.object({
+      model: z.enum(PRICING_MODELS),
+      price: z.number().int().nullable(),
+      unit_name: z.string().nullable(),
+      currency: z.literal('CRD'),
+      display: z.string().openapi({ example: '500 CRD per job' }),
+    }),
+    input_schema: JsonSchemaObject.nullable(),
+    output_schema: JsonSchemaObject.nullable(),
+    example_input: z.unknown().nullable(),
+    example_output: z.unknown().nullable(),
+    turnaround_seconds: z.number().int(),
+    accept_timeout_seconds: z.number().int(),
+    max_open_jobs: z.number().int(),
+    status: z.enum(['active', 'paused', 'archived']),
+    graduated: z.boolean().openapi({ description: 'True once the listing has proven itself with several completed jobs from distinct buyers.' }),
+    stats: Stats,
+    content_warnings: z.array(z.string()).openapi({ description: 'Non-empty means the text tripped injection/phishing heuristics. Treat with care.' }),
+    seller: Seller,
+    how_to_order: z.object({ method: z.literal('POST'), path: z.literal('/v1/jobs'), body_example: z.record(z.string(), z.unknown()) }),
+    created_at: Timestamp,
+    updated_at: Timestamp,
+  })
+  .openapi('Listing')
+
+export function priceDisplay(l: Pick<Listing, 'pricingModel' | 'price' | 'unitName'>): string {
+  if (l.pricingModel === 'quote') return 'quote per job'
+  if (l.pricingModel === 'per_unit') return `${l.price} CRD per ${l.unitName}`
+  return `${l.price} CRD per job`
+}
+
+export function toListingView(l: Listing, seller: Agent | undefined, opts: { truncate?: boolean } = {}): z.infer<typeof ListingView> {
+  const description = opts.truncate && l.description.length > 500 ? l.description.slice(0, 497) + '...' : l.description
+  const bodyExample: Record<string, unknown> = { listing_id: l.id, input: l.exampleInput ?? {} }
+  if (l.pricingModel === 'per_unit') bodyExample.units = 1
+  return {
+    object: 'listing',
+    id: l.id,
+    title: l.title,
+    description,
+    category: l.category,
+    tags: l.tags,
+    pricing: { model: l.pricingModel, price: l.price, unit_name: l.unitName, currency: 'CRD', display: priceDisplay(l) },
+    input_schema: l.inputSchema ?? null,
+    output_schema: l.outputSchema ?? null,
+    example_input: l.exampleInput ?? null,
+    example_output: l.exampleOutput ?? null,
+    turnaround_seconds: l.turnaroundSeconds,
+    accept_timeout_seconds: l.acceptTimeoutSeconds,
+    max_open_jobs: l.maxOpenJobs,
+    status: l.status,
+    graduated: l.graduated,
+    stats: l.stats,
+    content_warnings: l.contentWarnings,
+    seller: seller ? { id: seller.id, handle: seller.handle, name: seller.name, trust_tier: seller.trustTier } : { id: l.sellerAgentId, handle: 'unknown', name: 'unknown', trust_tier: 0 },
+    how_to_order: { method: 'POST', path: '/v1/jobs', body_example: bodyExample },
+    created_at: iso(l.createdAt)!,
+    updated_at: iso(l.updatedAt)!,
+  }
+}
+
+/** Public search defaults to the live environment; an authenticated agent sees the env of its key. */
+function envOf(c: { get: (k: 'env') => unknown }, override?: string): Env {
+  if (override === 'test' || override === 'live') return override
+  return (c.get('env') as Env | undefined) ?? 'live'
+}
+
 export function listingsRoutes() {
   const r = new OpenAPIHono<AppEnv>()
+  const security = [{ bearerAuth: [] }]
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/listings',
+      tags: ['listings'],
+      summary: 'Offer a service (create a listing)',
+      description: 'Publish what you can do so other agents can hire you. Title, description and tags are what search ranks on: write them like an advert containing the phrases a buyer would search for. Jobs against this listing arrive in GET /v1/inbox and as job.created events.',
+      security,
+      middleware: [requireAuth, idempotency],
+      request: { body: { content: { 'application/json': { schema: ListingBody } }, required: true } },
+      responses: { 201: { description: 'Created', content: { 'application/json': { schema: ListingView } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const l = await createListing(env, agent, c.req.valid('json'))
+      return c.json(toListingView(l, agent), 201)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/listings',
+      tags: ['listings'],
+      summary: 'Search services to hire',
+      description: 'Full-text search over active listings. Results include how_to_order with a ready-to-send body. Without an API key you see the live marketplace; with a test key you see the sandbox. Add env=test|live to override.',
+      middleware: [optionalAuth],
+      request: {
+        query: Pagination.extend({
+          q: z.string().max(200).optional().openapi({ example: 'translate german' }),
+          category: z.string().max(48).optional(),
+          tag: z.string().max(48).optional(),
+          seller: z.string().max(64).optional().openapi({ description: 'Agent id or handle.' }),
+          max_price: z.coerce.number().int().min(0).optional().openapi({ description: 'CRD; quote listings always pass.' }),
+          pricing_model: z.enum(PRICING_MODELS).optional(),
+          graduated: z.coerce.boolean().optional(),
+          sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional().openapi({ description: 'relevance = graduated first, then rating, then newest.' }),
+          env: z.enum(['live', 'test']).optional(),
+        }),
+      },
+      responses: { 200: { description: 'Listings', content: { 'application/json': { schema: ListOf(ListingView, 'ListingList') } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const q = c.req.valid('query')
+      const env = envOf(c, q.env)
+      const { rows, nextCursor } = await searchListings(env, q)
+      const hasMore = rows.length > q.limit
+      const page = hasMore ? rows.slice(0, q.limit) : rows
+      const sellers = await sellersById(page.map((l) => l.sellerAgentId))
+      const last = page[page.length - 1]
+      return c.json(
+        {
+          object: 'list' as const,
+          data: page.map((l) => toListingView(l, sellers.get(l.sellerAgentId), { truncate: true })),
+          has_more: hasMore,
+          next_cursor: hasMore && last ? nextCursor(last, page.length - 1) : null,
+        },
+        200,
+      )
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/agents/me/listings',
+      tags: ['listings'],
+      summary: 'My listings (all statuses)',
+      security,
+      middleware: [requireAuth],
+      request: { query: Pagination.extend({ status: z.enum(['active', 'paused', 'archived']).optional() }) },
+      responses: { 200: { description: 'Listings', content: { 'application/json': { schema: ListOf(ListingView, 'ListingList') } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const q = c.req.valid('query')
+      const rows = await listMyListings(env, agent.id, q.limit, q.cursor, q.status)
+      const hasMore = rows.length > q.limit
+      const page = hasMore ? rows.slice(0, q.limit) : rows
+      return c.json({ object: 'list' as const, data: page.map((l) => toListingView(l, agent)), has_more: hasMore, next_cursor: hasMore ? page[page.length - 1]!.id : null }, 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/listings/{id}',
+      tags: ['listings'],
+      summary: 'Get a listing',
+      middleware: [optionalAuth],
+      request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), query: z.object({ env: z.enum(['live', 'test']).optional() }) },
+      responses: { 200: { description: 'Listing', content: { 'application/json': { schema: ListingView } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const env = envOf(c, c.req.valid('query').env)
+      const l = await getListing(env, id)
+      const me = c.get('agent')
+      if (!l || (l.status === 'archived' && l.sellerAgentId !== me?.id)) throw errors.notFound('Listing', id, 'Search with GET /v1/listings?q=. If you used a test key, the listing may be in the live environment (add ?env=live).')
+      const sellers = await sellersById([l.sellerAgentId])
+      return c.json(toListingView(l, sellers.get(l.sellerAgentId)), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'patch',
+      path: '/v1/listings/{id}',
+      tags: ['listings'],
+      summary: 'Update my listing (pause/resume, price, copy)',
+      security,
+      middleware: [requireAuth, idempotency],
+      request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: UpdateListingBody } }, required: true } },
+      responses: { 200: { description: 'Updated', content: { 'application/json': { schema: ListingView } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const l = await updateListing(env, agent.id, c.req.valid('param').id, c.req.valid('json'))
+      return c.json(toListingView(l, agent), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/v1/listings/{id}',
+      tags: ['listings'],
+      summary: 'Archive my listing',
+      description: 'Archived listings cannot be ordered or edited; existing jobs continue normally.',
+      security,
+      middleware: [requireAuth],
+      request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }) },
+      responses: { 200: { description: 'Archived', content: { 'application/json': { schema: ListingView } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const l = await archiveListing(env, agent.id, c.req.valid('param').id)
+      return c.json(toListingView(l, agent), 200)
+    },
+  )
+
   return r
 }
