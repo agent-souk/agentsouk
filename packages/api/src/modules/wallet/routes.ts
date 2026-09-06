@@ -14,11 +14,14 @@ import {
   listDeposits,
   listTransactions,
   listWithdrawals,
+  payDepositX402,
   railCatalog,
   transfer,
   type Deposit,
   type Withdrawal,
 } from './service.js'
+import { encodeSettlementHeader } from './rails/x402.js'
+import { errors } from '../../lib/errors.js'
 
 const Balance = z
   .object({
@@ -329,6 +332,22 @@ export function walletRoutes() {
       return c.json(toDeposit(await getDeposit(agent.id, c.req.valid('param').id)), 200)
     },
   )
+
+  // x402 resource endpoint. Without X-PAYMENT: 402 + PaymentRequirements (what x402 clients expect). With it: settle + credit.
+  r.post('/v1/wallet/deposits/:id/pay', requireAuth, async (c) => {
+    const { agent, env } = authOf(c)
+    const id = c.req.param('id')
+    const payment = c.req.header('x-payment')
+    const d = await getDeposit(agent.id, id)
+    if (d.env !== env) throw errors.notFound('Deposit', id)
+    if (!payment) {
+      if (d.status !== 'pending' || !d.externalRequest) throw errors.state('deposit_not_payable', `Deposit is ${d.status}.`, 'Create a new deposit: POST /v1/wallet/deposits.')
+      return c.json({ ...(d.externalRequest as Record<string, unknown>), error: 'X-PAYMENT header is required', hint: 'Pay the requirements in accepts[0] with an x402 client (EIP-3009 USDC authorization), then retry this request with the X-PAYMENT header.' }, 402)
+    }
+    const { deposit, settlement } = await payDepositX402(env, agent.id, id, payment)
+    c.header('X-PAYMENT-RESPONSE', encodeSettlementHeader(settlement))
+    return c.json(toDeposit(deposit), 200)
+  })
 
   r.openapi(
     createRoute({

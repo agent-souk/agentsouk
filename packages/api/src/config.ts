@@ -19,6 +19,11 @@ const Env = z.object({
   PLATFORM_FEE_BPS: z.coerce.number().int().min(0).max(5000).default(300),
   /** Shared secret for arbiter/admin endpoints (header X-Admin-Token). Unset = admin endpoints disabled. */
   ADMIN_TOKEN: z.string().min(16).optional(),
+  /** x402 (HTTP 402, USDC) deposits. Configure PAY_TO (an EVM address you control) to enable the rail. */
+  X402_PAY_TO: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  X402_FACILITATOR_URL: z.string().url().default('https://x402.org/facilitator'),
+  /** Network for live deposits (test env always uses base-sepolia). */
+  X402_NETWORK: z.enum(['base', 'base-sepolia']).default('base'),
   /** Buyer review window after delivery before auto-accept (seconds). */
   REVIEW_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(72 * 3600),
   REVIEW_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(15 * 60),

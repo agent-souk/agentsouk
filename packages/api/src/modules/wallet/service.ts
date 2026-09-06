@@ -5,6 +5,9 @@ import { Ledger, CURRENCY_DECIMALS, formatAmount, type AccountRef } from '../../
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
+import { emit } from '../../events/bus.js'
+import { registerSweep } from '../../lib/scheduler.js'
+import { buildRequirements, verifyAndSettle, x402Configured, type FacilitatorFetch, type PaymentRequired, type SettlementResult } from './rails/x402.js'
 
 /**
  * Wallet = the agent-facing view over the ledger plus external rails (ADR-10).
@@ -52,16 +55,16 @@ export function railCatalog(): RailInfo[] {
     },
     {
       rail: 'x402',
-      name: 'x402 (USDC on Base)',
-      envs: ['live'],
-      status: 'coming_soon',
+      name: 'x402 (USDC on Base; base-sepolia in test)',
+      envs: ['live', 'test'],
+      status: x402Configured() ? 'available' : 'coming_soon',
       assets: ['USDC'],
       deposit: true,
       withdraw: true,
       min_amount: 1000,
-      fee: 'network gas only',
-      settlement: '~seconds after on-chain confirmation',
-      how: 'POST /v1/wallet/deposits {"rail":"x402","amount":<CRD>} returns x402 PaymentRequirements; pay them and we credit your wallet. 1000 CRD = 1 USDC.',
+      fee: 'none (payer covers nothing on Base; facilitator sponsors gas)',
+      settlement: 'seconds after on-chain settlement',
+      how: 'POST /v1/wallet/deposits {"rail":"x402","amount":<CRD>} returns x402 PaymentRequirements (external_request) and a resource URL. Any x402 client can then POST /v1/wallet/deposits/{id}/pay: it receives HTTP 402 with the requirements and retries with the X-PAYMENT header; we verify, settle and credit. 1000 CRD = 1 USDC. Withdrawals are processed by operators within 24h.',
     },
     {
       rail: 'stripe',
@@ -265,11 +268,76 @@ export async function createDeposit(env: Env, agentId: string, rail: Rail, amoun
     return row as Deposit
   }
 
-  if (info.status === 'coming_soon') {
-    throw errors.notImplemented(`Deposits via '${rail}'`)
+  if (rail === 'x402' && x402Configured()) {
+    const id = newId('deposit')
+    const requirements = buildRequirements(env, id, amount)
+    const row: typeof deposits.$inferInsert = {
+      id,
+      env,
+      agentId,
+      rail: 'x402',
+      currency: CREDIT_CURRENCY,
+      amount,
+      externalRequest: requirements as unknown as Record<string, unknown>,
+      externalRef: null,
+      status: 'pending',
+      transactionId: null,
+      expiresAt: now + 24 * 3600_000,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await db().insert(deposits).values(row)
+    return row as Deposit
   }
+
   throw errors.notImplemented(`Deposits via '${rail}'`)
 }
+
+/**
+ * x402 resource endpoint: settle a pending deposit with an X-PAYMENT header and credit the wallet.
+ * Returns the confirmed deposit plus the settlement to echo in X-PAYMENT-RESPONSE.
+ */
+export async function payDepositX402(env: Env, agentId: string, id: string, paymentHeader: string, fetchImpl?: FacilitatorFetch): Promise<{ deposit: Deposit; settlement: SettlementResult }> {
+  const d = await getDeposit(agentId, id)
+  if (d.env !== env) throw errors.notFound('Deposit', id)
+  if (d.rail !== 'x402') throw errors.state('not_x402', 'This deposit does not use the x402 rail.')
+  if (d.status === 'confirmed') return { deposit: d, settlement: { success: true, transaction: d.externalRef ?? undefined } }
+  if (d.status !== 'pending' || (d.expiresAt && d.expiresAt < Date.now())) {
+    if (d.status === 'pending') await db().update(deposits).set({ status: 'expired', updatedAt: Date.now() }).where(eq(deposits.id, id))
+    throw errors.state('deposit_not_payable', `Deposit is ${d.status === 'pending' ? 'expired' : d.status}.`, 'Create a new deposit: POST /v1/wallet/deposits.')
+  }
+  const requirements = (d.externalRequest as unknown as PaymentRequired).accepts[0]!
+  const settlement = await verifyAndSettle(paymentHeader, requirements, fetchImpl)
+  const txn = await ledger().post({
+    env,
+    type: 'deposit',
+    currency: CREDIT_CURRENCY,
+    amount: d.amount,
+    legs: [
+      { account: railAccount('x402'), delta: -d.amount },
+      { account: agentAccount(agentId), delta: +d.amount },
+    ],
+    initiatorAgentId: agentId,
+    idempotencyKey: `deposit:${d.id}:settle`,
+    referenceType: 'deposit',
+    referenceId: d.id,
+    memo: `x402 deposit ${settlement.transaction ?? ''}`.trim(),
+    metadata: { network: settlement.network, payer: settlement.payer, transaction: settlement.transaction },
+  })
+  const now = Date.now()
+  await db().update(deposits).set({ status: 'confirmed', externalRef: settlement.transaction ?? null, transactionId: txn.id, updatedAt: now }).where(eq(deposits.id, id))
+  await emit(env, agentId, 'deposit.confirmed', { deposit_id: d.id, amount: d.amount, currency: CREDIT_CURRENCY, rail: 'x402', transaction: settlement.transaction ?? null })
+  return { deposit: (await getDeposit(agentId, id))!, settlement }
+}
+
+export async function expireDeposits(now = Date.now()): Promise<number> {
+  const rows = await db().query.deposits.findMany({ where: and(eq(deposits.status, 'pending'), lt(deposits.expiresAt, now)), limit: 200 })
+  for (const d of rows) await db().update(deposits).set({ status: 'expired', updatedAt: now }).where(eq(deposits.id, d.id))
+  return rows.length
+}
+registerSweep('deposits', async (now) => {
+  await expireDeposits(now)
+})
 
 export async function getDeposit(agentId: string, id: string): Promise<Deposit> {
   const d = await db().query.deposits.findFirst({ where: and(eq(deposits.id, id), eq(deposits.agentId, agentId)) })
