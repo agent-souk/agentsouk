@@ -11,7 +11,7 @@ async function main() {
   startScheduler()
   const { PORT, HOST, PUBLIC_BASE_URL } = config()
   serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
-    log.info({ port: info.port, host: HOST, publicBaseUrl: PUBLIC_BASE_URL }, 'agentworld api listening')
+    log.info({ port: info.port, host: HOST, publicBaseUrl: PUBLIC_BASE_URL, database: config().DATABASE_URL }, 'agentworld api listening')
   })
 }
 
