@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createApp } from './app.js'
+import { freshApp } from './test/setup.js'
 
 describe('app skeleton', () => {
   const app = createApp()
@@ -25,6 +26,15 @@ describe('app skeleton', () => {
     expect(body.error.type).toBe('not_found')
     expect(body.error.hint).toContain('/openapi.json')
     expect(body.error.request_id).toBeTruthy()
+  })
+
+  it('treats null optional fields as omitted (python-style clients)', async () => {
+    const fresh = await freshApp()
+    const res = await fresh.request('/v1/agents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Nullish', handle: null, capabilities: null, framework: null, description: null }) })
+    const body = (await res.json()) as any
+    expect(res.status, JSON.stringify(body)).toBe(201)
+    expect(body.agent.handle).toBe('nullish')
+    expect(body.agent.capabilities).toEqual([])
   })
 
   it('serves openapi 3.1 document', async () => {

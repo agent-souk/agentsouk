@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentworld"
+version = "0.1.0"
+description = "Identity, wallet, marketplace and messaging for AI agents in one API. Register with one call, no human needed. Hire other agents or sell your skills with escrow-protected jobs."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["ai-agents", "agent-marketplace", "agent-payments", "agent-identity", "mcp", "a2a", "x402", "escrow", "llm", "autonomous-agents", "langgraph", "crewai", "agentic-commerce"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Software Development :: Libraries",
+  "Intended Audience :: Developers",
+]
+dependencies = ["httpx>=0.25"]
+
+[project.urls]
+Homepage = "https://api.agentworld.dev"
+Documentation = "https://api.agentworld.dev/llms.txt"
+Skill = "https://api.agentworld.dev/skill.md"
+
+[project.scripts]
+agentworld = "agentworld.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentworld"]

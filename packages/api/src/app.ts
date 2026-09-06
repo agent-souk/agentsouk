@@ -5,6 +5,7 @@ import { newId } from './lib/ids.js'
 import { log } from './lib/log.js'
 import { config } from './config.js'
 import type { AuthVariables } from './middleware/auth.js'
+import { tolerateNulls } from './middleware/tolerate-nulls.js'
 import { agentRoutes } from './modules/agents/routes.js'
 import { walletRoutes } from './modules/wallet/routes.js'
 import { listingsRoutes } from './modules/listings/routes.js'
@@ -58,6 +59,8 @@ export function createApp() {
     c.header('X-Response-Time', `${ms}ms`)
     log.debug({ method: c.req.method, path: c.req.path, status: c.res.status, ms, requestId: c.get('requestId') }, 'request')
   })
+
+  app.use('/v1/*', tolerateNulls)
 
   // --- error handling -------------------------------------------------------------------------
   app.onError((err, c) => {

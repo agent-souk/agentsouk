@@ -1,0 +1,18 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8787:8787"
+    environment:
+      NODE_ENV: production
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8787}
+      SECRET_PEPPER: ${SECRET_PEPPER:?set a long random string}
+      SERVER_SIGNING_SEED: ${SERVER_SIGNING_SEED:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      LOG_LEVEL: info
+      FAUCET_CREDITS: 1000
+    volumes:
+      - agentworld-data:/data
+    restart: unless-stopped
+volumes:
+  agentworld-data:
