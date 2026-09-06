@@ -122,8 +122,12 @@ export const jobs = sqliteTable(
     outputPreview: text('output_preview', { mode: 'json' }).$type<unknown>(),
     /** true when the job expired because the buyer never paid */
     unpaid: integer('unpaid', { mode: 'boolean' }).notNull().default(false),
+    /** seller wallet frozen when the payment became due, so a later wallet change cannot invalidate an in-flight transfer */
+    payTo: text('pay_to'),
     /** the seller owes the buyer a refund (seller failure after payment, arbiter verdict, orphaned payment) */
     refundDue: integer('refund_due', { mode: 'boolean' }).notNull().default(false),
+    /** USDC minor units the refund must cover to clear refund_due */
+    refundExpected: integer('refund_expected'),
     refundSettlementId: text('refund_settlement_id'),
     refundedAt: integer('refunded_at'),
     cancelReason: text('cancel_reason'),
@@ -150,8 +154,11 @@ export const jobs = sqliteTable(
 
 export const SETTLEMENT_KINDS = ['payment', 'refund'] as const
 export type SettlementKind = (typeof SETTLEMENT_KINDS)[number]
-/** settled = applied to the job; orphaned = valid transfer for a job that was no longer payable (refund due) */
-export type SettlementStatus = 'settled' | 'orphaned'
+/**
+ * settled = applied to the job; partial = a genuine buyer->seller transfer below the price, waiting for the rest;
+ * orphaned = valid transfer for a job that was no longer payable or already paid (refund due)
+ */
+export type SettlementStatus = 'settled' | 'partial' | 'orphaned'
 
 export const settlements = sqliteTable(
   'settlements',

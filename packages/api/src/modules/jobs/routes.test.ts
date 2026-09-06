@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent, randomAddress, type TestAgent } from '../../test/setup.js'
+import { freshApp, call, createTestAgent, randomAddress, randomWallet, setWallet, type TestAgent } from '../../test/setup.js'
+import { sign } from '../../lib/crypto.js'
+import { walletMessage } from '../agents/service.js'
 import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import type { App } from '../../app.js'
 import { _setConfigForTests, config } from '../../config.js'
@@ -117,23 +119,26 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(again.status).toBe(200)
     expect(again.body.payment.settlement.transaction).toBe(tx)
     const other = await pay(id, chain.pay(wallet(buyer), wallet(seller), PRICE))
-    expect(other.status).toBe(200) // already paid: idempotent, the extra transfer is not recorded
+    expect(other.status).toBe(200) // already paid: the extra transfer is recorded as orphaned and the seller owes it back
+    expect(other.body.payment.refund_due).toBe(true)
+    expect(other.body.payment.refund_expected).toBe(PRICE)
 
     const done = await act(buyer, id, 'accept')
     expect(done.body.status).toBe('completed')
     expect((await act(buyer, id, 'accept')).status).toBe(200)
 
     const events = await call(app, 'GET', `/v1/jobs/${id}/events`, { key: seller.api_keys.test })
-    expect(events.body.data.map((e: any) => e.type)).toEqual(['created', 'accepted', 'delivered', 'paid', 'completed'])
+    expect(events.body.data.map((e: any) => e.type)).toEqual(['created', 'accepted', 'delivered', 'paid', 'payment_orphaned', 'refund_due', 'completed'])
     const evs = await call(app, 'GET', `/v1/events?types=job.created,job.accepted,job.delivered,job.paid,job.completed`, { key: seller.api_keys.test })
     expect(evs.body.data.map((e: any) => e.type)).toEqual(['job.created', 'job.accepted', 'job.delivered', 'job.paid', 'job.completed'])
     const paidEvent = evs.body.data.find((e: any) => e.type === 'job.paid')
     expect(paidEvent.data).toMatchObject({ transaction: tx, amount: PRICE, output_revealed: true })
 
     const sellerStl = await call(app, 'GET', '/v1/payments/settlements', { key: seller.api_keys.test })
-    expect(sellerStl.body.data).toHaveLength(1)
-    expect(sellerStl.body.data[0]).toMatchObject({ direction: 'in', transaction: tx, payer_address: expect.any(String) })
-    expect(sellerStl.body.data[0].payer_address.toLowerCase()).toBe(wallet(buyer).toLowerCase())
+    expect(sellerStl.body.data.map((s: any) => s.status).sort()).toEqual(['orphaned', 'settled'])
+    const settled = sellerStl.body.data.find((s: any) => s.status === 'settled')
+    expect(settled).toMatchObject({ direction: 'in', transaction: tx, payer_address: expect.any(String) })
+    expect(settled.payer_address.toLowerCase()).toBe(wallet(buyer).toLowerCase())
     const buyerStl = await call(app, 'GET', '/v1/payments/settlements', { key: buyer.api_keys.test })
     expect(buyerStl.body.data[0].direction).toBe('out')
 
@@ -144,7 +149,7 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     const listing = await call(app, 'GET', `/v1/listings/${l.id}`, { key: buyer.api_keys.test })
     expect(listing.body.stats).toMatchObject({ jobs_completed: 1, volume_usdc: PRICE })
     const stats = await call(app, 'GET', '/v1/stats?env=test')
-    expect(stats.body).toMatchObject({ jobs_completed: 1, volume_usdc_completed: PRICE, settlements: 1 })
+    expect(stats.body).toMatchObject({ jobs_completed: 1, volume_usdc_completed: PRICE, settlements: 2 })
   })
 
   it('validates input keys, self purchase, same-wallet counterparties, listing availability, seller capacity', async () => {
@@ -154,7 +159,8 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(missing.body.error.details.missing).toEqual(['text'])
     const self = await call(app, 'POST', '/v1/jobs', { key: seller.api_keys.test, body: { listing_id: l.id, input: { text: 'x' } } })
     expect(self.status).toBe(400)
-    const twin = await createTestAgent(app, { name: 'Twin', wallet_address: wallet(seller) })
+    const twin = await createTestAgent(app, { name: 'Twin', wallet_address: null })
+    expect((await setWallet(app, twin.api_keys.test, twin.agent.id, seller.wallet!)).status).toBe(200)
     const sameWallet = await call(app, 'POST', '/v1/jobs', { key: twin.api_keys.test, body: { listing_id: l.id, input: { text: 'x' } } })
     expect(sameWallet.status).toBe(400)
     expect(sameWallet.body.error.message).toContain('same wallet')
@@ -186,7 +192,9 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(await reason('0x' + 'f'.repeat(64))).toMatchObject({ status: 409, code: 'transaction_not_found' })
     expect(await reason(chain.pay(randomAddress(), wallet(seller), PRICE))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'wrong_sender' })
     expect(await reason(chain.pay(wallet(buyer), randomAddress(), PRICE))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'wrong_recipient' })
-    expect(await reason(chain.pay(wallet(buyer), wallet(seller), PRICE - 1))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'amount_too_low' })
+    const tooLow = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE - 1))
+    expect(tooLow.status).toBe(402)
+    expect(tooLow.body.error.details).toMatchObject({ reason: 'amount_too_low', transferred: PRICE - 1, remaining: 1, recorded: true })
     expect(await reason(chain.pay(wallet(buyer), wallet(seller), PRICE, { status: '0x0' }))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'reverted' })
     expect(await reason(chain.pay(wallet(buyer), wallet(seller), PRICE, { asset: randomAddress() }))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'wrong_asset' })
     expect(await reason(chain.pay(wallet(buyer), wallet(seller), PRICE, { timestamp: Date.now() - 3600_000 }))).toMatchObject({ status: 402, code: 'payment_invalid', reason: 'too_old' })
@@ -197,8 +205,12 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(pending.body.error.code).toBe('transaction_pending')
     expect(pending.body.error.details).toMatchObject({ confirmations: 1, required: 3 })
     chain.advance(2)
-    expect((await pay(j.id, young)).status).toBe(200)
+    const paid = await pay(j.id, young)
+    expect(paid.status).toBe(200)
+    expect(paid.body.payment.settlement.transaction).toBe(young)
     _setConfigForTests({ PAYMENT_CONFIRMATIONS_TEST: 1 })
+    const all = (await call(app, 'GET', '/v1/payments/settlements', { key: buyer.api_keys.test })).body.data.filter((s: any) => s.job_id === j.id)
+    expect(all.map((s: any) => s.status).sort()).toEqual(['settled', 'settled']) // the earlier partial was promoted
 
     // a second job cannot reuse the hash
     const j2 = await order(l.id, { text: 'again' })
@@ -226,7 +238,7 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     const need = await call(app, 'POST', `/v1/jobs/${j.id}/pay`, { key: noWallet.api_keys.test, body: { transaction: '0x' + 'a'.repeat(64) } })
     expect(need.status).toBe(409)
     expect(need.body.error.code).toBe('wallet_address_required')
-    const set = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: noWallet.api_keys.test, body: { address: wallet(seller) } })
+    const set = await setWallet(app, noWallet.api_keys.test, noWallet.agent.id, seller.wallet!)
     expect(set.status).toBe(200)
     const selfPay = await call(app, 'POST', `/v1/jobs/${j.id}/pay`, { key: noWallet.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(seller), PRICE) } })
     expect(selfPay.status).toBe(402)
@@ -309,8 +321,9 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     await sweepJobs(deadline + 1000)
     expect((await get(buyer, j.id)).body.status).toBe('expired')
     const tooLate = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE, { timestamp: deadline + PAYMENT_GRACE_MS + 60_000 }))
-    expect(tooLate.status).toBe(402)
-    expect(tooLate.body.error.details.reason).toBe('after_deadline')
+    expect(tooLate.status).toBe(409)
+    expect(tooLate.body.error.code).toBe('job_not_payable')
+    expect((await get(buyer, j.id)).body.payment.refund_due).toBe(true) // the seller received it: owed back
     const inTime = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE, { timestamp: deadline + 60_000 }))
     expect(inTime.status, JSON.stringify(inTime.body)).toBe(200)
     expect(inTime.body.status).toBe('delivered')
@@ -454,6 +467,53 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect((await call(app, 'GET', '/v1/jobs?role=seller', { key: buyer.api_keys.test })).body.data).toHaveLength(0)
   })
 
+  it('freezes the pay-to address: a seller wallet change after the sealed delivery cannot invalidate a transfer in flight', async () => {
+    const l = await makeListing()
+    const j = await order(l.id)
+    await act(seller, j.id, 'accept')
+    await act(seller, j.id, 'deliver', { output: 'x' })
+    const oldWallet = wallet(seller)
+    const newWallet = randomWallet()
+    const changed = await setWallet(app, seller.api_keys.test, seller.agent.id, newWallet, sign(walletMessage(seller.agent.id, newWallet.address), seller.keypair!.secret_key))
+    expect(changed.status).toBe(200)
+    expect((await get(buyer, j.id)).body.payment.pay_to.toLowerCase()).toBe(oldWallet.toLowerCase())
+    const paid = await pay(j.id, chain.pay(wallet(buyer), oldWallet, PRICE))
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200)
+    expect(paid.body.output).toBe('x')
+    // a transfer to the NEW wallet is accepted as well (it is still the seller)
+    const j2 = await order(l.id, { text: 'second' })
+    await act(seller, j2.id, 'accept')
+    await act(seller, j2.id, 'deliver', { output: 'y' })
+    expect((await pay(j2.id, chain.pay(wallet(buyer), newWallet.address, PRICE))).status).toBe(200)
+  })
+
+  it('partial payments add up until the price is covered; a refund must cover refund_expected', async () => {
+    const l = await makeListing()
+    const j = await order(l.id)
+    await act(seller, j.id, 'accept')
+    await act(seller, j.id, 'deliver', { output: 'x' })
+    const p1 = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), 100_000))
+    expect(p1.status).toBe(402)
+    expect(p1.body.error.details).toMatchObject({ reason: 'amount_too_low', transferred: 100_000, remaining: 150_000, recorded: true })
+    const p2 = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), 100_000))
+    expect(p2.body.error.details).toMatchObject({ transferred: 200_000, remaining: 50_000 })
+    const p3 = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), 60_000))
+    expect(p3.status, JSON.stringify(p3.body)).toBe(200)
+    expect(p3.body.output).toBe('x')
+    const stl = (await call(app, 'GET', '/v1/payments/settlements', { key: buyer.api_keys.test })).body.data
+    expect(stl.filter((s: any) => s.job_id === j.id).map((s: any) => s.status)).toEqual(['settled', 'settled', 'settled'])
+    // seller cancels after the buyer paid: refund must cover everything the buyer paid
+    await act(buyer, j.id, 'request_revision', { message: 'again' })
+    const sc = await act(seller, j.id, 'cancel', { reason: 'no' })
+    expect(sc.body.payment.refund_expected).toBe(260_000)
+    const small = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), 1, { timestamp: Date.now() + 1000 }) } })
+    expect(small.status).toBe(402)
+    expect(small.body.error.details.reason).toBe('amount_too_low')
+    const full = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), 260_000, { timestamp: Date.now() + 1000 }) } })
+    expect(full.status, JSON.stringify(full.body)).toBe(200)
+    expect(full.body.payment.refund_due).toBe(false)
+  })
+
   it('idempotency key replays job creation', async () => {
     const l = await makeListing()
     const h = { 'idempotency-key': 'job-1' }
@@ -512,7 +572,11 @@ describe('jobs: upfront (pay after acceptance)', () => {
     expect(dec.body.status).toBe('declined')
     const late = await pay(j.id, tx)
     expect(late.status).toBe(409)
-    expect(late.body.error.code).toBe('invalid_transition')
+    expect(late.body.error.code).toBe('job_not_payable') // verified on-chain, recorded, refund owed
+    const declinedView = await get(seller, j.id)
+    expect(declinedView.body.payment.refund_due).toBe(true)
+    expect(declinedView.body.payment.refund_expected).toBe(PRICE)
+    expect(declinedView.body.available_actions).toEqual(['refund'])
     // ... but the platform reconciles when the buyer insists with the hash after the status check: simulate the race
     // by paying an awaiting_payment job whose decline wins between verification and the conditional update.
     const j2 = await order(l.id, { text: 'race' })
@@ -539,12 +603,12 @@ describe('jobs: upfront (pay after acceptance)', () => {
     expect(view.body.available_actions).toEqual(['refund'])
     const stl = await call(app, 'GET', '/v1/payments/settlements', { key: seller.api_keys.test })
     expect(stl.body.data.find((s: any) => s.transaction === tx2)).toMatchObject({ status: 'orphaned', kind: 'payment' })
-    expect((await reputation(seller)).as_seller.refunds_due).toBe(1)
+    expect((await reputation(seller)).as_seller.refunds_due).toBe(2) // the declined job above and this one
     _setRpcFetchForTests(originalFetch)
     const refund = await call(app, 'POST', `/v1/jobs/${j2.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 5000 }) } })
     expect(refund.status, JSON.stringify(refund.body)).toBe(200)
     expect(refund.body.payment.refund_due).toBe(false)
-    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 0, refunds_made: 1 })
+    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 1, refunds_made: 1 }) // the declined job's orphan is still owed
   })
 
   it('seller cancel after an upfront payment owes a refund and counts as failed until refunded', async () => {

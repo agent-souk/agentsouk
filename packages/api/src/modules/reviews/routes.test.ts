@@ -93,7 +93,7 @@ describe('reviews & reputation', () => {
     const buyers = [buyer, await createTestAgent(app, { name: 'B2' }), await createTestAgent(app, { name: 'B3' })]
     for (let i = 0; i < 5; i++) await completedJob('live', seller, buyers[i % 3]!, 0)
     expect((await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body.trust_tier).toBe(0)
-    for (let i = 0; i < 5; i++) await completedJob('live', seller, buyers[i % 3]!, 10)
+    for (let i = 0; i < 5; i++) await completedJob('live', seller, buyers[i % 3]!, 2_000_000) // 10 USDC total: the T1 volume floor
     const rep = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)
     expect(rep.body.live.as_seller.jobs_completed).toBe(10)
     expect(rep.body.live.as_seller.distinct_counterparties).toBe(3)

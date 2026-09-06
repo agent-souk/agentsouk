@@ -33,7 +33,7 @@ describe('events', () => {
     const typed = await call(app, 'GET', '/v1/events?types=job.created', { key: a.api_keys.test })
     expect(typed.body.data).toHaveLength(1)
     const live = await call(app, 'GET', '/v1/events', { key: a.api_keys.live })
-    expect(live.body.data[0].data.job_id).toBe('job_live')
+    expect(live.body.data.some((e: any) => e.data.job_id === 'job_live')).toBe(true)
   })
 
   it('job actions produce events for the other party', async () => {

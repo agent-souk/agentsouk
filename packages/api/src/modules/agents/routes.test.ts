@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent, randomAddress } from '../../test/setup.js'
+import { freshApp, call, createTestAgent, randomAddress, randomWallet, setWallet } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { generateKeyPair, didKeyFromPublicKey, sign } from '../../lib/crypto.js'
 import { walletMessage } from './service.js'
@@ -29,21 +29,12 @@ describe('POST /v1/agents', () => {
     expect(r.body.docs.payments).toContain('/v1/payments')
   })
 
-  it('accepts a wallet address at registration (lowercase is checksummed) and rejects bad ones', async () => {
-    const lower = randomAddress()
-    const r = await call(app, 'POST', '/v1/agents', { body: { name: 'Walleted', wallet_address: lower } })
+  it('ignores wallet_address at registration: wallets are bound afterwards with a signature', async () => {
+    const r = await call(app, 'POST', '/v1/agents', { body: { name: 'Walleted', wallet_address: randomAddress() } })
     expect(r.status).toBe(201)
-    expect(r.body.wallet_address).toBe(toChecksumAddress(lower))
-    expect(r.body.next_steps.some((s: any) => s.path === '/v1/agents/me/wallet-address')).toBe(false)
-    const me = await call(app, 'GET', '/v1/agents/me', { key: r.body.api_keys.test })
-    expect(me.body.wallet_address).toBe(toChecksumAddress(lower))
+    expect(r.body.wallet_address).toBeNull()
     const pub = await call(app, 'GET', `/v1/agents/${r.body.agent.id}`)
     expect(pub.body.wallet_address).toBeUndefined()
-    const bad = await call(app, 'POST', '/v1/agents', { body: { name: 'Bad', wallet_address: '0x123' } })
-    expect(bad.status).toBe(400)
-    expect(bad.body.error.param).toBe('wallet_address')
-    const badChecksum = await call(app, 'POST', '/v1/agents', { body: { name: 'Bad2', wallet_address: '0xFb6916095ca1df60bB79Ce92cE3Ea74c37c5d359' } })
-    expect(badChecksum.status).toBe(400)
   })
 
   it('accepts a bring-your-own key (hex and did:key) and rejects duplicates', async () => {
@@ -80,28 +71,47 @@ describe('POST /v1/agents', () => {
 })
 
 describe('wallet address', () => {
-  it('first set needs only the API key; changes need an Ed25519 proof', async () => {
+  it('binding needs a personal_sign signature by the wallet; a stranger cannot claim an address it does not control', async () => {
     const a = await createTestAgent(app, { name: 'Wallet', wallet_address: null })
-    const first = randomAddress()
-    const set = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: first } })
-    expect(set.status).toBe(200)
-    expect(set.body.wallet_address).toBe(toChecksumAddress(first))
-    const same = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: first.toUpperCase().replace('0X', '0x') } })
+    const w = randomWallet()
+    const other = randomWallet()
+    const noSig = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address } })
+    expect(noSig.status).toBe(400)
+    const wrongSigner = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address, signature: other.sign(walletMessage(a.agent.id, w.address)) } })
+    expect(wrongSigner.status).toBe(400)
+    expect(wrongSigner.body.error.code).toBe('wallet_signature_invalid')
+    expect(wrongSigner.body.error.hint).toContain(`agentsouk:wallet:${a.agent.id}:${w.address.toLowerCase()}`)
+    const wrongAgent = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address, signature: w.sign(walletMessage('agt_someone_else', w.address)) } })
+    expect(wrongAgent.status).toBe(400)
+    const bad = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: '0x123', signature: '0x00' } })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.param).toBe('address')
+    const ok = await setWallet(app, a.api_keys.test, a.agent.id, w)
+    expect(ok.status).toBe(200)
+    expect(ok.body.wallet_address).toBe(toChecksumAddress(w.address))
+    // lowercase / uppercase spellings of the same address are the same wallet
+    const same = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address.toLowerCase(), signature: w.sign(walletMessage(a.agent.id, w.address)) } })
     expect(same.status).toBe(200)
-    const second = randomAddress()
-    const noProof = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second } })
+    const me = await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })
+    expect(me.body.wallet_address).toBe(toChecksumAddress(w.address))
+  })
+
+  it('changing a bound wallet needs the new wallet signature AND an Ed25519 proof by the agent key', async () => {
+    const a = await createTestAgent(app, { name: 'Changer' })
+    const first = a.wallet!
+    const second = randomWallet()
+    const noProof = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second.address, signature: second.sign(walletMessage(a.agent.id, second.address)) } })
     expect(noProof.status).toBe(400)
     expect(noProof.body.error.param).toBe('proof')
-    expect(noProof.body.error.hint).toContain(`agentsouk:wallet:${a.agent.id}:${second}`)
     const attacker = generateKeyPair()
-    const forged = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second, proof: sign(walletMessage(a.agent.id, second), attacker.secretKey) } })
+    const forged = await setWallet(app, a.api_keys.test, a.agent.id, second, sign(walletMessage(a.agent.id, second.address), attacker.secretKey))
     expect(forged.status).toBe(400)
-    const ok = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: second, proof: sign(walletMessage(a.agent.id, second), a.keypair!.secret_key) } })
+    const ok = await setWallet(app, a.api_keys.test, a.agent.id, second, sign(walletMessage(a.agent.id, second.address), a.keypair!.secret_key))
     expect(ok.status).toBe(200)
-    expect(ok.body.wallet_address).toBe(toChecksumAddress(second))
+    expect(ok.body.wallet_address).toBe(toChecksumAddress(second.address))
     const ev = await call(app, 'GET', '/v1/events?types=agent.wallet_address_changed', { key: a.api_keys.live })
     expect(ev.body.data).toHaveLength(2)
-    expect(ev.body.data.map((e: any) => e.data.previous)).toContain(toChecksumAddress(first))
+    expect(ev.body.data.map((e: any) => e.data.previous)).toContain(toChecksumAddress(first.address))
   })
 })
 

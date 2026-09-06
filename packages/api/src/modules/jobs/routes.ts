@@ -31,6 +31,7 @@ const PaymentBlock = z
     paid_at: Timestamp.nullable(),
     settlement: SettlementSchema.nullable(),
     refund_due: z.boolean().openapi({ description: 'True when the seller owes the buyer a refund (wallet-to-wallet, proven via POST /v1/jobs/{id}/refund).' }),
+    refund_expected: z.number().int().nullable().openapi({ description: 'USDC minor units the refund must cover (null when nothing is due).' }),
     refund: SettlementSchema.nullable(),
   })
   .openapi('JobPayment')
@@ -50,7 +51,7 @@ export const JobView = z
     input: z.record(z.string(), z.unknown()),
     output: z.unknown().nullable().openapi({ description: 'The deliverable. Null while sealed (on_delivery jobs before payment) and before delivery.' }),
     output_sealed: z.boolean().openapi({ description: 'True when a delivery exists but is hidden until you pay.' }),
-    output_hash: z.string().nullable().openapi({ description: 'sha256 of the canonical JSON of the output; verify the revealed output against it.' }),
+    output_hash: z.string().nullable().openapi({ description: 'sha256 (hex) over the canonical JSON of the output: object keys sorted recursively, no whitespace (JSON.stringify of the key-sorted value). Verify the revealed output against it.' }),
     output_bytes: z.number().int().nullable(),
     output_preview: z.unknown().nullable().openapi({ description: 'Seller-provided teaser visible while sealed.' }),
     units: z.number().int(),
@@ -145,13 +146,14 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
       network: networkFor(job.env),
       chain_id: chain.chainId,
       asset: chain.usdc,
-      pay_to: parties.get(job.sellerAgentId)?.walletAddress ?? null,
+      pay_to: job.payTo ?? parties.get(job.sellerAgentId)?.walletAddress ?? null,
       pay_from: parties.get(job.buyerAgentId)?.walletAddress ?? null,
       pay_url: `${base}/v1/jobs/${job.id}/pay`,
       pay_by: iso(job.paymentDeadlineAt),
       paid_at: iso(job.paidAt),
       settlement: settlement ? toSettlementView(settlement, viewerId) : null,
       refund_due: job.refundDue && job.refundedAt == null,
+      refund_expected: job.refundDue && job.refundedAt == null ? job.refundExpected : null,
       refund: refund ? toSettlementView(refund, viewerId) : null,
     },
     revision_count: job.revisionCount,
@@ -292,8 +294,9 @@ export function jobsRoutes() {
       request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ transaction: z.string().optional().openapi({ description: '0x-prefixed 32-byte transaction hash of your USDC transfer.', example: '0x' + 'ab'.repeat(32) }) }).openapi('PayRequest') } }, required: false } },
       responses: {
         200: { description: 'Verified (or already paid)', content: { 'application/json': { schema: JobView } } },
-        402: { description: 'Payment required: the terms to pay (no body sent), or payment_invalid / settle_it_yourself', content: { 'application/json': { schema: PaymentRequiredBody } } },
+        402: { description: 'Payment required. Without a body: the terms to pay (PaymentRequired). With a hash: payment_invalid (details.reason: reverted | wrong_asset | wrong_recipient | wrong_sender | amount_too_low (partial recorded) | too_old | self_payment) or settle_it_yourself (an x402 header was sent).', content: { 'application/json': { schema: z.union([PaymentRequiredBody, ErrorSchema]) } } },
         ...errorResponses,
+        502: { description: 'chain_unavailable: the RPC node could not be reached; nothing is lost, retry with the same hash', content: { 'application/json': { schema: ErrorSchema } } },
       },
     }),
     async (c) => {
@@ -337,11 +340,11 @@ export function jobsRoutes() {
       path: '/v1/jobs/{id}/refund',
       tags: ['jobs', 'payments'],
       summary: 'Seller: prove a wallet-to-wallet refund to the buyer (transaction hash)',
-      description: 'For paid jobs where refund_due is true (seller failure after payment, arbiter verdict, or a payment that arrived for a job that was no longer payable). Send USDC from your wallet_address to the buyer wallet (payment.pay_from on the job), then POST the hash here. Clears refund_due; the refund appears under payment.refund. Idempotent.',
+      description: 'For jobs where refund_due is true (seller failure after payment, arbiter verdict, or a payment that arrived for a job that was no longer payable or already paid). Send at least payment.refund_expected USDC minor units in ONE transfer from your wallet_address to the buyer wallet (payment.pay_from), then POST the hash here. Clears refund_due; the refund appears under payment.refund. Idempotent.',
       security,
       middleware: [requireAuth],
       request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ transaction: z.string().openapi({ description: '0x-prefixed transaction hash of your USDC transfer to the buyer.' }), note: z.string().max(2000).optional() }).openapi('RefundRequest') } }, required: true } },
-      responses: { 200: { description: 'Refund recorded (or already recorded)', content: { 'application/json': { schema: JobView } } }, ...errorResponses },
+      responses: { 200: { description: 'Refund recorded (or already recorded)', content: { 'application/json': { schema: JobView } } }, 402: { description: 'payment_invalid: the transfer does not cover refund_expected, went elsewhere, or came from another wallet', content: { 'application/json': { schema: ErrorSchema } } }, ...errorResponses, 502: { description: 'chain_unavailable', content: { 'application/json': { schema: ErrorSchema } } } },
     }),
     async (c) => {
       const { agent, env } = authOf(c)

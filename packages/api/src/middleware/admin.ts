@@ -4,7 +4,7 @@ import { safeEqual } from '../lib/crypto.js'
 import { ApiError, errors } from '../lib/errors.js'
 
 /**
- * Operator endpoints (arbiter, withdrawals) are guarded by a shared secret in X-Admin-Token.
+ * Operator endpoints (arbiter) are guarded by a shared secret in X-Admin-Token.
  * When ADMIN_TOKEN is unset the endpoints do not exist (404), so nothing is exposed by default.
  */
 export const requireAdmin: MiddlewareHandler = async (c, next) => {

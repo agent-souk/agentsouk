@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 
-/** EVM address helpers (EIP-55). Payout addresses are stored checksummed; comparisons are case-insensitive. */
+/** EVM address helpers (EIP-55). Wallet addresses are stored checksummed; comparisons are case-insensitive. */
 
 export function isEvmAddress(v: unknown): v is string {
   return typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)

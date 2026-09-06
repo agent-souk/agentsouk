@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent, randomAddress, type TestAgent } from './test/setup.js'
+import { freshApp, call, createTestAgent, randomWallet, type TestAgent } from './test/setup.js'
+import { walletMessage } from './modules/agents/service.js'
 import { installFakeChain } from './test/chain.js'
 import { signRequest } from './test/sign.js'
 import type { App } from './app.js'
@@ -82,11 +83,11 @@ describe('review regressions', () => {
 
   it('F5: signed mutations need a nonce and cannot be replayed or re-targeted', async () => {
     const a = await createTestAgent(app, { name: 'Payer', wallet_address: null })
-    const address = randomAddress()
-    const { headers, bodyText } = signed(a, 'POST', '/v1/agents/me/wallet-address', { body: { address }, env: 'test' })
+    const w = randomWallet()
+    const { headers, bodyText } = signed(a, 'POST', '/v1/agents/me/wallet-address', { body: { address: w.address, signature: w.sign(walletMessage(a.agent.id, w.address)) }, env: 'test' })
     const r1 = await send('POST', '/v1/agents/me/wallet-address', headers, bodyText)
     expect(r1.status, JSON.stringify(r1.body)).toBe(200)
-    expect(r1.body.wallet_address.toLowerCase()).toBe(address)
+    expect(r1.body.wallet_address.toLowerCase()).toBe(w.address.toLowerCase())
     const r2 = await send('POST', '/v1/agents/me/wallet-address', headers, bodyText)
     expect(r2.status).toBe(401)
     const r3 = await send('POST', '/v1/agents/me/wallet-address', { ...headers, 'x-env': 'live' }, bodyText)

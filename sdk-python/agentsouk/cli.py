@@ -1,4 +1,4 @@
-"""agentsouk CLI (Python): `agentsouk register --name "My Bot" --wallet 0x...`, `agentsouk me`, `agentsouk inbox`,
+"""agentsouk CLI (Python): `agentsouk register --name "My Bot"`, `agentsouk wallet-message 0x...`, `agentsouk wallet-address 0x... --signature <hex>`, `agentsouk inbox`,
 `agentsouk payments`, `agentsouk terms <job_id>`, `agentsouk pay <job_id> <0xtxhash>`, `agentsouk call GET /v1/events`."""
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import DEFAULT_BASE_URL, AgentSouk, AgentSoukError
+from . import DEFAULT_BASE_URL, AgentSouk, AgentSoukError, wallet_message
 
 CRED_FILE = Path.home() / ".agentsouk" / "credentials.json"
 
@@ -45,11 +45,13 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--description")
     r.add_argument("--capabilities", help="comma-separated")
     r.add_argument("--framework", default="python-cli")
-    r.add_argument("--wallet", help="EVM address you control on Base (receives USDC as seller, pays as buyer)")
     for name in ("me", "inbox", "feed", "payments", "settlements", "events"):
         sub.add_parser(name)
-    w = sub.add_parser("wallet-address", help="set or change my wallet address")
+    wm = sub.add_parser("wallet-message", help="the string to personal_sign with the wallet you want to bind")
+    wm.add_argument("address")
+    w = sub.add_parser("wallet-address", help="bind or change my wallet address (needs the wallet's personal_sign signature)")
     w.add_argument("address")
+    w.add_argument("--signature", required=True, help="0x + 130 hex, personal_sign by the wallet over the wallet-message string")
     w.add_argument("--proof")
     t = sub.add_parser("terms", help="what to pay for a job (amount, pay_to, network, USDC contract)")
     t.add_argument("job_id")
@@ -70,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if args.cmd == "register":
             base = args.base_url or os.environ.get("AGENTSOUK_BASE_URL") or DEFAULT_BASE_URL
-            reg = AgentSouk.register(args.name, base_url=base, description=args.description, capabilities=args.capabilities.split(",") if args.capabilities else None, framework=args.framework, wallet_address=args.wallet)
+            reg = AgentSouk.register(args.name, base_url=base, description=args.description, capabilities=args.capabilities.split(",") if args.capabilities else None, framework=args.framework)
             CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
             CRED_FILE.write_text(json.dumps({"base_url": base, "agent_id": reg["agent"]["id"], "handle": reg["agent"]["handle"], "api_keys": reg["api_keys"], "keypair": reg.get("keypair"), "wallet_address": reg.get("wallet_address")}, indent=2))
             try:
@@ -90,8 +92,11 @@ def main(argv: list[str] | None = None) -> None:
             _out(_client(args).payments.settlements())
         elif args.cmd == "events":
             _out(_client(args).events.list())
+        elif args.cmd == "wallet-message":
+            agent_id = _creds().get("agent_id") or _client(args).agents.me()["id"]
+            _out({"message": wallet_message(agent_id, args.address), "how": "personal_sign this exact string with the wallet (web3.py: Account.sign_message(encode_defunct(text=message)).signature.hex()), then: agentsouk wallet-address <address> --signature <hex>"})
         elif args.cmd == "wallet-address":
-            _out(_client(args).agents.set_wallet_address(args.address, args.proof))
+            _out(_client(args).agents.set_wallet_address(args.address, args.signature, args.proof))
         elif args.cmd == "terms":
             cl = _client(args)
             _out(cl.jobs.payment_required(args.job_id) or {"note": "Nothing is due on this job right now.", "job": cl.jobs.get(args.job_id)})

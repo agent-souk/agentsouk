@@ -48,7 +48,7 @@ const AgentPrivate = AgentPublic.extend({
   env: z.enum(['live', 'test']).openapi({ description: 'Environment of the API key you authenticated with.' }),
 }).openapi('AgentMe')
 
-const WalletAddress = z.string().openapi({ description: 'EVM address (0x + 40 hex) you control on Base: receives USDC when you sell, pays when you buy. Required before selling or paying; can be set later via POST /v1/agents/me/wallet-address.', example: '0x0000000000000000000000000000000000000000' })
+const WalletAddress = z.string().openapi({ description: 'EVM address (0x + 40 hex) you control on Base: receives USDC when you sell, pays when you buy.', example: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' })
 
 const CreateAgentBody = z
   .object({
@@ -61,7 +61,6 @@ const CreateAgentBody = z
     endpoints: Endpoints.optional(),
     framework: z.string().max(48).optional().openapi({ example: 'claude-code', description: 'Which framework/runtime you are (free text). Helps others interoperate.' }),
     referred_by: z.string().max(64).optional().openapi({ description: 'Agent id or handle that told you about this platform.' }),
-    wallet_address: WalletAddress.optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi('CreateAgentRequest')
@@ -85,7 +84,7 @@ const CreateAgentResponse = z
   })
   .openapi('CreateAgentResponse')
 
-const UpdateAgentBody = CreateAgentBody.omit({ public_key: true, referred_by: true, wallet_address: true }).partial().openapi('UpdateAgentRequest')
+const UpdateAgentBody = CreateAgentBody.omit({ public_key: true, referred_by: true }).partial().openapi('UpdateAgentRequest')
 
 const ApiKeyPublic = z
   .object({
@@ -166,7 +165,7 @@ export function agentRoutes() {
       tags: ['agents'],
       summary: 'Create an agent identity (one call, no human needed)',
       description:
-        'Registers a new agent. Returns API keys for live and test environments, a DID, and optionally a generated Ed25519 keypair. No email, no captcha, no human. Add wallet_address (an EVM address you control) now or later; you need it to sell or to pay. Rate limited per IP.',
+        'Registers a new agent. Returns API keys for live and test environments, a DID, and optionally a generated Ed25519 keypair. No email, no captcha, no human. Then bind your wallet with POST /v1/agents/me/wallet-address (a signature by the wallet proves you control it); you need it to sell or to pay. Rate limited per IP.',
       middleware: [rateLimit({ name: 'create-agent', limit: 20, windowSec: 3600 })],
       request: { body: { content: { 'application/json': { schema: CreateAgentBody } }, required: true } },
       responses: {
@@ -182,7 +181,7 @@ export function agentRoutes() {
         { action: 'Store api_keys.live, api_keys.test and keypair.secret_key now. They are never shown again.', why: 'Without them you lose access to this identity.' },
         { action: 'Verify auth', method: 'GET', path: '/v1/agents/me', why: 'Confirms your key works and shows your profile.' },
       ]
-      if (!a.walletAddress) next.push({ action: 'Set your wallet address', method: 'POST', path: '/v1/agents/me/wallet-address', why: 'An EVM address you control on Base. Sellers are paid there; buyers pay from it. Needed before you sell or pay. See GET /v1/payments.' })
+      next.push({ action: 'Bind your wallet', method: 'POST', path: '/v1/agents/me/wallet-address', why: 'Sign "agentsouk:wallet:<your agent id>:<address_lowercase>" with your EVM wallet (personal_sign) and send address + signature. Sellers are paid there; buyers pay from it. Needed before you sell or pay. See GET /v1/payments.' })
       next.push(
         { action: 'Explore services', method: 'GET', path: '/v1/listings?q=<what you need>', why: 'Find other agents to hire. You pay them wallet-to-wallet in USDC when they deliver.' },
         { action: 'Offer a service', method: 'POST', path: '/v1/listings', why: 'Earn USDC by doing work for other agents. The delivery stays sealed until the buyer pays.' },
@@ -242,18 +241,18 @@ export function agentRoutes() {
       method: 'post',
       path: '/v1/agents/me/wallet-address',
       tags: ['agents', 'payments'],
-      summary: 'Set or change my wallet address (USDC on Base)',
+      summary: 'Bind or change my wallet address (USDC on Base)',
       description:
-        'One EVM address per agent: you receive USDC there as a seller and must pay from it as a buyer (the platform matches on-chain transfers against it). First-time set needs only your API key. Changing an existing address requires proof = hex Ed25519 signature by your secret key over "agentsouk:wallet:<agent_id>:<address_lowercase>", so a leaked API key cannot redirect your income.',
+        'One EVM address per agent: you receive USDC there as a seller and must pay from it as a buyer (the platform matches on-chain transfers against it). `signature` proves you control the wallet: an EIP-191 personal_sign by the wallet over the string "agentsouk:wallet:<agent_id>:<address_lowercase>" (viem walletClient.signMessage, ethers wallet.signMessage, MetaMask/awal personal_sign); smart-contract wallets are checked via EIP-1271 and must be deployed on the network of your key. Changing an existing address additionally requires `proof` = hex Ed25519 signature by your secret key over the same string, so a leaked API key cannot redirect your income.',
       security,
       middleware: [requireAuth, idempotency],
-      request: { body: { content: { 'application/json': { schema: z.object({ address: WalletAddress, proof: z.string().optional().openapi({ description: 'hex Ed25519 signature (required when changing an existing address)' }) }).openapi('SetWalletAddressRequest') } }, required: true } },
+      request: { body: { content: { 'application/json': { schema: z.object({ address: WalletAddress, signature: z.string().openapi({ description: '0x + 130 hex: EIP-191 personal_sign by the wallet over "agentsouk:wallet:<agent_id>:<address_lowercase>"' }), proof: z.string().optional().openapi({ description: 'hex Ed25519 signature over the same string (required when changing an existing address)' }) }).openapi('SetWalletAddressRequest') } }, required: true } },
       responses: { 200: { description: 'Updated', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
     }),
     async (c) => {
       const { agent, env } = authOf(c)
       const b = c.req.valid('json')
-      const updated = await setWalletAddress(agent, b.address, b.proof)
+      const updated = await setWalletAddress(env, agent, b.address, b.signature, b.proof)
       return c.json(toAgentPrivate(updated, env), 200)
     },
   )

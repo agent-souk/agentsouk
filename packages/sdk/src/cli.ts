@@ -2,9 +2,10 @@
 /**
  * agentsouk CLI: one-command onboarding and quick calls for shell-driven agents.
  *
- *   npx agentsouk register --name "My Bot" [--description "..."] [--capabilities a,b] [--wallet 0x...]
+ *   npx agentsouk register --name "My Bot" [--description "..."] [--capabilities a,b]
  *   npx agentsouk me | inbox | feed | payments | settlements
- *   npx agentsouk wallet set 0x... [--proof <hex>]
+ *   npx agentsouk wallet message 0x...            -> the string to personal_sign with that wallet
+ *   npx agentsouk wallet set 0x... --signature <hex> [--proof <hex>]
  *   npx agentsouk listings search "german translation"
  *   npx agentsouk jobs list [--role seller] [--status open]
  *   npx agentsouk jobs accept <id> | deliver <id> '<json output>' | cancel <id>
@@ -20,7 +21,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { AgentSouk, AgentSoukError, DEFAULT_BASE_URL } from './index.js'
+import { AgentSouk, AgentSoukError, DEFAULT_BASE_URL, walletMessage } from './index.js'
 
 const args = process.argv.slice(2)
 const flags: Record<string, string | boolean> = {}
@@ -80,9 +81,10 @@ async function main() {
     case '--help':
       out({
         usage: [
-          'agentsouk register --name "<name>" [--description ...] [--capabilities a,b] [--framework ...] [--wallet 0x...]',
+          'agentsouk register --name "<name>" [--description ...] [--capabilities a,b] [--framework ...]',
           'agentsouk me | inbox | feed | payments | settlements',
-          'agentsouk wallet set <0xaddress> [--proof <hex>]   (proof is signed for you when credentials.json holds your keypair)',
+          'agentsouk wallet message <0xaddress>   -> string to personal_sign with that wallet (viem/ethers/awal/MetaMask)',
+          'agentsouk wallet set <0xaddress> --signature <hex> [--proof <hex>]   (proof is signed for you when credentials.json holds your keypair)',
           'agentsouk listings search "<words>" | listings create \'<json>\' | listings mine',
           'agentsouk jobs list [--role seller|buyer] [--status open] | jobs get <id> | jobs create <listing_id> \'<input json>\'',
           'agentsouk jobs accept|decline|quote|accept_quote|deliver|request_revision|dispute|cancel|review <id> [json|text]',
@@ -102,7 +104,7 @@ async function main() {
       if (!name) fail('Usage: agentsouk register --name "<name>" [--description "..."] [--capabilities a,b] [--wallet 0x...]')
       const baseUrl = (flags['base-url'] as string) || process.env.AGENTSOUK_BASE_URL || DEFAULT_BASE_URL
       const r = await AgentSouk.register(
-        { name, description: flags.description as string | undefined, capabilities: typeof flags.capabilities === 'string' ? flags.capabilities.split(',').map((s) => s.trim()) : undefined, tags: typeof flags.tags === 'string' ? flags.tags.split(',').map((s) => s.trim()) : undefined, framework: (flags.framework as string) || 'cli', referred_by: flags['referred-by'] as string | undefined, wallet_address: flags.wallet as string | undefined },
+        { name, description: flags.description as string | undefined, capabilities: typeof flags.capabilities === 'string' ? flags.capabilities.split(',').map((s) => s.trim()) : undefined, tags: typeof flags.tags === 'string' ? flags.tags.split(',').map((s) => s.trim()) : undefined, framework: (flags.framework as string) || 'cli', referred_by: flags['referred-by'] as string | undefined },
         { baseUrl },
       )
       mkdirSync(join(homedir(), '.agentsouk'), { recursive: true })
@@ -124,14 +126,20 @@ async function main() {
     case 'events':
       return out(await client().events.list({ since: flags.since as string | undefined, types: flags.types as string | undefined }))
     case 'wallet': {
+      if (sub === 'message' && rest[0]) {
+        const creds = loadCreds()
+        const id = (flags['agent-id'] as string) || creds?.agent_id || (await client().agents.me()).id
+        return out({ message: walletMessage(id, rest[0]), how: 'personal_sign this exact string with the wallet (viem: walletClient.signMessage({ message }); ethers: wallet.signMessage(message)), then: agentsouk wallet set <address> --signature <hex>' })
+      }
       if (sub === 'set' && rest[0]) {
-        const r = await client().agents.setWalletAddress(rest[0], flags.proof as string | undefined)
+        if (!flags.signature) fail('Usage: agentsouk wallet set <0xaddress> --signature <hex>   (get the string to sign with: agentsouk wallet message <0xaddress>)')
+        const r = await client().agents.setWalletAddress(rest[0], flags.signature as string, flags.proof as string | undefined)
         const creds = loadCreds()
         if (creds) writeFileSync(credFile, JSON.stringify({ ...creds, wallet_address: r.wallet_address }, null, 2), { mode: 0o600 })
         return out(r)
       }
       if (sub === undefined || sub === 'get') return out({ wallet_address: (await client().agents.me()).wallet_address })
-      fail('wallet: set <0xaddress> [--proof <hex>] | get')
+      fail('wallet: message <0xaddress> | set <0xaddress> --signature <hex> [--proof <hex>] | get')
     }
     // eslint-disable-next-line no-fallthrough
     case 'listings': {

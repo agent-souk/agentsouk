@@ -48,7 +48,8 @@ describe('chain reader', () => {
   it('validates hashes and decodes Transfer logs (address padding, bigint data)', () => {
     expect(isTxHash('0x' + 'ab'.repeat(32))).toBe(true)
     expect(isTxHash('0x' + 'ab'.repeat(31))).toBe(false)
-    expect(isTxHash('ab'.repeat(32))).toBe(false)
+    expect(isTxHash('ab'.repeat(32))).toBe(true) // bare 64-hex is accepted (web3.py HexBytes.hex())
+    expect(isTxHash('ab'.repeat(31))).toBe(false)
     const usdc = CHAINS['eip155:84532'].usdc
     const pad = (a: string) => '0x' + a.slice(2).padStart(64, '0')
     const receipt = {
@@ -72,11 +73,30 @@ describe('chain reader', () => {
 
   it('verifies a matching transfer and reports block, confirmations and the summed amount', async () => {
     const ts = Date.now() - 5000
-    const tx = chain.mine([{ from: A, to: B, value: 100 }, { from: A, to: B, value: 50 }, { from: B, to: A, value: 999 }], { timestamp: ts, confirmations: 4 })
-    const v = await verifyUsdcTransfer('test', tx, { from: A, to: B, minAmount: 150, notBefore: ts - 2000 })
-    expect(v).toMatchObject({ transaction: tx, from: toChecksumAddress(A), to: toChecksumAddress(B), amount: 150, network: 'eip155:84532', confirmations: 4 })
+    const tx = chain.mine([{ from: A, to: B, value: 100 }, { from: A, to: B, value: 50 }, { from: B, to: A, value: 20 }], { timestamp: ts, confirmations: 4 })
+    const v = await verifyUsdcTransfer('test', tx, { from: A, to: B, minAmount: 130, notBefore: ts - 2000 })
+    expect(v).toMatchObject({ transaction: tx, from: toChecksumAddress(A), to: toChecksumAddress(B), amount: 130, network: 'eip155:84532', confirmations: 4 })
     expect(v.blockTimestamp).toBe(Math.floor(ts / 1000) * 1000)
     expect(v.asset).toBe(CHAINS['eip155:84532'].usdc)
+  })
+
+  it('nets out transfers back to the sender in the same transaction and accepts bare 64-hex hashes', async () => {
+    const roundTrip = chain.mine([{ from: A, to: B, value: 500 }, { from: B, to: A, value: 500 }])
+    await expect(verifyUsdcTransfer('test', roundTrip, { from: A, to: B, minAmount: 1 })).rejects.toMatchObject({ code: 'payment_invalid', opts: { details: { reason: 'amount_too_low', transferred: '0' } } })
+    const partlyBack = chain.mine([{ from: A, to: B, value: 500 }, { from: B, to: A, value: 200 }])
+    expect((await verifyUsdcTransfer('test', partlyBack, { from: A, to: B, minAmount: 300 })).amount).toBe(300)
+    const bare = chain.pay(A, B, 7).slice(2)
+    expect((await verifyUsdcTransfer('test', bare, { from: A, to: B, minAmount: 7 })).transaction).toBe('0x' + bare)
+    // any of several recipients satisfies the check (frozen job address + current wallet)
+    expect((await verifyUsdcTransfer('test', chain.pay(A, B, 7), { from: A, to: ['0x3333333333333333333333333333333333333333', B], minAmount: 7 })).to).toBe(toChecksumAddress(B))
+    // malformed node data is 502, not 500
+    _setRpcFetchForTests(async (_u, body) => {
+      const req = JSON.parse(body)
+      const result = req.method === 'eth_getTransactionReceipt' ? { status: '0x1', blockNumber: 'not-hex', logs: 'nope' } : '0x10'
+      return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result }) }
+    })
+    await expect(verifyUsdcTransfer('test', '0x' + 'a'.repeat(64), { from: A, to: B, minAmount: 1 })).rejects.toMatchObject({ code: 'chain_unavailable' })
+    _setRpcFetchForTests(chain.fetch)
   })
 
   it('maps every failure to an agent-readable error', async () => {

@@ -22,7 +22,8 @@ type SettlementRow = typeof settlements.$inferSelect
 
 const PRIOR_MEAN = 3.5
 const PRIOR_WEIGHT = 5
-export const TRUST_T1 = { minCompleted: 5, minCounterparties: 3, minPayingAddresses: 3 }
+/** T1: proven by paid live jobs. Volume in USDC minor units (10 USDC) keeps dust-priced farming from counting. */
+export const TRUST_T1 = { minCompleted: 5, minCounterparties: 3, minPayingAddresses: 3, minVolumeUsdc: 10_000_000 }
 
 export const emptySide = (): ReputationSide => ({
   jobs_completed: 0,
@@ -128,7 +129,8 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
     const completed = asSeller.jobs_completed + asBuyer.jobs_completed
     const parties = Math.max(asSeller.distinct_counterparties, asBuyer.distinct_counterparties)
     const paying = Math.max(seller.payingAddresses, buyer.payingAddresses)
-    if (completed >= TRUST_T1.minCompleted && parties >= TRUST_T1.minCounterparties && paying >= TRUST_T1.minPayingAddresses) {
+    const volume = asSeller.volume_usdc + asBuyer.volume_usdc
+    if (completed >= TRUST_T1.minCompleted && parties >= TRUST_T1.minCounterparties && paying >= TRUST_T1.minPayingAddresses && volume >= TRUST_T1.minVolumeUsdc) {
       const a = await db().query.agents.findFirst({ where: eq(agents.id, agentId), columns: { trustTier: true } })
       if (a && a.trustTier < 1) await db().update(agents).set({ trustTier: 1, updatedAt: now }).where(eq(agents.id, agentId))
     }

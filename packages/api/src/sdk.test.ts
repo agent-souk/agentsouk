@@ -2,12 +2,20 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { freshApp } from './test/setup.js'
 import { installFakeChain } from './test/chain.js'
 import type { App } from './app.js'
-import { AgentSouk, AgentSoukError } from '../../sdk/src/index.js'
+import { AgentSouk, AgentSoukError, walletMessage } from '../../sdk/src/index.js'
+import { randomWallet } from './test/setup.js'
 
 /** The npm SDK exercised against the in-process app via an injected fetch. */
 let app: App
 let fetchLike: (input: string, init?: RequestInit) => Promise<Response>
-const wallet = () => '0x' + Array.from({ length: 40 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('')
+/** registers an agent and binds a throwaway wallet with a real personal_sign signature */
+async function registerWithWallet(name: string, base: { baseUrl: string; fetch: typeof fetchLike }, extra: Record<string, unknown> = {}) {
+  const reg = await AgentSouk.register({ name, ...extra }, base)
+  const w = randomWallet()
+  const c = new AgentSouk({ ...base, apiKey: reg.api_keys.test })
+  const bound = await c.agents.setWalletAddress(w.address, w.sign(walletMessage(reg.agent.id, w.address)))
+  return { ...reg, wallet_address: bound.wallet_address, wallet: w }
+}
 
 beforeEach(async () => {
   app = await freshApp()
@@ -18,8 +26,8 @@ describe('sdk', () => {
   it('registers, sells, buys, pays wallet-to-wallet and completes a job through the client', async () => {
     const chain = installFakeChain('test')
     const base = { baseUrl: 'http://localhost:8787', fetch: fetchLike }
-    const s = await AgentSouk.register({ name: 'SDK Seller', capabilities: ['translation'], wallet_address: wallet() }, base)
-    const b = await AgentSouk.register({ name: 'SDK Buyer', wallet_address: wallet() }, base)
+    const s = await registerWithWallet('SDK Seller', base, { capabilities: ['translation'] })
+    const b = await registerWithWallet('SDK Buyer', base)
     const seller = new AgentSouk({ ...base, apiKey: s.api_keys.test })
     const buyer = new AgentSouk({ ...base, apiKey: b.api_keys.test })
     expect(seller.env).toBe('test')
@@ -73,8 +81,8 @@ describe('sdk', () => {
     const { _setConfigForTests } = await import('./config.js')
     _setConfigForTests({ PAYMENT_CONFIRMATIONS_TEST: 2 })
     const base = { baseUrl: 'http://localhost:8787', fetch: fetchLike }
-    const s = await AgentSouk.register({ name: 'Slow Seller', wallet_address: wallet() }, base)
-    const b = await AgentSouk.register({ name: 'Patient Buyer', wallet_address: wallet() }, base)
+    const s = await registerWithWallet('Slow Seller', base)
+    const b = await registerWithWallet('Patient Buyer', base)
     const seller = new AgentSouk({ ...base, apiKey: s.api_keys.test })
     const buyer = new AgentSouk({ ...base, apiKey: b.api_keys.test })
     const listing = await seller.listings.create({ title: 'Slow thing', description: 'Takes a while to confirm on-chain.', category: 'ops', pricing_model: 'fixed', price: 5 })
@@ -105,12 +113,12 @@ describe('sdk', () => {
     const r = await AgentSouk.register({ name: 'Poor' }, base)
     const live = new AgentSouk({ ...base, apiKey: r.api_keys.live })
     await expect(live.jobs.get('job_nobody')).rejects.toMatchObject({ status: 404 })
-    await expect(live.agents.setWalletAddress('0x123')).rejects.toMatchObject({ status: 400, param: 'wallet_address' })
+    await expect(live.agents.setWalletAddress('0x123', '0x00')).rejects.toMatchObject({ status: 400, param: 'address' })
   })
 
   it('signs requests with the Ed25519 secret key instead of an API key, including wallet-change proofs', async () => {
     const base = { baseUrl: 'http://localhost:8787', fetch: fetchLike }
-    const r = await AgentSouk.register({ name: 'Signed Client', wallet_address: wallet() }, base)
+    const r = await registerWithWallet('Signed Client', base)
     const signed = new AgentSouk({ ...base, secretKey: r.keypair!.secret_key, agentId: r.agent.id, env: 'test' })
     expect(signed.env).toBe('test')
     const me = await signed.agents.me()
@@ -118,9 +126,9 @@ describe('sdk', () => {
     expect(me.env).toBe('test')
     const listing = await signed.listings.create({ title: 'Signed listing', description: 'Made with a signed POST including content-digest.', category: 'ops', pricing_model: 'fixed', price: 5 })
     expect(listing.seller.id).toBe(r.agent.id)
-    const next = wallet()
-    const changed = await signed.agents.setWalletAddress(next)
-    expect(changed.wallet_address!.toLowerCase()).toBe(next)
+    const next = randomWallet()
+    const changed = await signed.agents.setWalletAddress(next.address, next.sign(walletMessage(r.agent.id, next.address)))
+    expect(changed.wallet_address!.toLowerCase()).toBe(next.address.toLowerCase())
     const wrong = new AgentSouk({ ...base, secretKey: 'ab'.repeat(32), agentId: r.agent.id })
     await expect(wrong.agents.me()).rejects.toMatchObject({ status: 401, code: 'invalid_signature' })
   })

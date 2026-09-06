@@ -3,10 +3,11 @@ import { db } from '../../db/client.js'
 import { agents, apiKeys, type AgentEndpoints, type Env } from '../../db/schema.js'
 import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
 import { emit } from '../../events/bus.js'
-import { errors } from '../../lib/errors.js'
+import { ApiError, errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { normalizeEvmAddress } from '../payments/address.js'
+import { verifyWalletSignature } from '../payments/evm-signature.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
 import { searchTerms } from '../../lib/search.js'
 
@@ -21,8 +22,6 @@ export type CreateAgentInput = {
   framework?: string
   referred_by?: string
   metadata?: Record<string, unknown>
-  /** The agent's EVM wallet: receives USDC as seller, pays from it as buyer (ADR-22). */
-  wallet_address?: string
 }
 
 export type CreateAgentResult = {
@@ -35,7 +34,7 @@ export type CreateAgentResult = {
 export function requireWalletAddress(input: unknown): string {
   const addr = normalizeEvmAddress(input)
   if (!addr) {
-    throw errors.validation('wallet_address must be an EVM address: 0x followed by 40 hex characters (all-lowercase or with a valid EIP-55 checksum).', 'wallet_address', 'This is the wallet you receive USDC in as a seller and pay from as a buyer (Base for live keys, Base Sepolia for test keys). Use an address you control; the platform never holds funds.')
+    throw errors.validation('address must be an EVM address: 0x followed by 40 hex characters (all-lowercase or with a valid EIP-55 checksum).', 'address', 'This is the wallet you receive USDC in as a seller and pay from as a buyer (Base for live keys, Base Sepolia for test keys). Use an address you control; the platform never holds funds.')
   }
   return addr
 }
@@ -147,7 +146,7 @@ export async function createAgent(input: CreateAgentInput): Promise<CreateAgentR
     did: didKeyFromPublicKey(publicKey),
     endpoints: input.endpoints ?? {},
     framework: input.framework ?? null,
-    walletAddress: input.wallet_address !== undefined && input.wallet_address !== null ? requireWalletAddress(input.wallet_address) : null,
+    walletAddress: null, // set via POST /v1/agents/me/wallet-address with a signature that proves control of the address
     trustTier: 0,
     status: 'active',
     referredBy,
@@ -248,16 +247,26 @@ export function walletMessage(agentId: string, address: string): string {
 }
 
 /**
- * Set or change the wallet address (ADR-22 §2). Changing an existing address needs a proof signed by the
- * agent's Ed25519 secret key, so a leaked API key can never redirect payments. First-time set is allowed
- * with the API key alone (bootstrap).
+ * Set or change the wallet address (ADR-22 §2). Two signatures protect it:
+ * - `signature`: EIP-191 personal_sign by the WALLET over the wallet message: proves the agent controls the
+ *   address (EOA via ecrecover, smart-contract wallets via EIP-1271). Without it, anyone could register a
+ *   stranger's address and claim that stranger's transfers as its own payments.
+ * - `proof`: Ed25519 signature by the agent's secret key, required when CHANGING an existing address, so a
+ *   leaked API key can never redirect income.
  */
-export async function setWalletAddress(agent: Agent, addressInput: unknown, proofHex: string | undefined): Promise<Agent> {
+export async function setWalletAddress(env: Env, agent: Agent, addressInput: unknown, signatureHex: unknown, proofHex: string | undefined): Promise<Agent> {
   const address = requireWalletAddress(addressInput)
   if (agent.walletAddress && agent.walletAddress.toLowerCase() === address.toLowerCase()) return agent
+  const message = walletMessage(agent.id, address)
+  if (!(await verifyWalletSignature(env, address, message, signatureHex))) {
+    throw new ApiError('validation_error', 'wallet_signature_invalid', 'signature must be an EIP-191 (personal_sign) signature by the wallet you are registering.', {
+      param: 'signature',
+      hint: `Sign the exact string "${message}" with the wallet's key (viem: walletClient.signMessage({ message }); ethers: wallet.signMessage(message); awal / MetaMask: personal_sign) and send the 65-byte hex signature. Smart-contract wallets are verified via EIP-1271 and must be deployed on ${env === 'live' ? 'Base' : 'Base Sepolia'}.`,
+    })
+  }
   if (agent.walletAddress) {
-    if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, walletMessage(agent.id, address), agent.publicKey)) {
-      throw errors.validation('proof is required to change an existing wallet address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${walletMessage(agent.id, address)}" with your secret key (hex Ed25519 signature) and send it as proof. This protects your income if an API key leaks.`)
+    if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, message, agent.publicKey)) {
+      throw errors.validation('proof is required to change an existing wallet address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${message}" with your Ed25519 secret key (hex signature) and send it as proof. This protects your income if an API key leaks.`)
     }
   }
   const now = Date.now()

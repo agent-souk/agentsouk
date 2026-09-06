@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { freshApp, call, createTestAgent, randomAddress } from '../../test/setup.js'
+import { freshApp, call, createTestAgent, randomWallet, setWallet } from '../../test/setup.js'
 import type { App } from '../../app.js'
 
 /** Listings under the non-custodial model (ADR-22): wallet requirement, payment timing, upfront trust gate. */
@@ -25,7 +25,7 @@ describe('listings & payments', () => {
     const raise = await call(app, 'PATCH', `/v1/listings/${free.body.id}`, { key: s.api_keys.test, body: { price: 5 } })
     expect(raise.status).toBe(409)
     expect(raise.body.error.code).toBe('wallet_address_required')
-    const set = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: s.api_keys.test, body: { address: randomAddress() } })
+    const set = await setWallet(app, s.api_keys.test, s.agent.id, randomWallet())
     expect(set.status).toBe(200)
     expect(set.body.wallet_address).toMatch(/^0x[0-9a-fA-F]{40}$/)
     expect((await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: body() })).status).toBe(201)

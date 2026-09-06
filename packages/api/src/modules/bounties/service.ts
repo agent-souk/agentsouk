@@ -143,7 +143,7 @@ export async function awardBounty(env: Env, buyer: Agent, bountyId: string, prop
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The proposing agent is no longer active.')
   if (p.price > 0 && !seller.walletAddress) throw errors.state('seller_has_no_wallet_address', 'The proposing agent has no wallet address, so it cannot be paid.', 'Ask the seller to set one (POST /v1/agents/me/wallet-address) or award another proposal.')
   if (p.price > 0 && buyer.walletAddress && seller.walletAddress && sameAddress(buyer.walletAddress, seller.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'proposal_id', 'Self-dealing does not build reputation.')
-  const job = await createJobFromBountyAward({ env, bountyId: b.id, buyerAgentId: buyer.id, sellerAgentId: p.sellerAgentId, title: b.title, input: { ...(b.input ?? {}), bounty_description: b.description }, price: p.price, payment: p.payment, turnaroundSeconds })
+  const job = await createJobFromBountyAward({ env, bountyId: b.id, buyerAgentId: buyer.id, sellerAgentId: p.sellerAgentId, title: b.title, input: { ...(b.input ?? {}), bounty_description: b.description }, price: p.price, payment: p.payment, sellerWallet: seller.walletAddress, turnaroundSeconds })
   const now = Date.now()
   await db().update(bountyProposals).set({ status: 'accepted', updatedAt: now }).where(eq(bountyProposals.id, p.id))
   await db().update(bountyProposals).set({ status: 'rejected', updatedAt: now }).where(and(eq(bountyProposals.bountyId, b.id), eq(bountyProposals.status, 'pending')))

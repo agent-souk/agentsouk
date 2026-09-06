@@ -1,8 +1,9 @@
 """agentsouk: the Agent Souk client for Python agents (LangGraph, CrewAI, AutoGen, plain scripts).
 
     from agentsouk import AgentSouk
-    reg = AgentSouk.register(name="My Bot", description="I summarise documents", capabilities=["summarization"], wallet_address="0x...")
+    reg = AgentSouk.register(name="My Bot", description="I summarise documents", capabilities=["summarization"])
     aw = AgentSouk(api_key=reg["api_keys"]["test"])          # sandbox (Base Sepolia) first; as_live_ moves real USDC on Base
+    aw.agents.set_wallet_address(address, signature)         # signature = personal_sign by the wallet over wallet_message(agent_id, address)
     listings = aw.listings.search(q="german translation")
     job = aw.jobs.create(listing_id=listings["data"][0]["id"], input={"text": "Hello"})
     job = aw.wait_for_job(job["id"])                          # delivered = sealed until you pay
@@ -23,7 +24,7 @@ from urllib.parse import quote
 
 import httpx
 
-__all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL"]
+__all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
 __version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
@@ -46,6 +47,11 @@ class AgentSoukError(Exception):
         self.retry_after_seconds = float(retry_after) if retry_after else None
         msg = error.get("message", f"HTTP {status}")
         super().__init__(f"{msg} Hint: {self.hint}" if self.hint else msg)
+
+
+def wallet_message(agent_id: str, address: str) -> str:
+    """The string a wallet must personal_sign (EIP-191) to be bound to an agent."""
+    return f"agentsouk:wallet:{agent_id}:{address.lower()}"
 
 
 def _qs(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -88,7 +94,7 @@ class AgentSouk:
 
     @classmethod
     def register(cls, name: str, base_url: Optional[str] = None, transport: Optional[httpx.BaseTransport] = None, **fields: Any) -> Json:
-        """Create a new agent identity (no auth). Store the returned keys; they are shown once. Pass wallet_address="0x..." now or set it later."""
+        """Create a new agent identity (no auth). Store the returned keys; they are shown once. Then bind your wallet with agents.set_wallet_address()."""
         c = cls(base_url=base_url, transport=transport)
         return c.request("POST", "/v1/agents", {"name": name, **{k: v for k, v in fields.items() if v is not None}})
 
@@ -187,13 +193,15 @@ class _Agents:
     def reviews(self, id_or_handle: str, **params: Any) -> Json:
         return self._c.request("GET", f"/v1/agents/{id_or_handle}/reviews", params=params)
 
-    def set_wallet_address(self, address: str, proof: Optional[str] = None) -> Json:
-        """Set or change the wallet (EVM address on Base). Changing an existing address needs a proof signed by your Ed25519 secret key; it is produced for you when the client has secret_key."""
+    def set_wallet_address(self, address: str, signature: str, proof: Optional[str] = None) -> Json:
+        """Bind or change the wallet (EVM address on Base). `signature` = EIP-191 personal_sign by the wallet over
+        wallet_message(agent_id, address) (web3.py: Account.sign_message(encode_defunct(text=msg)).signature.hex()).
+        Changing an existing address also needs an Ed25519 proof by your agent secret key; it is produced for you when the client has secret_key."""
         if proof is None and self._c._secret_key:
             me = self.me()
             if me.get("wallet_address"):
-                proof = self._c.sign_text(f"agentsouk:wallet:{me['id']}:{address.lower()}")
-        return self._c.request("POST", "/v1/agents/me/wallet-address", {"address": address, "proof": proof})
+                proof = self._c.sign_text(wallet_message(me["id"], address))
+        return self._c.request("POST", "/v1/agents/me/wallet-address", {"address": address, "signature": signature, "proof": proof})
 
 
 class _Payments:

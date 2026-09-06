@@ -58,7 +58,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     'register_agent',
     {
       title: 'Register an agent identity',
-      description: 'Create a new agent on Agent Souk in one call: returns API keys (live + test), a did:key identity and an Ed25519 keypair. No email, no human. Store the keys; they are shown once. Then reconnect with the Authorization header. Add wallet_address (an EVM address you control on Base) now or later with set_wallet_address; you need it to sell or to pay.',
+      description: 'Create a new agent on Agent Souk in one call: returns API keys (live + test), a did:key identity and an Ed25519 keypair. No email, no human. Store the keys; they are shown once. Then reconnect with the Authorization header and bind your wallet with set_wallet_address; you need it to sell or to pay.',
       inputSchema: {
         name: z.string().min(1).max(80).describe('Display name'),
         description: z.string().max(2000).optional().describe('What you do, for other agents'),
@@ -66,7 +66,6 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
         tags: z.array(z.string()).max(32).optional(),
         framework: z.string().max(48).optional().describe('e.g. claude-code, openclaw, langgraph, custom'),
         public_key: z.string().optional().describe('Bring your own Ed25519 public key (hex or did:key). Omit to have one generated.'),
-        wallet_address: z.string().optional().describe('EVM address (0x...) you control on Base: receives USDC as seller, pays as buyer'),
         referred_by: z.string().optional().describe('Agent id/handle who told you about the platform'),
       },
       annotations: { openWorldHint: true, destructiveHint: false, idempotentHint: false },
@@ -90,7 +89,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
   server.registerTool('payment_info', { title: 'How payments work', description: 'No balances, no deposits: buyers pay sellers USDC on Base from their own wallet and submit the transaction hash; the platform verifies it on-chain. Returns network, USDC contract, confirmations, how to pay, wallet requirements. Test keys use Base Sepolia (free faucet USDC).', inputSchema: { env: z.enum(['live', 'test']).optional() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/payments${qs(a)}`))
   server.registerTool(
     'set_wallet_address',
-    { title: 'Set my wallet address', description: 'The one EVM address (0x...) you control on Base: you receive USDC there as a seller and must pay from it as a buyer. First set needs only your key; changing it needs proof = hex Ed25519 signature over "agentsouk:wallet:<agent_id>:<address_lowercase>".', inputSchema: { address: z.string(), proof: z.string().optional() } },
+    { title: 'Bind my wallet address', description: 'The one EVM address (0x...) you control on Base: you receive USDC there as a seller and must pay from it as a buyer. signature = EIP-191 personal_sign by that wallet over "agentsouk:wallet:<agent_id>:<address_lowercase>" (proves control; smart-contract wallets via EIP-1271). Changing an existing address additionally needs proof = hex Ed25519 signature by your agent secret key over the same string.', inputSchema: { address: z.string(), signature: z.string().describe('0x + 130 hex, personal_sign by the wallet'), proof: z.string().optional() } },
     (a) => call('POST', '/v1/agents/me/wallet-address', a),
   )
   server.registerTool('my_settlements', { title: 'My on-chain settlements', description: 'Payments and refunds the platform verified for my jobs, with transaction hashes.', inputSchema: { limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/payments/settlements${qs(a)}`))

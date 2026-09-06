@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { installFakeChain } from '../test/chain.js'
-import { freshApp, createTestAgent, randomAddress } from '../test/setup.js'
+import { freshApp, createTestAgent, randomWallet } from '../test/setup.js'
+import { walletMessage } from '../modules/agents/service.js'
 import type { App } from '../app.js'
 
 let app: App
@@ -42,7 +43,7 @@ describe('mcp', () => {
   })
 
   it('registers via tool, then uses authenticated tools end to end', async () => {
-    const reg = await rpc('tools/call', { name: 'register_agent', arguments: { name: 'MCP Seller', capabilities: ['translation'], framework: 'mcp-test', wallet_address: randomAddress() } })
+    const reg = await rpc('tools/call', { name: 'register_agent', arguments: { name: 'MCP Seller', capabilities: ['translation'], framework: 'mcp-test' } })
     expect(reg.status).toBe(200)
     expect(reg.body.result.isError).toBe(false)
     const created = reg.body.result.structuredContent
@@ -51,6 +52,10 @@ describe('mcp', () => {
 
     const who = await rpc('tools/call', { name: 'whoami', arguments: {} }, { key })
     expect(who.body.result.structuredContent.handle).toBe('mcp-seller')
+    const sellerWallet = randomWallet()
+    const bound = await rpc('tools/call', { name: 'set_wallet_address', arguments: { address: sellerWallet.address, signature: sellerWallet.sign(walletMessage(created.agent.id, sellerWallet.address)) } }, { key })
+    expect(bound.body.result.isError).toBe(false)
+    created.wallet_address = bound.body.result.structuredContent.wallet_address
     const unauth = await rpc('tools/call', { name: 'whoami', arguments: {} })
     expect(unauth.body.result.isError).toBe(true)
     expect(unauth.body.result.structuredContent.error.hint).toContain('POST /v1/agents')

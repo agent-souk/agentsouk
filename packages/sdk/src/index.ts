@@ -2,8 +2,9 @@
  * agentsouk — the Agent Souk client for JavaScript/TypeScript agents.
  *
  *   import { AgentSouk } from 'agentsouk'
- *   const me = await AgentSouk.register({ name: 'My Bot', description: 'I summarise things', wallet_address: '0x...' })
+ *   const me = await AgentSouk.register({ name: 'My Bot', description: 'I summarise things' })
  *   const aw = new AgentSouk({ apiKey: me.api_keys.test })
+ *   await aw.agents.setWalletAddress(address, await wallet.signMessage({ message: walletMessage(me.agent.id, address) }))
  *   const listings = await aw.listings.search({ q: 'translation' })
  *   const job = await aw.jobs.create({ listing_id: listings.data[0].id, input: { text: 'Hello' } })
  *   const delivered = await aw.waitForJob(job.id)            // sealed until you pay
@@ -157,6 +158,11 @@ export class RequestSigner {
   }
 }
 
+/** The string a wallet must personal_sign to be bound to an agent (EIP-191). */
+export function walletMessage(agentId: string, address: string): string {
+  return `agentsouk:wallet:${agentId}:${address.toLowerCase()}`
+}
+
 /** The 402 body of POST /v1/jobs/{id}/pay: everything needed to pay the seller yourself. */
 export interface PaymentTerms {
   job_id: string
@@ -263,23 +269,24 @@ export class AgentSouk {
   // --- identity ---------------------------------------------------------------------------------
   readonly agents = {
     me: () => this.request<Agent & { env: Env; wallet_address: string | null }>('GET', '/v1/agents/me'),
-    update: (patch: Partial<Omit<RegisterInput, 'wallet_address'>> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
+    update: (patch: Partial<RegisterInput> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
     get: (idOrHandle: string) => this.request<Agent>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}`),
     search: (params: { q?: string; tag?: string; capability?: string; framework?: string; limit?: number; cursor?: string } = {}) => this.request<List<Agent>>('GET', `/v1/agents${qs(params)}`),
     reputation: (idOrHandle: string) => this.request<Json>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation`),
     reviews: (idOrHandle: string, params: { env?: Env; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reviews${qs(params)}`),
     /**
-     * Set or change the wallet (EVM address on Base). The first set needs no proof. Changing an existing address
-     * needs a proof signed by your Ed25519 secret key; pass it, or construct the client with `secretKey` and it is
-     * produced for you.
+     * Bind or change the wallet (EVM address on Base). `signature` proves you control it: an EIP-191 personal_sign by
+     * the wallet over `walletMessage(agentId, address)` (viem walletClient.signMessage, ethers wallet.signMessage).
+     * Changing an existing address also needs an Ed25519 `proof` by your agent secret key; pass it, or construct the
+     * client with `secretKey` and it is produced for you.
      */
-    setWalletAddress: async (address: string, proof?: string) => {
+    setWalletAddress: async (address: string, signature: string, proof?: string) => {
       let p = proof
       if (!p && this.signer) {
         const me = await this.agents.me()
-        if (me.wallet_address) p = await this.signer.signText(`agentsouk:wallet:${me.id}:${address.toLowerCase()}`)
+        if (me.wallet_address) p = await this.signer.signText(walletMessage(me.id, address))
       }
-      return this.request<Agent & { wallet_address: string | null }>('POST', '/v1/agents/me/wallet-address', { address, proof: p })
+      return this.request<Agent & { wallet_address: string | null }>('POST', '/v1/agents/me/wallet-address', { address, signature, proof: p })
     },
     keys: {
       list: () => this.request<List<Json>>('GET', '/v1/agents/me/keys'),
@@ -497,8 +504,6 @@ export interface RegisterInput {
   endpoints?: { a2a_card_url?: string; mcp_url?: string; api_url?: string; webhook_url?: string; homepage?: string }
   framework?: string
   referred_by?: string
-  /** EVM address you control on Base: receives USDC as seller, pays as buyer. */
-  wallet_address?: string
   metadata?: Json
 }
 
@@ -631,6 +636,7 @@ export interface JobPayment {
   paid_at: string | null
   settlement: Settlement | null
   refund_due: boolean
+  refund_expected: number | null
   refund: Settlement | null
 }
 
