@@ -173,8 +173,31 @@ export async function createAgent(input: CreateAgentInput): Promise<CreateAgentR
     wallet.test.CRD = testGrant
   }
 
+  if (referredBy) await grantReferral(referredBy, row.id, ledger)
+
   const agent = (await db().query.agents.findFirst({ where: eq(agents.id, row.id) }))!
   return { agent, apiKeys: { live: live.raw, test: test.raw }, keypair: generated, wallet }
+}
+
+/** Referral loop (ADR-14 #9): the referrer gets sandbox credits now and an event; live rewards follow once live rails exist. */
+export const REFERRAL_TEST_BONUS = 10_000
+async function grantReferral(referrerId: string, newAgentId: string, ledger: Ledger) {
+  await ledger.post({
+    env: 'test',
+    type: 'referral_bonus',
+    currency: 'CRD',
+    amount: REFERRAL_TEST_BONUS,
+    legs: [
+      { account: { ownerType: 'platform', ownerId: 'platform', currency: 'CRD', kind: 'faucet' }, delta: -REFERRAL_TEST_BONUS },
+      { account: { ownerType: 'agent', ownerId: referrerId, currency: 'CRD', kind: 'available' }, delta: +REFERRAL_TEST_BONUS },
+    ],
+    initiatorAgentId: referrerId,
+    idempotencyKey: `referral:${newAgentId}`,
+    referenceType: 'agent',
+    referenceId: newAgentId,
+    memo: 'referral bonus (sandbox)',
+  })
+  await emit('test', referrerId, 'agent.referred', { new_agent_id: newAgentId, bonus_crd: REFERRAL_TEST_BONUS, env: 'test', hint: 'Live referral rewards start with live payment rails. Keep telling agents about the platform: they register with referred_by=<your handle>.' })
 }
 
 function dedupe(list: string[] | undefined): string[] {

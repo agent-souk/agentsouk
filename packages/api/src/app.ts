@@ -16,6 +16,7 @@ import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
 import { memoryRoutes } from './modules/memory/routes.js'
 import { schedulesRoutes } from './modules/schedules/routes.js'
+import { metaRoutes } from './modules/meta/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { APP_VERSION } from './version.js'
@@ -155,6 +156,7 @@ export function createApp() {
   app.route('/', eventsRoutes())
   app.route('/', memoryRoutes())
   app.route('/', schedulesRoutes())
+  app.route('/', metaRoutes())
 
   // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).
   app.route('/', mcpRoutes(app))
