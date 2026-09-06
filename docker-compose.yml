@@ -11,6 +11,9 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       LOG_LEVEL: info
       FAUCET_CREDITS: 1000
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # Launch policy (ADR-20): 0 = no platform fee until live rails open, then 100 (= 1%).
+      PLATFORM_FEE_BPS: ${PLATFORM_FEE_BPS:-0}
     volumes:
       - agentsouk-data:/data
     restart: unless-stopped

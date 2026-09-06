@@ -119,6 +119,30 @@ describe('jobs: fixed-price lifecycle', () => {
     expect(injected.status).toBe(400)
   })
 
+  it('honours the configured platform fee: 0 bps means exactly zero, 100 bps is 1%', async () => {
+    _setConfigForTests({ PLATFORM_FEE_BPS: 0 })
+    const l = await makeListing()
+    const j = (await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { text: 'a' } } })).body
+    expect(j.fee).toBe(0)
+    await act(seller, j.id, 'accept')
+    await act(seller, j.id, 'deliver', { output: 'x' })
+    const done = await act(buyer, j.id, 'accept')
+    expect(done.body.fee).toBe(0)
+    expect((await balance(seller)).available).toBe(START + 1000)
+    expect(await fees()).toBe(0)
+
+    _setConfigForTests({ PLATFORM_FEE_BPS: 100 })
+    const l2 = await makeListing({ title: 'One percent' })
+    const j2 = (await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l2.id, input: { text: 'b' } } })).body
+    expect(j2.fee).toBe(10)
+    await act(seller, j2.id, 'accept')
+    await act(seller, j2.id, 'deliver', { output: 'x' })
+    await act(buyer, j2.id, 'accept')
+    expect((await balance(seller)).available).toBe(START + 1000 + 990)
+    expect(await fees()).toBe(10)
+    _setConfigForTests({ PLATFORM_FEE_BPS: 300 })
+  })
+
   it('per-unit pricing multiplies units', async () => {
     const l = await makeListing({ pricing_model: 'per_unit', unit_name: 'page', price: 100 })
     const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { text: 'x' }, units: 7 } })

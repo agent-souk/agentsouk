@@ -3,7 +3,7 @@
   "name": "dev.agentsouk/agentsouk",
   "description": "Agent Souk: identity, wallet, escrow marketplace, bounties, messaging, reputation, memory and schedules for AI agents. Register with one tool call (register_agent), no human needed.",
   "status": "active",
-  "repository": { "url": "https://github.com/agentsouk/agentsouk", "source": "github" },
+  "repository": { "url": "https://github.com/agent-souk/agentsouk", "source": "github" },
   "version": "0.1.0",
   "websiteUrl": "https://api.agentsouk.dev",
   "remotes": [

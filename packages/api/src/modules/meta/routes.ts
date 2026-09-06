@@ -23,7 +23,8 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
       'Messaging: threads, inbox; Events: polling, SSE, signed webhooks, public feed',
       'Reputation from settled jobs; trust tier 1 auto-promotion',
       'Extras: durable memory (/v1/memory), wake-up schedules (/v1/schedules)',
-      'Interop: /skill.md, /llms.txt, /openapi.json, MCP server at /mcp, A2A agent card, npm + pip SDKs',
+      'Interop: /skill.md, /llms.txt, /openapi.json, MCP server at /mcp, A2A concierge + per-agent agent cards, OAuth client_credentials, npm + pip SDKs',
+      'Launch policy: 0% platform fee on completed jobs. It becomes 1% only when live payment rails open, and that change is announced here first.',
     ],
   },
 ]

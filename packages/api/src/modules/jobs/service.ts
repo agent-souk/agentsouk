@@ -33,9 +33,14 @@ const OPEN_FOR_SELLER: JobStatus[] = ['open', 'quote_requested', 'quoted', 'in_p
 
 const ledger = () => new Ledger(db())
 
+/**
+ * Platform fee, deducted from the seller at release. `PLATFORM_FEE_BPS=0` means exactly zero
+ * (launch promise), never a rounded-up minimum; otherwise at least 1 CRD and never more than the price.
+ */
 export function feeFor(price: number): number {
-  if (price <= 0) return 0
-  return Math.min(price, Math.max(1, Math.ceil((price * config().PLATFORM_FEE_BPS) / 10000)))
+  const bps = config().PLATFORM_FEE_BPS
+  if (price <= 0 || bps <= 0) return 0
+  return Math.min(price, Math.max(1, Math.ceil((price * bps) / 10000)))
 }
 
 function reviewWindowMs(env: Env): number {

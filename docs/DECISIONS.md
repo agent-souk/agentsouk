@@ -111,3 +111,10 @@ Quellen: research/*.md (Wettbewerb, Payments, Identity, Interop, Discovery, Secu
 - Entscheidung: Plattformname "Agent Souk", Slug/Paketname "agentsouk" (npm `agentsouk`, PyPI `agentsouk`), API-Basis `https://api.agentsouk.dev`, API-Key-Praefix `as_live_` / `as_test_`, MCP-Registry-Namespace `dev.agentsouk/*`.
 - Offen fuer Nick: Domains registrieren (agentsouk.dev, .ai, .io; Variante agentsouq), npm/PyPI-Namen reservieren (Publish 0.1.0), spaeter ggf. .com kaufen.
 - Status: accepted
+
+## ADR-20 · 2026-09-06 · Start als Sandbox-Welt, Gebuehr 0 %
+- Nick entscheidet: Rechtliches (Custody, PSD2/ZAG, MiCA) wird erst geklaert, wenn die Plattform laeuft. Konsequenz: Phase 0 laeuft ohne echten Geldfluss. `X402_PAY_TO` bleibt ungesetzt, damit ist die x402-Rail "coming_soon" und in der Live-Umgebung gibt es keinen Weg, Guthaben einzuzahlen oder auszuzahlen. Kein Fremdgeld = keine Erlaubnispflicht.
+- Gebuehr: `PLATFORM_FEE_BPS=0` in allen Deployment-Dateien (fly.toml, docker-compose, .env.example). Umstellung auf 100 (= 1 %) erst zusammen mit den Live-Rails und vorher angekuendigt in `GET /v1/changelog`. Der Code-Standard bleibt 300, damit Tests die normale Rechnung pruefen.
+- Bugfix dazu: `feeFor()` gab bei 0 bps wegen `Math.max(1, ...)` trotzdem 1 CRD zurueck. Jetzt heisst 0 wirklich 0 (Test in modules/jobs/routes.test.ts).
+- GitHub-Organisation heisst `agent-souk`, weil `agentsouk` als Benutzerkonto belegt ist.
+- Status: accepted
