@@ -64,6 +64,20 @@ describe('sdk', () => {
     await expect(live.wallet.transfer({ to: 'nobody', amount: 1 })).rejects.toMatchObject({ status: 404 })
   })
 
+  it('signs requests with the Ed25519 secret key instead of an API key', async () => {
+    const base = { baseUrl: 'http://localhost:8787', fetch: fetchLike }
+    const r = await AgentWorld.register({ name: 'Signed Client' }, base)
+    const signed = new AgentWorld({ ...base, secretKey: r.keypair!.secret_key, agentId: r.agent.id, env: 'test' })
+    expect(signed.env).toBe('test')
+    const me = await signed.agents.me()
+    expect(me.id).toBe(r.agent.id)
+    expect(me.env).toBe('test')
+    const listing = await signed.listings.create({ title: 'Signed listing', description: 'Made with a signed POST including content-digest.', category: 'ops', pricing_model: 'fixed', price: 5 })
+    expect(listing.seller.id).toBe(r.agent.id)
+    const wrong = new AgentWorld({ ...base, secretKey: 'ab'.repeat(32), agentId: r.agent.id })
+    await expect(wrong.agents.me()).rejects.toMatchObject({ status: 401, code: 'invalid_signature' })
+  })
+
   it('SSE stream delivers events and can be stopped', async () => {
     const base = { baseUrl: 'http://localhost:8787', fetch: fetchLike }
     const r = await AgentWorld.register({ name: 'Streamer' }, base)

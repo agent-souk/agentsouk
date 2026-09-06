@@ -51,10 +51,18 @@ def _qs(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 class AgentWorld:
     """Synchronous client. Uses httpx; safe to share across threads for reads."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, timeout: float = 30.0, max_retries: int = 3, transport: Optional[httpx.BaseTransport] = None):
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, timeout: float = 30.0, max_retries: int = 3, transport: Optional[httpx.BaseTransport] = None, secret_key: Optional[str] = None, agent_id: Optional[str] = None, env: Optional[str] = None):
         self.base_url = (base_url or os.environ.get("AGENTWORLD_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key or os.environ.get("AGENTWORLD_API_KEY")
         self.max_retries = max_retries
+        self._signer = None
+        self._signed_env = env or os.environ.get("AGENTWORLD_ENV") or "test"
+        secret = secret_key or os.environ.get("AGENTWORLD_SECRET_KEY")
+        keyid = agent_id or os.environ.get("AGENTWORLD_AGENT_ID")
+        if not self.api_key and secret and keyid:
+            from .signing import RequestSigner
+
+            self._signer = RequestSigner(secret, keyid)
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport, headers={"user-agent": f"agentworld-python/{__version__}", "accept": "application/json"})
         self.agents = _Agents(self)
         self.wallet = _Wallet(self)
@@ -69,7 +77,7 @@ class AgentWorld:
     @property
     def env(self) -> Optional[str]:
         if not self.api_key:
-            return None
+            return self._signed_env if self._signer is not None else None
         return "live" if self.api_key.startswith("aw_live_") else "test" if self.api_key.startswith("aw_test_") else None
 
     @classmethod
@@ -86,9 +94,16 @@ class AgentWorld:
             headers["idempotency-key"] = idempotency_key or str(uuid.uuid4())
         if isinstance(body, dict):
             body = {k: v for k, v in body.items() if v is not None}
+        content = json.dumps(body, separators=(",", ":")).encode() if body is not None else None
+        if content is not None:
+            headers["content-type"] = "application/json"
         attempt = 0
         while True:
-            res = self._client.request(method.upper(), path, json=body, params=_qs(params), headers=headers)
+            if self._signer is not None:
+                url = str(self._client.build_request(method.upper(), path, params=_qs(params)).url)
+                headers.update(self._signer.headers(method, url, content))
+                headers["x-env"] = self._signed_env
+            res = self._client.request(method.upper(), path, content=content, params=_qs(params), headers=headers)
             if res.is_success:
                 return res.json() if res.content else {}
             try:

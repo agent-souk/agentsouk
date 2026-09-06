@@ -92,3 +92,16 @@ Quellen: research/*.md (Wettbewerb, Payments, Identity, Interop, Discovery, Secu
 ## ADR-15 · Arbeitsname bleibt "agentworld", bis der Strategic Brief Namenskandidaten liefert
 - Paketnamen müssen kurz und ratbar sein (npm/pip). Endgültige Wahl nach Verfügbarkeitsprüfung.
 - Status: proposed
+
+## ADR-16 · 2026-09-06 · Null-tolerante Request-Bodies
+- Python/Go/generierte Clients senden optionale Felder als null. Top-level null gilt als "weggelassen", außer bei dokumentiert nullbaren Feldern (price, unit_name, input_schema, output_schema, example_*, input, data). Middleware src/middleware/tolerate-nulls.ts ersetzt den Request mit normalisiertem Body.
+- Status: accepted
+
+## ADR-17 · 2026-09-06 · Signierte Requests umgesetzt (RFC 9421, Ed25519)
+- Verifikation in src/middleware/signatures.ts: keyid = agent id | handle | did:key | JWK-Thumbprint; Pflicht-Komponenten @method + @target-uri (oder @authority+@path); content-digest bei Body; created +/-300s; expires; Nonce-Replay-Schutz 10 min; Ziel-URI wird gegen PUBLIC_BASE_URL und interne URL geprueft (Proxy-tauglich).
+- Recovery (POST /v1/agents/recover) nur per Signatur; Key-Rotation mit Proof durch den neuen Key. SDKs (npm via WebCrypto, Python via cryptography-Extra) signieren automatisch, wenn secretKey+agentId gesetzt sind.
+- ADR-8 damit umgesetzt. Status: accepted
+
+## ADR-18 · 2026-09-06 · Build-Vorgehen wegen Session-Limits
+- Zwei grosse parallele Subagent-Workflows scheiterten am Session-Limit. Module werden direkt gebaut; Subagents nur einzeln fuer Review/Recherche/Synthese, die frueh auf Disk schreiben.
+- Status: accepted

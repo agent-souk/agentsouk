@@ -46,6 +46,14 @@ export class AgentWorldError extends Error {
 export interface ClientOptions {
   /** aw_live_... or aw_test_... */
   apiKey?: string
+  /**
+   * Alternative to apiKey: sign every request with your Ed25519 secret key (RFC 9421 / Web Bot Auth).
+   * Needs `agentId` (or handle / did:key) as keyid and `env` to pick live or test.
+   */
+  secretKey?: string
+  agentId?: string
+  /** Environment for signed requests (default 'test'). Ignored when apiKey is set. */
+  env?: Env
   /** Defaults to https://api.agentworld.dev (override with AGENTWORLD_BASE_URL). */
   baseUrl?: string
   fetch?: FetchLike
@@ -76,9 +84,62 @@ function qs(params?: object): string {
   return s ? `?${s}` : ''
 }
 
+// --- Ed25519 request signing (RFC 9421) via WebCrypto, no dependencies ------------------------
+
+const PKCS8_ED25519_PREFIX = '302e020100300506032b657004220420'
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+function bytesToBase64(bytes: Uint8Array): string {
+  let s = ''
+  for (const b of bytes) s += String.fromCharCode(b)
+  return btoa(s)
+}
+
+export class RequestSigner {
+  private keyPromise?: Promise<CryptoKey>
+  constructor(
+    private readonly secretKeyHex: string,
+    readonly keyid: string,
+  ) {
+    if (!/^[0-9a-f]{64}$/i.test(secretKeyHex)) throw new Error('secretKey must be the 64-char hex Ed25519 seed from registration')
+  }
+  private key(): Promise<CryptoKey> {
+    if (!this.keyPromise) {
+      const pkcs8 = hexToBytes(PKCS8_ED25519_PREFIX + this.secretKeyHex)
+      this.keyPromise = crypto.subtle.importKey('pkcs8', pkcs8 as unknown as BufferSource, { name: 'Ed25519' }, false, ['sign'])
+    }
+    return this.keyPromise
+  }
+  /** Returns the headers to add: content-digest (if body), signature-input, signature. */
+  async headers(method: string, url: string, body?: string): Promise<Record<string, string>> {
+    const h: Record<string, string> = {}
+    const components = ['@method', '@target-uri']
+    if (body !== undefined && body.length > 0) {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)))
+      h['content-digest'] = `sha-256=:${bytesToBase64(digest)}:`
+      components.push('content-digest')
+    }
+    const created = Math.floor(Date.now() / 1000)
+    const nonce = randomKey()
+    const raw = `(${components.map((c) => `"${c}"`).join(' ')});created=${created};expires=${created + 300};keyid="${this.keyid}";alg="ed25519";nonce="${nonce}"`
+    const lines = components.map((c) => (c === '@method' ? `"@method": ${method.toUpperCase()}` : c === '@target-uri' ? `"@target-uri": ${url}` : `"${c}": ${h[c]}`))
+    lines.push(`"@signature-params": ${raw}`)
+    const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', await this.key(), new TextEncoder().encode(lines.join('\n'))))
+    h['signature-input'] = `sig1=${raw}`
+    h['signature'] = `sig1=:${bytesToBase64(sig)}:`
+    return h
+  }
+}
+
 export class AgentWorld {
   readonly baseUrl: string
   private apiKey?: string
+  private readonly signer?: RequestSigner
+  private readonly signedEnv: Env
   private readonly fetchImpl: FetchLike
   private readonly maxRetries: number
   private readonly userAgent: string
@@ -87,6 +148,10 @@ export class AgentWorld {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {}
     this.baseUrl = (opts.baseUrl ?? env.AGENTWORLD_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
     this.apiKey = opts.apiKey ?? env.AGENTWORLD_API_KEY
+    const secret = opts.secretKey ?? env.AGENTWORLD_SECRET_KEY
+    const keyid = opts.agentId ?? env.AGENTWORLD_AGENT_ID
+    if (secret && keyid) this.signer = new RequestSigner(secret, keyid)
+    this.signedEnv = opts.env ?? (env.AGENTWORLD_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
     this.userAgent = opts.userAgent ?? 'agentworld-js/0.1.0'
@@ -103,19 +168,27 @@ export class AgentWorld {
   }
 
   get env(): Env | undefined {
-    return this.apiKey?.startsWith('aw_live_') ? 'live' : this.apiKey?.startsWith('aw_test_') ? 'test' : undefined
+    if (this.apiKey) return this.apiKey.startsWith('aw_live_') ? 'live' : this.apiKey.startsWith('aw_test_') ? 'test' : undefined
+    return this.signer ? this.signedEnv : undefined
   }
 
   /** Low-level request. Throws AgentWorldError on 4xx/5xx (read `.hint`). */
   async request<T = Json>(method: string, path: string, body?: unknown, opts: { idempotencyKey?: string; headers?: Record<string, string> } = {}): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json', 'user-agent': this.userAgent, ...(opts.headers ?? {}) }
+    const bodyText = body !== undefined ? JSON.stringify(body) : undefined
+    const url = `${this.baseUrl}${path}`
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`
-    if (body !== undefined) headers['content-type'] = 'application/json'
+    else if (this.signer) {
+      Object.assign(headers, await this.signer.headers(method, url, bodyText))
+      headers['x-env'] = this.signedEnv
+    }
+    if (bodyText !== undefined) headers['content-type'] = 'application/json'
     const mutating = method !== 'GET'
     if (mutating) headers['idempotency-key'] = opts.idempotencyKey ?? randomKey()
     let attempt = 0
     for (;;) {
-      const res = await this.fetchImpl(`${this.baseUrl}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
+      if (attempt > 0 && !this.apiKey && this.signer) Object.assign(headers, await this.signer.headers(method, url, bodyText))
+      const res = await this.fetchImpl(url, { method, headers, body: bodyText })
       if (res.ok) {
         const text = await res.text()
         return (text ? JSON.parse(text) : {}) as T

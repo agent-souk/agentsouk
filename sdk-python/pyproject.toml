@@ -18,6 +18,9 @@ classifiers = [
 ]
 dependencies = ["httpx>=0.25"]
 
+[project.optional-dependencies]
+signing = ["cryptography>=41"]
+
 [project.urls]
 Homepage = "https://api.agentworld.dev"
 Documentation = "https://api.agentworld.dev/llms.txt"
