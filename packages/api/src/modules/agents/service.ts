@@ -6,7 +6,7 @@ import { emit } from '../../events/bus.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
-import { Ledger } from '../../ledger/ledger.js'
+import { normalizeEvmAddress } from '../payments/address.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
 import { searchTerms } from '../listings/service.js'
 
@@ -21,13 +21,23 @@ export type CreateAgentInput = {
   framework?: string
   referred_by?: string
   metadata?: Record<string, unknown>
+  /** EVM address that receives USDC for this agent's sales (ADR-21). */
+  payout_address?: string
 }
 
 export type CreateAgentResult = {
   agent: Agent
   apiKeys: { live: string; test: string }
   keypair?: { public_key: string; secret_key: string }
-  wallet: { test: Record<string, number>; live: Record<string, number> }
+}
+
+/** Validates and checksums a payout address; throws an agent-friendly error otherwise. */
+export function requirePayoutAddress(input: unknown): string {
+  const addr = normalizeEvmAddress(input)
+  if (!addr) {
+    throw errors.validation('payout_address must be an EVM address: 0x followed by 40 hex characters (all-lowercase or with a valid EIP-55 checksum).', 'payout_address', 'This is where USDC for your sales is sent (Base mainnet for live keys, Base Sepolia for test keys). Use an address you control; the platform never holds funds.')
+  }
+  return addr
 }
 
 const RESERVED_HANDLES = new Set(['me', 'admin', 'root', 'system', 'platform', 'support', 'api', 'agentsouk', 'null', 'undefined'])
@@ -137,6 +147,7 @@ export async function createAgent(input: CreateAgentInput): Promise<CreateAgentR
     did: didKeyFromPublicKey(publicKey),
     endpoints: input.endpoints ?? {},
     framework: input.framework ?? null,
+    payoutAddress: input.payout_address !== undefined && input.payout_address !== null ? requirePayoutAddress(input.payout_address) : null,
     trustTier: 0,
     status: 'active',
     referredBy,
@@ -150,54 +161,10 @@ export async function createAgent(input: CreateAgentInput): Promise<CreateAgentR
   const live = await createApiKey(row.id, 'live', 'default')
   const test = await createApiKey(row.id, 'test', 'default')
 
-  // Welcome credits: generous sandbox money so the first transaction can happen within seconds.
-  const ledger = new Ledger(db())
-  const testGrant = config().FAUCET_CREDITS * 100
-  const wallet: CreateAgentResult['wallet'] = { test: { CRD: 0 }, live: { CRD: 0 } }
-  if (testGrant > 0) {
-    await ledger.post({
-      env: 'test',
-      type: 'faucet',
-      currency: 'CRD',
-      amount: testGrant,
-      legs: [
-        { account: { ownerType: 'platform', ownerId: 'platform', currency: 'CRD', kind: 'faucet' }, delta: -testGrant },
-        { account: { ownerType: 'agent', ownerId: row.id, currency: 'CRD', kind: 'available' }, delta: +testGrant },
-      ],
-      initiatorAgentId: row.id,
-      idempotencyKey: 'welcome',
-      referenceType: 'agent',
-      referenceId: row.id,
-      memo: 'welcome credits (sandbox)',
-    })
-    wallet.test.CRD = testGrant
-  }
-
-  if (referredBy) await grantReferral(referredBy, row.id, ledger)
+  if (referredBy) await emit('live', referredBy, 'agent.referred', { new_agent_id: row.id, hint: 'Thanks for spreading the word. Keep telling agents about the platform: they register with referred_by=<your handle>.' })
 
   const agent = (await db().query.agents.findFirst({ where: eq(agents.id, row.id) }))!
-  return { agent, apiKeys: { live: live.raw, test: test.raw }, keypair: generated, wallet }
-}
-
-/** Referral loop (ADR-14 #9): the referrer gets sandbox credits now and an event; live rewards follow once live rails exist. */
-export const REFERRAL_TEST_BONUS = 10_000
-async function grantReferral(referrerId: string, newAgentId: string, ledger: Ledger) {
-  await ledger.post({
-    env: 'test',
-    type: 'referral_bonus',
-    currency: 'CRD',
-    amount: REFERRAL_TEST_BONUS,
-    legs: [
-      { account: { ownerType: 'platform', ownerId: 'platform', currency: 'CRD', kind: 'faucet' }, delta: -REFERRAL_TEST_BONUS },
-      { account: { ownerType: 'agent', ownerId: referrerId, currency: 'CRD', kind: 'available' }, delta: +REFERRAL_TEST_BONUS },
-    ],
-    initiatorAgentId: referrerId,
-    idempotencyKey: `referral:${newAgentId}`,
-    referenceType: 'agent',
-    referenceId: newAgentId,
-    memo: 'referral bonus (sandbox)',
-  })
-  await emit('test', referrerId, 'agent.referred', { new_agent_id: newAgentId, bonus_crd: REFERRAL_TEST_BONUS, env: 'test', hint: 'Live referral rewards start with live payment rails. Keep telling agents about the platform: they register with referred_by=<your handle>.' })
+  return { agent, apiKeys: { live: live.raw, test: test.raw }, keypair: generated }
 }
 
 function dedupe(list: string[] | undefined): string[] {
@@ -273,6 +240,29 @@ export async function rotateKey(agent: Agent, newPublicKeyInput: string, proofHe
   const now = Date.now()
   await db().update(agents).set({ publicKey: newPk, did: didKeyFromPublicKey(newPk), updatedAt: now }).where(eq(agents.id, agent.id))
   await emit('live', agent.id, 'agent.key_rotated', { old_did: agent.did, new_did: didKeyFromPublicKey(newPk) })
+  return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
+}
+
+export function payoutMessage(agentId: string, address: string): string {
+  return `agentsouk:payout:${agentId}:${address.toLowerCase()}`
+}
+
+/**
+ * Set or change the payout address (ADR-21 §2). Changing an existing address needs a proof signed by the
+ * agent's Ed25519 secret key, so a leaked API key can never redirect payments. First-time set is allowed
+ * with the API key alone (bootstrap).
+ */
+export async function setPayoutAddress(agent: Agent, addressInput: unknown, proofHex: string | undefined): Promise<Agent> {
+  const address = requirePayoutAddress(addressInput)
+  if (agent.payoutAddress && agent.payoutAddress.toLowerCase() === address.toLowerCase()) return agent
+  if (agent.payoutAddress) {
+    if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, payoutMessage(agent.id, address), agent.publicKey)) {
+      throw errors.validation('proof is required to change an existing payout address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${payoutMessage(agent.id, address)}" with your secret key (hex Ed25519 signature) and send it as proof. This protects your income if an API key leaks.`)
+    }
+  }
+  const now = Date.now()
+  await db().update(agents).set({ payoutAddress: address, updatedAt: now }).where(eq(agents.id, agent.id))
+  await emit('live', agent.id, 'agent.payout_address_changed', { previous: agent.payoutAddress, address, hint: 'If you did not do this, rotate your key (POST /v1/agents/me/rotate-key) and set the address again.' })
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 

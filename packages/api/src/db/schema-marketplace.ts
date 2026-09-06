@@ -9,6 +9,9 @@ export const PRICING_MODELS = ['fixed', 'per_unit', 'quote'] as const
 export type PricingModel = (typeof PRICING_MODELS)[number]
 export const LISTING_STATUSES = ['active', 'paused', 'archived'] as const
 export type ListingStatus = (typeof LISTING_STATUSES)[number]
+/** ADR-21: when the buyer pays. on_delivery = sealed delivery, pay, reveal; upfront = pay after acceptance. */
+export const PAYMENT_TIMINGS = ['on_delivery', 'upfront'] as const
+export type PaymentTiming = (typeof PAYMENT_TIMINGS)[number]
 
 export type ListingStats = {
   jobs_completed: number
@@ -17,7 +20,8 @@ export type ListingStats = {
   rating_avg: number | null
   rating_count: number
   median_turnaround_seconds: number | null
-  volume_crd: number
+  /** USDC minor units settled on-chain for this listing */
+  volume_usdc: number
 }
 
 export const listings = sqliteTable(
@@ -33,8 +37,10 @@ export const listings = sqliteTable(
     category: text('category').notNull(),
     tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
     pricingModel: text('pricing_model').$type<PricingModel>().notNull(),
+    /** USDC minor units (6 decimals) */
     price: integer('price'),
     unitName: text('unit_name'),
+    payment: text('payment').$type<PaymentTiming>().notNull().default('on_delivery'),
     inputSchema: text('input_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
     outputSchema: text('output_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
     exampleInput: text('example_input', { mode: 'json' }).$type<unknown>(),
@@ -56,6 +62,7 @@ export const JOB_STATUSES = [
   'quote_requested',
   'quoted',
   'open',
+  'awaiting_payment',
   'in_progress',
   'delivered',
   'completed',
@@ -67,7 +74,8 @@ export const JOB_STATUSES = [
 ] as const
 export type JobStatus = (typeof JOB_STATUSES)[number]
 
-export type JobResolution = { buyer_refund: number; seller_payout: number; note: string; by: string }
+/** Arbiter verdict (ADR-21): reputational only, no money moves. */
+export type JobResolution = { outcome: 'buyer' | 'seller' | 'split'; note: string; by: string }
 
 export const jobs = sqliteTable(
   'jobs',
@@ -86,8 +94,9 @@ export const jobs = sqliteTable(
     input: text('input', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     output: text('output', { mode: 'json' }).$type<unknown>(),
     units: integer('units').notNull().default(1),
+    /** USDC minor units; null until quoted */
     price: integer('price'),
-    fee: integer('fee'),
+    payment: text('payment').$type<PaymentTiming>().notNull().default('on_delivery'),
     status: text('status').$type<JobStatus>().notNull(),
     revisionCount: integer('revision_count').notNull().default(0),
     maxRevisions: integer('max_revisions').notNull().default(2),
@@ -96,13 +105,23 @@ export const jobs = sqliteTable(
     acceptDeadlineAt: integer('accept_deadline_at'),
     deadlineAt: integer('deadline_at'),
     reviewDeadlineAt: integer('review_deadline_at'),
+    /** upfront: pay-by after acceptance; on_delivery: pay-by after a sealed delivery */
+    paymentDeadlineAt: integer('payment_deadline_at'),
+    paidAt: integer('paid_at'),
+    /** seller SLA in seconds, fixed at creation/award so upfront jobs know their deadline once paid */
+    turnaroundSeconds: integer('turnaround_seconds').notNull().default(3600),
+    settlementId: text('settlement_id'),
+    /** sha256 hex of the canonical JSON of `output`; lets the buyer verify the sealed deliverable after reveal */
+    outputHash: text('output_hash'),
+    outputBytes: integer('output_bytes'),
+    /** seller-provided teaser shown to the buyer while the output is sealed (<= 4 KB) */
+    outputPreview: text('output_preview', { mode: 'json' }).$type<unknown>(),
+    /** true when the job expired because the buyer never paid */
+    unpaid: integer('unpaid', { mode: 'boolean' }).notNull().default(false),
     cancelReason: text('cancel_reason'),
     disputeReason: text('dispute_reason'),
     resolution: text('resolution', { mode: 'json' }).$type<JobResolution>(),
     threadId: text('thread_id'),
-    escrowTransactionId: text('escrow_transaction_id'),
-    releaseTransactionId: text('release_transaction_id'),
-    refundTransactionId: text('refund_transaction_id'),
     createdAt: integer('created_at').notNull(),
     acceptedAt: integer('accepted_at'),
     deliveredAt: integer('delivered_at'),
@@ -114,7 +133,47 @@ export const jobs = sqliteTable(
     index('jobs_seller').on(t.sellerAgentId, t.status),
     index('jobs_listing').on(t.listingId),
     index('jobs_status_deadlines').on(t.status, t.acceptDeadlineAt, t.reviewDeadlineAt),
+    index('jobs_payment_deadline').on(t.status, t.paymentDeadlineAt),
   ],
+)
+
+// --- settlements (ADR-21): the only money record. One row per on-chain payment the platform witnessed. -----
+
+export const SETTLEMENT_KINDS = ['payment', 'refund'] as const
+export type SettlementKind = (typeof SETTLEMENT_KINDS)[number]
+export type SettlementStatus = 'pending' | 'settled' | 'failed'
+
+export const settlements = sqliteTable(
+  'settlements',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    kind: text('kind').$type<SettlementKind>().notNull(),
+    payerAgentId: text('payer_agent_id').notNull(),
+    payeeAgentId: text('payee_agent_id').notNull(),
+    /** payer wallet as reported by the facilitator */
+    payerAddress: text('payer_address'),
+    payTo: text('pay_to').notNull(),
+    /** USDC minor units */
+    amount: integer('amount').notNull(),
+    /** token contract */
+    asset: text('asset').notNull(),
+    /** CAIP-2, e.g. eip155:8453 */
+    network: text('network').notNull(),
+    scheme: text('scheme').notNull(),
+    x402Version: integer('x402_version').notNull(),
+    facilitator: text('facilitator').notNull(),
+    /** on-chain transaction hash once settled */
+    transaction: text('transaction'),
+    status: text('status').$type<SettlementStatus>().notNull().default('pending'),
+    error: text('error'),
+    createdAt: integer('created_at').notNull(),
+    settledAt: integer('settled_at'),
+  },
+  (t) => [index('settlements_job').on(t.jobId), index('settlements_payer').on(t.payerAgentId, t.id), index('settlements_payee').on(t.payeeAgentId, t.id), index('settlements_tx').on(t.transaction)],
 )
 
 export const jobEvents = sqliteTable(
@@ -170,7 +229,9 @@ export const bountyProposals = sqliteTable(
     sellerAgentId: text('seller_agent_id')
       .notNull()
       .references(() => agents.id),
+    /** USDC minor units */
     price: integer('price').notNull(),
+    payment: text('payment').$type<PaymentTiming>().notNull().default('on_delivery'),
     message: text('message'),
     status: text('status').$type<'pending' | 'accepted' | 'rejected' | 'withdrawn'>().notNull().default('pending'),
     contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
@@ -247,7 +308,7 @@ export const reviews = sqliteTable(
     role: text('role').$type<'buyer' | 'seller'>().notNull(),
     rating: integer('rating').notNull(),
     comment: text('comment'),
-    /** price of the underlying job: reviews are weighted by settled value */
+    /** price of the underlying job (USDC minor units): reviews are weighted by settled value */
     jobPrice: integer('job_price').notNull(),
     contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
     createdAt: integer('created_at').notNull(),
@@ -260,8 +321,11 @@ export type ReputationSide = {
   jobs_failed: number
   jobs_disputed: number
   jobs_cancelled: number
+  /** buyer side only: jobs that expired because this agent never paid */
+  jobs_unpaid: number
   distinct_counterparties: number
-  volume_crd: number
+  /** USDC minor units settled on-chain */
+  volume_usdc: number
   rating_avg: number | null
   rating_count: number
   on_time_rate: number | null

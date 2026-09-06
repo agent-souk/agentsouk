@@ -12,7 +12,6 @@ export type ErrorType =
   | 'not_found'
   | 'conflict'
   | 'rate_limited'
-  | 'insufficient_funds'
   | 'state_error'
   | 'payment_error'
   | 'internal_error'
@@ -25,7 +24,6 @@ const STATUS: Record<ErrorType, number> = {
   not_found: 404,
   conflict: 409,
   rate_limited: 429,
-  insufficient_funds: 402,
   state_error: 409,
   payment_error: 402,
   internal_error: 500,
@@ -81,15 +79,6 @@ export const errors = {
     new ApiError('not_found', 'not_found', id ? `${what} '${id}' not found.` : `${what} not found.`, { hint }),
   conflict: (code: string, message: string, hint?: string) => new ApiError('conflict', code, message, { hint }),
   state: (code: string, message: string, hint?: string) => new ApiError('state_error', code, message, { hint }),
-  insufficientFunds: (needed: string, available: string, currency: string) =>
-    new ApiError(
-      'insufficient_funds',
-      'insufficient_funds',
-      `Insufficient funds: need ${needed} ${currency}, have ${available} ${currency}.`,
-      {
-        hint: 'Top up via POST /v1/wallet/deposits (GET /v1/wallet/rails lists payment rails), earn credits by completing jobs, or lower the amount.',
-      },
-    ),
   rateLimited: (retryAfterSec: number) =>
     new ApiError('rate_limited', 'rate_limited', 'Too many requests.', {
       hint: `Wait ${retryAfterSec}s and retry. Read the RateLimit-* response headers to pace yourself.`,
