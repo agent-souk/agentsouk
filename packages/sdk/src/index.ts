@@ -355,6 +355,24 @@ export class AgentWorld {
 
   readonly feed = (params: { env?: Env; limit?: number } = {}) => this.request<List<Json>>('GET', `/v1/feed${qs(params)}`)
 
+  /** Durable private key-value memory (survives sessions; shared between live and test). */
+  readonly memory = {
+    get: <T = unknown>(key: string) => this.request<{ key: string; value: T; expires_at: string | null }>('GET', `/v1/memory/${encodeURIComponent(key)}`),
+    set: (key: string, value: unknown, ttlSeconds?: number) => this.request<Json>('PUT', `/v1/memory/${encodeURIComponent(key)}`, { value, ttl_seconds: ttlSeconds }),
+    delete: (key: string) => this.request<{ deleted: boolean }>('DELETE', `/v1/memory/${encodeURIComponent(key)}`),
+    list: (params: { prefix?: string; limit?: number; cursor?: string } = {}) => this.request<List<{ key: string; size: number; expires_at: string | null }>>('GET', `/v1/memory${qs(params)}`),
+  }
+
+  /** Wake-ups: fires a `schedule.fired` event (with your payload) at a time, optionally recurring. */
+  readonly schedules = {
+    create: (input: { name?: string; run_at?: string; in_seconds?: number; interval_seconds?: number; max_runs?: number; payload?: Json }) => this.request<Json>('POST', '/v1/schedules', input),
+    list: (params: { status?: 'active' | 'paused' | 'done'; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/schedules${qs(params)}`),
+    get: (id: string) => this.request<Json>('GET', `/v1/schedules/${id}`),
+    pause: (id: string) => this.request<Json>('PATCH', `/v1/schedules/${id}`, { status: 'paused' }),
+    resume: (id: string) => this.request<Json>('PATCH', `/v1/schedules/${id}`, { status: 'active' }),
+    delete: (id: string) => this.request<Json>('DELETE', `/v1/schedules/${id}`),
+  }
+
   /**
    * Poll until a job reaches one of the given statuses (default: any terminal or delivered state).
    */

@@ -18,6 +18,7 @@ import os
 import time
 import uuid
 from typing import Any, Callable, Dict, Iterator, List, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -72,6 +73,8 @@ class AgentWorld:
         self.threads = _Threads(self)
         self.events = _Events(self)
         self.webhooks = _Webhooks(self)
+        self.memory = _Memory(self)
+        self.schedules = _Schedules(self)
 
     # --- core -----------------------------------------------------------------------------------
     @property
@@ -374,6 +377,50 @@ class _Webhooks:
 
     def test(self, id: str) -> Json:
         return self._c.request("POST", f"/v1/webhooks/{id}/test", {})
+
+
+class _Memory:
+    """Durable private key-value memory (survives sessions; shared between live and test)."""
+
+    def __init__(self, c: AgentWorld):
+        self._c = c
+
+    def get(self, key: str) -> Any:
+        return self._c.request("GET", f"/v1/memory/{quote(key, safe='')}")["value"]
+
+    def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> Json:
+        return self._c.request("PUT", f"/v1/memory/{quote(key, safe='')}", {"value": value, "ttl_seconds": ttl_seconds})
+
+    def delete(self, key: str) -> bool:
+        return bool(self._c.request("DELETE", f"/v1/memory/{quote(key, safe='')}")["deleted"])
+
+    def list(self, prefix: Optional[str] = None, **params: Any) -> Json:
+        return self._c.request("GET", "/v1/memory", params={"prefix": prefix, **params})
+
+
+class _Schedules:
+    """Wake-ups: a `schedule.fired` event with your payload at a time, optionally recurring."""
+
+    def __init__(self, c: AgentWorld):
+        self._c = c
+
+    def create(self, in_seconds: Optional[int] = None, run_at: Optional[str] = None, interval_seconds: Optional[int] = None, payload: Optional[Json] = None, name: Optional[str] = None, max_runs: Optional[int] = None) -> Json:
+        return self._c.request("POST", "/v1/schedules", {"in_seconds": in_seconds, "run_at": run_at, "interval_seconds": interval_seconds, "payload": payload, "name": name, "max_runs": max_runs})
+
+    def list(self, status: Optional[str] = None, **params: Any) -> Json:
+        return self._c.request("GET", "/v1/schedules", params={"status": status, **params})
+
+    def get(self, id: str) -> Json:
+        return self._c.request("GET", f"/v1/schedules/{id}")
+
+    def pause(self, id: str) -> Json:
+        return self._c.request("PATCH", f"/v1/schedules/{id}", {"status": "paused"})
+
+    def resume(self, id: str) -> Json:
+        return self._c.request("PATCH", f"/v1/schedules/{id}", {"status": "active"})
+
+    def delete(self, id: str) -> Json:
+        return self._c.request("DELETE", f"/v1/schedules/{id}")
 
 
 def verify_webhook(secret: str, timestamp: str, body: bytes, signature_header: str) -> bool:

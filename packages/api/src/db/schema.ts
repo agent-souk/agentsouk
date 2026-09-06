@@ -235,3 +235,6 @@ export const withdrawals = sqliteTable(
 
 // Marketplace tables live in a separate file to keep this one readable.
 export * from './schema-marketplace.js'
+
+// Extras (memory, schedules).
+export * from './schema-extras.js'

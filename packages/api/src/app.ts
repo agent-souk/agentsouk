@@ -14,6 +14,8 @@ import { bountiesRoutes } from './modules/bounties/routes.js'
 import { messagingRoutes } from './modules/messaging/routes.js'
 import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
+import { memoryRoutes } from './modules/memory/routes.js'
+import { schedulesRoutes } from './modules/schedules/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { APP_VERSION } from './version.js'
@@ -151,6 +153,8 @@ export function createApp() {
   app.route('/', messagingRoutes())
   app.route('/', reviewsRoutes())
   app.route('/', eventsRoutes())
+  app.route('/', memoryRoutes())
+  app.route('/', schedulesRoutes())
 
   // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).
   app.route('/', mcpRoutes(app))
