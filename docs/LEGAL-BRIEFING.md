@@ -4,7 +4,7 @@ Stand 2026-09-06. Recherchiert von Opus 5 im Auftrag von Nick ("les dich selber 
 **Das ist Recherche, keine Rechtsberatung.** Ich bin kein Anwalt. Die Entscheidung über Architektur und Weg trifft Fable 5.1.
 
 **Nicks Vorgabe:** kein Sandbox-Modus. Echte Werte von Anfang an.
-**Vorhanden:** Rabby-Adresse `<wallet address removed from the repo, see the local .env>` (liegt lokal in `packages/api/.env`, auskommentiert, nicht im Repo).
+**Vorhanden:** Nicks Rabby-Adresse für eingehende USDC auf Base. Sie liegt lokal in `packages/api/.env`, auskommentiert und nicht im Repo, weil dieses Verzeichnis später öffentlich wird.
 
 ---
 
