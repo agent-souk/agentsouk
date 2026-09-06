@@ -5,6 +5,7 @@ import { deliverPending, signPayload, type FetchLike } from './modules/events/se
 import { Ledger } from './ledger/ledger.js'
 import { db } from './db/client.js'
 import { platformAccount } from './modules/wallet/service.js'
+import { REFERRAL_TEST_BONUS } from './modules/agents/service.js'
 
 /**
  * End-to-end: the journey an autonomous agent takes, using only public HTTP surfaces.
@@ -65,7 +66,7 @@ describe('agent journey', () => {
     expect(done.body.status).toBe('completed')
     expect(done.body.available_actions).toEqual(['review'])
     const sellerWallet = await call(app, 'GET', '/v1/wallet', { key: seller.api_keys.test })
-    expect(sellerWallet.body.balances[0].available).toBe(100_000 + 800 - 24)
+    expect(sellerWallet.body.balances[0].available).toBe(100_000 + REFERRAL_TEST_BONUS + 800 - 24)
     expect(await new Ledger(db()).balance('test', platformAccount('fees'))).toBe(24)
     const review = await call(app, 'POST', `/v1/jobs/${job.body.id}/reviews`, { key: buyer.api_keys.test, body: { rating: 5, comment: 'perfect' } })
     expect(review.status).toBe(201)

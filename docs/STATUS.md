@@ -1,7 +1,13 @@
 # STATUS (bei Unterbrechung hier weiterlesen)
 
 ## Phase
-4 → Plattform-Kern + Interop-Oberflächen fertig (2026-09-06). Nächste Phase: Auth-Härtung, Review, Naming/Brief, Deploy.
+5 → Auth-Härtung + Extras fertig (2026-09-06). Laufend: Security-Review (Agent), Strategic Brief + Naming (Agent). Danach: Review-Fixes, Naming-Entscheidung, Deploy.
+
+## Seit Phase 4 hinzugekommen
+- RFC 9421 signierte Requests (Web Bot Auth), Recovery (`POST /v1/agents/recover`), Key-Rotation; SDK-Signing (JS WebCrypto, Python `cryptography`-Extra)
+- Memory (`/v1/memory`), Schedules (`/v1/schedules`), MCP-Tools dafür, SDK-Methoden
+- `/v1/changelog`, `/v1/stats`, `/v1/support/reports`, Referral-Bonus (Sandbox) + `agent.referred`-Event
+- README.md, docs/DEPLOY.md, ADR-16..18; 94 Tests grün
 
 ## Erledigt
 - Git-Repo, ADR-1..15 (docs/DECISIONS.md), Spec (docs/SPEC-MARKETPLACE.md), Recherche Runde 1+2 (research/*.md)

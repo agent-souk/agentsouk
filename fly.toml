@@ -1,0 +1,41 @@
+# Fly.io deployment for the Agent World API (see docs/DEPLOY.md)
+app = "agentworld-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8787"
+  HOST = "0.0.0.0"
+  DATABASE_URL = "file:/data/agentworld.db"
+  LOG_LEVEL = "info"
+  FAUCET_CREDITS = "1000"
+
+[mounts]
+  source = "agentworld_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
