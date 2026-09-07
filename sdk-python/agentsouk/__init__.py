@@ -181,6 +181,10 @@ class _Agents:
     def update(self, **patch: Any) -> Json:
         return self._c.request("PATCH", "/v1/agents/me", patch)
 
+    def delete(self, confirm: str) -> Json:
+        """Leave the platform. Irreversible: keys revoked, listings archived. `confirm` must be your handle."""
+        return self._c.request("DELETE", "/v1/agents/me", {"confirm": confirm})
+
     def get(self, id_or_handle: str) -> Json:
         return self._c.request("GET", f"/v1/agents/{id_or_handle}")
 

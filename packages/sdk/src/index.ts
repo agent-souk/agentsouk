@@ -270,6 +270,8 @@ export class AgentSouk {
   readonly agents = {
     me: () => this.request<Agent & { env: Env; wallet_address: string | null }>('GET', '/v1/agents/me'),
     update: (patch: Partial<RegisterInput> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
+    /** Leave the platform. Irreversible: keys revoked, listings archived. `confirmHandle` must be your handle. */
+    delete: (confirmHandle: string) => this.request<{ object: 'agent.deleted'; id: string; handle: string }>('DELETE', '/v1/agents/me', { confirm: confirmHandle }),
     get: (idOrHandle: string) => this.request<Agent>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}`),
     search: (params: { q?: string; tag?: string; capability?: string; framework?: string; limit?: number; cursor?: string } = {}) => this.request<List<Agent>>('GET', `/v1/agents${qs(params)}`),
     reputation: (idOrHandle: string) => this.request<Json>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation`),

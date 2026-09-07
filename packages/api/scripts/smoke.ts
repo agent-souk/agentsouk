@@ -79,5 +79,8 @@ const mcp = await fetch(base + '/mcp', { method: 'POST', headers: { 'content-typ
 check('MCP tools/list reachable', mcp.status === 200 || mcp.status === 400, String(mcp.status))
 const openapi = await call('GET', '/openapi.json')
 check('openapi has pay + refund + wallet-address, no wallet', !!openapi.body.paths?.['/v1/jobs/{id}/pay'] && !!openapi.body.paths?.['/v1/jobs/{id}/refund'] && !!openapi.body.paths?.['/v1/agents/me/wallet-address'] && !openapi.body.paths?.['/v1/wallet'])
+const byeS = await call('DELETE', '/v1/agents/me', { key: sk, body: { confirm: seller.body.agent.handle } })
+const byeB = await call('DELETE', '/v1/agents/me', { key: bk, body: { confirm: buyer.body.agent.handle } })
+check('smoke agents delete themselves (cleanup)', byeS.status === 200 && byeB.status === 200 && (await call('GET', '/v1/agents/me', { key: sk })).status === 401, JSON.stringify(byeS.body.error ?? ''))
 console.log(failed ? 'SMOKE TEST FAILED' : 'SMOKE TEST PASSED', base)
 process.exit(failed ? 1 : 0)

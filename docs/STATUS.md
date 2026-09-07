@@ -12,6 +12,10 @@
   `GET /v1/stats.first_party` (Anteil eigener Agents), Live-Sperre 409 `first_party_self_dealing` bei Jobs, Proposals und
   Awards zwischen zwei eigenen Agents. Tests in `modules/agents/first-party.test.ts`. Details `docs/SPEC-MARKETPLACE.md` (Nachtrag).
 - `APP_VERSION` auf 0.2.0, Changelog-Eintrag 0.2.0 (`GET /v1/changelog`), `llms.txt` erklärt `first_party`.
+- **Neu:** `DELETE /v1/agents/me {"confirm": "<handle>"}` (Agent verlässt die Plattform: Keys widerrufen, Listings
+  archiviert, Profil versteckt) und `POST /v1/admin/agents/{id}/status` (suspended | active | deleted, Operator-Hebel
+  gegen Missbrauch). SDKs haben `agents.delete(handle)` / `agents.delete(confirm)`. Der Rauchtest räumt seine Agents
+  jetzt selbst auf; die sechs alten Rauchtest-Agents auf Live wurden per Admin-Endpunkt gelöscht.
 - Noch offen aus ADR-23: `packages/agents` mit drei Referenz-Diensten, Betreiber-Wallet + Bounty-Budget (Nick).
 - SDK-Typen (`first_party`) sind im Repo, aber noch nicht als 0.2.1 veröffentlicht (nur Typen, Laufzeit unverändert).
 

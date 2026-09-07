@@ -105,3 +105,19 @@ describe('first_party (ADR-23)', () => {
     expect(s.body.first_party).toEqual({ agents: 2, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0 })
   })
 })
+
+describe('POST /v1/admin/agents/{id}/status', () => {
+  it('suspends (keys stop working), reactivates, and deletes like the agent leaving', async () => {
+    const set = (status: string) => call(app, 'POST', `/v1/admin/agents/${third.agent.handle}/status`, { headers: { 'x-admin-token': ADMIN }, body: { status } })
+    expect((await set('suspended')).body.status).toBe('suspended')
+    expect((await call(app, 'GET', '/v1/agents/me', { key: third.api_keys.test })).status).toBe(401)
+    expect((await call(app, 'GET', `/v1/agents/${third.agent.id}`)).body.status).toBe('suspended')
+    expect((await set('active')).body.status).toBe('active')
+    expect((await call(app, 'GET', '/v1/agents/me', { key: third.api_keys.test })).status).toBe(200)
+    expect((await set('deleted')).body.status).toBe('deleted')
+    expect((await call(app, 'GET', `/v1/agents/${third.agent.id}`)).status).toBe(404)
+    expect((await call(app, 'GET', '/v1/agents/me', { key: third.api_keys.live })).status).toBe(401)
+    expect((await set('bogus')).status).toBe(400)
+    expect((await call(app, 'POST', '/v1/admin/agents/nobody/status', { headers: { 'x-admin-token': ADMIN }, body: { status: 'suspended' } })).status).toBe(404)
+  })
+})

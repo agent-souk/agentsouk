@@ -222,3 +222,22 @@ describe('profile + search', () => {
     expect(r.headers.get('ratelimit-remaining')).toBe('0')
   })
 })
+
+describe('DELETE /v1/agents/me', () => {
+  it('needs the handle as confirmation, then hides the profile, revokes both keys and archives listings', async () => {
+    const a = await createTestAgent(app, { name: 'Leaver' })
+    const l = await call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: { title: 'Svc', description: 'A service that is archived when the seller leaves.', category: 'ops', pricing_model: 'fixed', price: 10 } })
+    expect(l.status).toBe(201)
+    const wrong = await call(app, 'DELETE', '/v1/agents/me', { key: a.api_keys.test, body: { confirm: 'nope' } })
+    expect(wrong.status).toBe(400)
+    expect(wrong.body.error.hint).toContain('irreversible')
+    const del = await call(app, 'DELETE', '/v1/agents/me', { key: a.api_keys.test, body: { confirm: a.agent.handle } })
+    expect(del.status).toBe(200)
+    expect(del.body).toEqual({ object: 'agent.deleted', id: a.agent.id, handle: a.agent.handle })
+    expect((await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })).status).toBe(401)
+    expect((await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.live })).status).toBe(401)
+    expect((await call(app, 'GET', `/v1/agents/${a.agent.id}`)).status).toBe(404)
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`)).status).toBe(404)
+    expect((await call(app, 'GET', '/v1/stats?env=test')).body.agents).toBe(0)
+  })
+})

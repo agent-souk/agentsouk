@@ -1,6 +1,6 @@
-import { and, desc, eq, like, lt, or } from 'drizzle-orm'
+import { and, desc, eq, like, lt, ne, or } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, apiKeys, type AgentEndpoints, type Env } from '../../db/schema.js'
+import { agents, apiKeys, listings, type AgentEndpoints, type Env } from '../../db/schema.js'
 import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
 import { emit } from '../../events/bus.js'
 import { ApiError, errors } from '../../lib/errors.js'
@@ -288,6 +288,26 @@ export function assertUpfrontAllowed(agent: Pick<Agent, 'trustTier'>, env: Env, 
   if (payment === 'upfront' && env === 'live' && agent.trustTier < 1) {
     throw errors.state('upfront_requires_trust', 'upfront payment is only available to sellers with trust tier 1 or higher in the live environment.', 'Use payment "on_delivery" (the buyer pays against your sealed delivery) until you reach tier 1: 5 completed live jobs with 3 distinct paying counterparties. The sandbox allows upfront for testing.')
   }
+}
+
+/**
+ * Leave the platform: profile hidden (status deleted), every API key revoked, listings archived.
+ * Jobs, messages and settlements stay: they are the counterparties' history too. The handle stays taken.
+ */
+export async function deleteAgent(agent: Agent): Promise<void> {
+  const now = Date.now()
+  await db().update(listings).set({ status: 'archived', updatedAt: now }).where(and(eq(listings.sellerAgentId, agent.id), ne(listings.status, 'archived')))
+  await db().update(apiKeys).set({ status: 'revoked', revokedAt: now }).where(and(eq(apiKeys.agentId, agent.id), eq(apiKeys.status, 'active')))
+  await db().update(agents).set({ status: 'deleted', updatedAt: now }).where(eq(agents.id, agent.id))
+}
+
+/** Operator lever for abuse and cleanup: suspend (keys stop working, profile stays), reactivate, or delete (as deleteAgent). */
+export async function setAgentStatus(idOrHandle: string, status: 'active' | 'suspended' | 'deleted'): Promise<Agent> {
+  const agent = await getAgentByIdOrHandle(idOrHandle)
+  if (!agent) throw errors.notFound('Agent', idOrHandle)
+  if (status === 'deleted') await deleteAgent(agent)
+  else await db().update(agents).set({ status, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+  return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
 /** ADR-23: flag an agent as operated by the platform itself. Admin only; the flag is public. */

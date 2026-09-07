@@ -21,7 +21,7 @@ Stand: 2026-09-07 (Checkpoint 36). Alles, was ich nicht selbst kann, steht hier 
 
 ## Schritt 1 — Domain (erledigt)
 
-`agentsouk.dev` ist bei Cloudflare registriert, `api.agentsouk.dev` zeigt per CNAME auf die Fly-App (gesetzt 2026-09-07), Zertifikat aktiv. Offen: ein TXT-Record für die MCP-Registry (unten unter "Was ich jetzt konkret von dir brauche").
+`agentsouk.dev` ist bei Cloudflare registriert, `api.agentsouk.dev` zeigt per CNAME auf die Fly-App (gesetzt 2026-09-07), Zertifikat aktiv. Der TXT-Record für die MCP-Registry steht ebenfalls (2026-09-07). Nichts mehr offen.
 
 `agentsouk.ai` (Porkbun, ~82 $/Jahr, https://porkbun.com/checkout/search?q=agentsouk.ai) bleibt optional.
 
@@ -42,7 +42,7 @@ Kosten: ~4 $/Monat (eine Maschine + 3 GB Volume).
 | **npm** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
 | **PyPI** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
 | **GitHub** | Repo privat unter `nickillig3-dotcom/agentsouk`; Org `agent-souk` noch anlegen: https://github.com/account/organizations/new | öffentliches Repo, Login für MCP-Registry und ClawHub |
-| **MCP-Registry** | kein Konto nötig | TXT-Record auf agentsouk.dev, den ich dir diktiere |
+| **MCP-Registry** | `dev.agentsouk/agentsouk` 0.2.0 **veröffentlicht** (2026-09-07, TXT-Record steht) | erledigt; `repository` folgt, wenn das Repo öffentlich ist |
 | **ClawHub** | nutzt GitHub (Konto ≥ 1 Woche alt) | Skill-Registry für OpenClaw-Agents |
 
 ---
@@ -84,15 +84,18 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Was ich jetzt konkret von dir brauche
 
-1. **TXT-Record für die MCP-Registry** in Cloudflare (https://dash.cloudflare.com → agentsouk.dev → DNS → Records → Add record).
-   Er muss auf der **Hauptdomain** liegen (Name `@`, nicht `api` und kein `_mcp`-Präfix), sonst sieht die Registry ihn nicht:
-
-   | Typ | Name | Inhalt |
-   |---|---|---|
-   | TXT | `@` | `v=MCPv1; k=ed25519; p=FHMFiAjqNoh1xGaYIIuFNyBnED0CC4pULxkPY6zxx8Q=` |
-
-   Das ist nur der öffentliche Schlüssel; der private liegt lokal in `~/.agentsouk-ops/mcp-registry-key.pem`.
-   Sobald der Eintrag da ist, veröffentliche ich `dev.agentsouk/agentsouk` in der Registry (`mcp-publisher login dns` + `publish`).
-   ~~CNAME `api`~~ ist erledigt, die API läuft unter https://api.agentsouk.dev.
-2. Optional: die GitHub-Organisation `agent-souk` anlegen (https://github.com/account/organizations/new), damit das Repo dort öffentlich werden kann.
+1. **Entscheidung Referenz-Agents (ADR-23, Teil 2).** Drei eigene Dienste kosten laufend Geld: ein LLM-Schlüssel für
+   Übersetzung und Zusammenfassung (Anthropic-API, bei Kleinstpreisen grob 5–20 $/Monat je nach Nachfrage) und eine
+   zweite kleine Fly-Maschine (~2–4 $/Monat). Wenn du das willst: einen Anthropic-API-Key anlegen
+   (https://console.anthropic.com → API Keys) und mir als Datei `~/.agentsouk-ops/agents.env` (`ANTHROPIC_API_KEY=...`)
+   hinlegen, nicht in den Chat. Web-Extraktion und JSON-Schema-Prüfung brauchen kein LLM; die baue ich ohnehin zuerst.
+2. **Betreiber-Wallet für Bounties.** Eine neue Wallet (nicht deine Rabby), mit ~50 USDC auf Base befüllt. Den
+   privaten Schlüssel als `~/.agentsouk-ops/operator-wallet.env` (`OPERATOR_PRIVATE_KEY=0x...`) ablegen; damit zahlen
+   die eigenen Agents Bounties an fremde Agents aus. Alternativ zahlst du Bounties von Hand aus Rabby und ich
+   reiche nur den Hash ein; dann brauche ich nichts.
+3. **GitHub-Organisation `agent-souk`** anlegen (https://github.com/account/organizations/new). Vor dem Öffentlichmachen
+   des Repos eine Entscheidung: deine Rabby-Adresse stand vor Commit `3667f8c` in den Docs und ist in der Git-Historie
+   noch enthalten. Eine Wallet-Adresse ist öffentlich auf der Kette, aber wenn sie nicht mit dem Repo verknüpft sein
+   soll, muss ich die Historie umschreiben (neues Repo mit frischer Historie ist am einfachsten). Sag, was du willst.
+   ~~CNAME `api`~~ und ~~TXT-Record~~ sind erledigt.
 3. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.
