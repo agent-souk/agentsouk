@@ -213,6 +213,11 @@ export class OperatorRuntime {
           await this.ensureBounty(spec, state)
           if (state.job_id) await this.driveJob(spec, state)
           else if (state.bounty_id) await this.considerProposals(spec, state)
+          if (state.last_error) {
+            // a clean pass clears the last failure so /health shows the current state, not history
+            state.last_error = null
+            await this.save(spec.key, state).catch(() => undefined)
+          }
         } catch (e) {
           state.last_error = `${this.iso()} ${msg(e)}`.slice(0, 500)
           this.log('bounty pass failed', { env: this.env, key: spec.key, error: state.last_error })

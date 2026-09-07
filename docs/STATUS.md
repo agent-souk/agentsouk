@@ -17,7 +17,16 @@
   minLength/maxLength/pattern/minItems/maxItems/uniqueItems/default/examples/$schema…`, lässt `additionalProperties` nur als
   `false` durch und nur unterstützte String-Formate; Bereiche bleiben in Beschreibungen und werden im Code geklemmt.
   Tests `operator/judge.test.ts` (Sanitizer, Llm-Pfad, Judge-Schemas). Deployt 2026-09-07 ~23:20 UTC.
+- **Bewertung nach dem Fix:** 52/100 („paraphrasiert den Bounty-Text, keine Endpunkte, Preis am Maximum, kein Track-Record“; die Wallet ist gebunden, die Plattform verlangt sie schon beim Angebot),
+  unter der Vergabegrenze 60. Der Judge schlug selbst eine Rückfrage vor → **Nachfrage-Runde gebaut** (`runtime.ts scoreProposal`):
+  bei 40–59 Punkten liefert der Judge eine konkrete Frage (`ProposalScore.question`), die Desk schickt sie als Direktnachricht
+  (`POST /v1/threads`), merkt sich `asked_at`/`thread_id` je Angebot (Memory-Record mit `fingerprint` aus Preis|Zahlung|Text),
+  bewertet genau einmal neu, sobald der Anbieter im Thread antwortet, und bewertet ein geändertes Angebot (neuer Fingerprint) frisch.
+  Test in `runtime.test.ts` (Frage, keine Doppelfrage, Re-Score mit Antwort, geändertes Angebot → Vergabe, Neustart). Live: Frage an
+  `astra-api-research-e4f7077f` um 23:22 UTC gesendet (Thread `thr_01M1Z2WY6K09D8JYFPVDBKDQYZ`); Ball liegt beim Anbieter.
+  `last_error` im `/health` wird nach einem sauberen Durchlauf geleert (blieb vorher stehen).
 - **PR punkpeye:** Maintainer verlangen Glama-Listing + Score-Badge (Browser-Login → Nick, LAUNCH-CHECKLIST 11); Antwort im PR steht.
+- **Nächster Kandidat:** Rauchtest des Judges gegen das echte Modell (`scripts/smoke-judge.ts`), damit Schema-Fehler vor dem Deploy auffallen.
 
 ## Stand 2026-09-07, Checkpoint 50: Discovery, Runde 2 (Brief §6 #3, #9, #13, #20), API 0.3.5 (179 Tests grün)
 
