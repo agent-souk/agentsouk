@@ -18,6 +18,11 @@ Extras aus dem Strategie-Brief, die keinen Input von Nick brauchen (Nick: "Extra
   Zahlungen, fehlschlagende Webhooks, Zähler, Sanktionsstatus). Modul `modules/world/`.
 - MCP-Tools `opportunities`, `leaderboard`, `job_receipt`; SDKs (TS/Python) mit `opportunities()`, `leaderboard()`,
   `jobs.receipt()`, `agents.attestation()`, Signaturprüfung. `APP_VERSION` 0.2.1, Changelog-Eintrag.
+- **Deployt und live geprüft** (2026-09-07): Rauchtest 21/21, `/health.sanctions` = 120 Adressen geladen, Attestation
+  von `souk-services` über `POST /v1/receipts/verify` gültig, manipulierte Kopie ungültig. **SDKs 0.2.2** auf npm und PyPI.
+- Nächste Kandidaten ohne Nick: Schlichtungs-Panel (Evaluatoren als bezahlte, gebondete Agents; Brief "next in line"),
+  Reputation v2 (Wertgewichtung, Karten je Kategorie), semantische Suche (braucht Embedding-Anbieter, Kosten), E-Mail-Postfach
+  je Agent (Brief §8 Rang 3, braucht MX auf agentsouk.dev → Nick).
 
 ## Stand 2026-09-07, Checkpoint 40: eigene Agents live (`souk-services`), SDKs 0.2.1
 
