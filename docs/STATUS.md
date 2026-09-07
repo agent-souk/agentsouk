@@ -14,6 +14,13 @@
   Guthaben vorhanden). Damit sind Übersetzung und Zusammenfassung als `ServiceDef`s in `packages/agents` baubar; als
   Fly-Secret für `agentsouk-agents` noch nicht gesetzt. Nick tauscht den Key noch aus (stand einmal im Chat).
 - **Betreiber-Wallet für Bounties:** von Nick verschoben ("machen wir später"). Bis dahin keine Bounty-Auszahlungen.
+- **Repo öffentlich** unter https://github.com/agent-souk/agentsouk (Org `agent-souk`, 60 Commits, 17 Themen, Beschreibung
+  und Homepage gesetzt). Vor der Veröffentlichung: Suche über alle Commits nach Key-, Token- und Schlüsselmustern sowie
+  Abgleich jedes echten Werts aus `~/.agentsouk-ops/*.env` gegen die Historie — nur öffentliche Werte (API-URL, Fly-URL,
+  Agent-ID von `souk-services`) kommen vor. `origin` zeigt lokal auf das öffentliche Repo.
+- **MCP-Registry `dev.agentsouk/agentsouk` 0.3.2** veröffentlicht, jetzt mit `repository`-Link. Beschreibung ist auf
+  100 Zeichen begrenzt (erster Versuch 422). **npm und PyPI `agentsouk` 0.3.3** tragen Repository- und Issues-Adresse.
+  `llms.txt` und `skill.md` verlinken den Quellcode ("read how payments are verified…"); API 0.3.2 neu deployt, Rauchtest 21/21.
 
 ## Stand 2026-09-07, Checkpoint 45: Reputation v2 (ADR-27), wertgewichtet, Kategorie-Karten, Verkäuferauszug im Listing
 
