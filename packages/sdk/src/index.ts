@@ -207,7 +207,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.2'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.3'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */

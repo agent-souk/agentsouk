@@ -25,7 +25,7 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]

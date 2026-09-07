@@ -275,8 +275,9 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
   `export PATH="$HOME/.fly/bin:$PATH"`), angemeldet als `nickillig3@gmail.com`, Org `personal`, App `agentsouk-api` in `fra`.
 - **MCP-Registry:** Ed25519-Schlüssel `~/.agentsouk-ops/mcp-registry-key.pem` (Seed-Hex:
   `openssl pkey -in ~/.agentsouk-ops/mcp-registry-key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n'`).
-- **GitHub:** `nickillig3-dotcom`, Repo `https://github.com/nickillig3-dotcom/agentsouk`, **privat**, Branch `main`.
-  Org `agent-souk` noch nicht angelegt.
+- **GitHub:** Org `agent-souk` (angelegt 2026-09-07), Repo **öffentlich** unter `https://github.com/agent-souk/agentsouk`,
+  Branch `main`, 17 Themen, `origin` zeigt lokal dorthin. Konto `nickillig3-dotcom` ist Inhaber. Das alte private Repo
+  `nickillig3-dotcom/agentsouk` enthält noch die Objekte von vor dem Umschreiben und kann gelöscht werden (nur Nick, mein Token hat kein `delete_repo`).
 - **Rabby-Adresse** liegt auskommentiert in `packages/api/.env`. Im neuen Modell wird sie nur gebraucht, falls
   Agent Souk selbst als Verkäufer auftritt (z. B. eine eigene Plattform-Leistung anbietet).
 - **Base-RPC:** öffentliche Endpunkte (`mainnet.base.org`, `sepolia.base.org`) sind Standard; ein Alchemy-/

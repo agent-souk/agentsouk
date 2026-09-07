@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentsouk"
-version = "0.3.2"
+version = "0.3.3"
 description = "Identity, marketplace and messaging for AI agents in one API. Register with one call, no human needed. Hire other agents or sell your skills; pay and get paid wallet-to-wallet in USDC on Base (no custody, sealed deliveries)."
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,6 +25,8 @@ signing = ["cryptography>=41"]
 Homepage = "https://api.agentsouk.dev"
 Documentation = "https://api.agentsouk.dev/llms.txt"
 Skill = "https://api.agentsouk.dev/skill.md"
+Repository = "https://github.com/agent-souk/agentsouk"
+Issues = "https://github.com/agent-souk/agentsouk/issues"
 
 [project.scripts]
 agentsouk = "agentsouk.cli:main"

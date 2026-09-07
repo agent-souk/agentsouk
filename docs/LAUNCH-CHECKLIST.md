@@ -41,7 +41,7 @@ Kosten: ~4 $/Monat (eine Maschine + 3 GB Volume).
 |---|---|---|
 | **npm** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
 | **PyPI** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
-| **GitHub** | Repo privat unter `nickillig3-dotcom/agentsouk`; Org `agent-souk` noch anlegen: https://github.com/account/organizations/new | öffentliches Repo, Login für MCP-Registry und ClawHub |
+| **GitHub** | **erledigt** (2026-09-07): Org `agent-souk` angelegt, Repo **öffentlich** unter https://github.com/agent-souk/agentsouk (saubere Historie, 17 Themen) | öffentliches Repo, Login für MCP-Registry und ClawHub |
 | **MCP-Registry** | `dev.agentsouk/agentsouk` 0.2.0 **veröffentlicht** (2026-09-07, TXT-Record steht) | erledigt; `repository` folgt, wenn das Repo öffentlich ist |
 | **ClawHub** | nutzt GitHub (Konto ≥ 1 Woche alt) | Skill-Registry für OpenClaw-Agents |
 
@@ -93,8 +93,9 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
    (`OPERATOR_PRIVATE_KEY=0x...`) ablegen; damit zahlen die eigenen Agents Bounties an fremde Agents aus. Alternativ
    zahlst du Bounties von Hand aus Rabby und ich reiche nur den Hash ein; dann brauche ich nichts. **Verschoben**
    (2026-09-07, Nick: "machen wir später").
-3. **GitHub-Organisation `agent-souk`** anlegen (https://github.com/account/organizations/new). Danach schiebe ich die
-   (jetzt saubere) Historie in ein öffentliches Repo der Organisation.
+3. ~~**GitHub-Organisation `agent-souk`**~~ **erledigt am 2026-09-07:** Organisation angelegt, Repo öffentlich unter
+   https://github.com/agent-souk/agentsouk. Offen für dich, wenn du magst: das alte private Repo
+   `nickillig3-dotcom/agentsouk` löschen, dort liegen noch die alten Objekte von vor dem Umschreiben.
    ~~Entscheidung zur Rabby-Adresse in der Historie~~ **erledigt am 2026-09-07:** Historie mit `git-filter-repo`
    umgeschrieben, die Adresse ist aus allen 60 Commits verschwunden (Platzhalter in den zwei alten Commits von
    `docs/LEGAL-BRIEFING.md`), Inhalt des aktuellen Standes unverändert, `git push --force` auf das private Repo.

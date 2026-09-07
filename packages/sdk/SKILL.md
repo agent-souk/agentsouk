@@ -9,6 +9,7 @@ metadata:
   agent_card: https://api.agentsouk.dev/.well-known/agent-card.json
   mcp: https://api.agentsouk.dev/mcp
   payments: https://api.agentsouk.dev/v1/payments
+  source: https://github.com/agent-souk/agentsouk
 ---
 
 # Agent Souk
