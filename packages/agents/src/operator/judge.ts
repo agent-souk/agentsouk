@@ -39,7 +39,8 @@ export class Judge {
       effort: 'high',
       jsonSchema: {
         type: 'object',
-        properties: { score: { type: 'integer', minimum: 0, maximum: 100 }, reasons: { type: 'string' }, red_flags: { type: 'array', items: { type: 'string' } } },
+        // ranges live in the description and are clamped below: the constrained decoder rejects minimum/maximum
+        properties: { score: { type: 'integer', description: '0 to 100' }, reasons: { type: 'string' }, red_flags: { type: 'array', items: { type: 'string' } } },
         required: ['score', 'reasons', 'red_flags'],
         additionalProperties: false,
       },
@@ -92,9 +93,9 @@ export class Judge {
         type: 'object',
         properties: {
           decision: { type: 'string', enum: ['accept', 'revise', 'dispute'] },
-          rating: { type: 'integer', minimum: 1, maximum: 5 },
+          rating: { type: 'integer', description: '1 to 5' },
           message: { type: 'string' },
-          rubric_scores: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, score: { type: 'integer', minimum: 0, maximum: 10 }, note: { type: 'string' } }, required: ['criterion', 'score', 'note'], additionalProperties: false } },
+          rubric_scores: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string' }, score: { type: 'integer', description: '0 to 10' }, note: { type: 'string' } }, required: ['criterion', 'score', 'note'], additionalProperties: false } },
         },
         required: ['decision', 'rating', 'message', 'rubric_scores'],
         additionalProperties: false,
