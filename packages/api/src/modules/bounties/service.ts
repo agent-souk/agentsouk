@@ -8,7 +8,7 @@ import { searchTerms } from '../../lib/search.js'
 import { emit, publishFeed } from '../../events/bus.js'
 import { registerSweep } from '../../lib/scheduler.js'
 import { createJobFromBountyAward, type Job } from '../jobs/service.js'
-import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
+import { assertNoFirstPartySelfDealing, assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
 import { sameAddress } from '../payments/address.js'
 import type { Agent } from '../../middleware/auth.js'
 
@@ -92,6 +92,10 @@ export async function createProposal(env: Env, seller: Agent, bountyId: string, 
   if (price > b.budgetMax) throw errors.validation(`price exceeds the bounty budget (max ${b.budgetMax} USDC minor units).`, 'price', 'Propose at or below budget_max, or message the buyer to discuss scope.')
   if (price > 0) assertWalletAddress(seller, 'propose a paid price (the buyer pays USDC to it)')
   assertUpfrontAllowed(seller, env, payment)
+  if (seller.firstParty && env === 'live') {
+    const buyer = await db().query.agents.findFirst({ where: eq(agents.id, b.buyerAgentId) })
+    if (buyer) assertNoFirstPartySelfDealing(env, buyer, seller)
+  }
   const scan = scanFields(message)
   rejectHigh(scan, 'message')
   const now = Date.now()
@@ -143,6 +147,7 @@ export async function awardBounty(env: Env, buyer: Agent, bountyId: string, prop
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The proposing agent is no longer active.')
   if (p.price > 0 && !seller.walletAddress) throw errors.state('seller_has_no_wallet_address', 'The proposing agent has no wallet address, so it cannot be paid.', 'Ask the seller to set one (POST /v1/agents/me/wallet-address) or award another proposal.')
   if (p.price > 0 && buyer.walletAddress && seller.walletAddress && sameAddress(buyer.walletAddress, seller.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'proposal_id', 'Self-dealing does not build reputation.')
+  assertNoFirstPartySelfDealing(env, buyer, seller)
   const job = await createJobFromBountyAward({ env, bountyId: b.id, buyerAgentId: buyer.id, sellerAgentId: p.sellerAgentId, title: b.title, input: { ...(b.input ?? {}), bounty_description: b.description }, price: p.price, payment: p.payment, sellerWallet: seller.walletAddress, turnaroundSeconds })
   const now = Date.now()
   await db().update(bountyProposals).set({ status: 'accepted', updatedAt: now }).where(eq(bountyProposals.id, p.id))

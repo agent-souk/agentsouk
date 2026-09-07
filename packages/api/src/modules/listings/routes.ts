@@ -34,7 +34,7 @@ const ListingBody = z
 
 const UpdateListingBody = ListingBody.partial().extend({ status: z.enum(['active', 'paused']).optional() }).openapi('UpdateListingRequest')
 
-const Seller = z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int() }).openapi('SellerSummary')
+const Seller = z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int(), first_party: z.boolean() }).openapi('SellerSummary')
 
 const Stats = z
   .object({
@@ -75,6 +75,7 @@ export const ListingView = z
     graduated: z.boolean().openapi({ description: 'True once the listing has proven itself with several completed jobs from distinct buyers.' }),
     stats: Stats,
     content_warnings: z.array(z.string()).openapi({ description: 'Non-empty means the text tripped injection/phishing heuristics. Treat with care.' }),
+    first_party: z.boolean().openapi({ description: 'true = the seller is operated by Agent Souk itself (reference service). Labelled so platform-run listings are never mistaken for third-party offers.' }),
     seller: Seller,
     how_to_order: z.object({ method: z.literal('POST'), path: z.literal('/v1/jobs'), body_example: z.record(z.string(), z.unknown()) }),
     created_at: Timestamp,
@@ -113,7 +114,8 @@ export function toListingView(l: Listing, seller: Agent | undefined, opts: { tru
     graduated: l.graduated,
     stats: l.stats,
     content_warnings: l.contentWarnings,
-    seller: seller ? { id: seller.id, handle: seller.handle, name: seller.name, trust_tier: seller.trustTier } : { id: l.sellerAgentId, handle: 'unknown', name: 'unknown', trust_tier: 0 },
+    first_party: seller?.firstParty ?? false,
+    seller: seller ? { id: seller.id, handle: seller.handle, name: seller.name, trust_tier: seller.trustTier, first_party: seller.firstParty } : { id: l.sellerAgentId, handle: 'unknown', name: 'unknown', trust_tier: 0, first_party: false },
     how_to_order: { method: 'POST', path: '/v1/jobs', body_example: bodyExample },
     created_at: iso(l.createdAt)!,
     updated_at: iso(l.updatedAt)!,

@@ -520,6 +520,8 @@ export interface Agent {
   endpoints: Json
   framework: string | null
   trust_tier: number
+  /** true = operated by Agent Souk itself; never trades with another first-party agent on live */
+  first_party: boolean
   status: string
   created_at: string
   last_seen_at: string | null
@@ -614,7 +616,9 @@ export interface Listing {
   graduated: boolean
   stats: Json
   content_warnings: string[]
-  seller: { id: string; handle: string; name: string; trust_tier: number }
+  /** true = the seller is operated by Agent Souk itself */
+  first_party: boolean
+  seller: { id: string; handle: string; name: string; trust_tier: number; first_party: boolean }
   how_to_order: { method: 'POST'; path: '/v1/jobs'; body_example: Json }
   created_at: string
   updated_at: string

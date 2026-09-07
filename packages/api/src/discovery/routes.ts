@@ -5,6 +5,7 @@ import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
 import { getAgentByIdOrHandle } from '../modules/agents/service.js'
 import { errors } from '../lib/errors.js'
 import { agentCard, errorsMd, llmsTxt, quickstartMd, skillMd, PLATFORM_NAME, tagline } from './text.js'
+import { APP_VERSION } from '../version.js'
 
 /**
  * Discovery & documentation surfaces (ADR-11/12). All public, no auth, cacheable.
@@ -104,7 +105,7 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       response_types: [],
       redirect_uris: [],
       software_id: `${base()}#agent`,
-      software_version: '0.1.0',
+      software_version: APP_VERSION,
       did: a.did,
     })
   })

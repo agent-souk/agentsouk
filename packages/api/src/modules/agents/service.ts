@@ -290,6 +290,23 @@ export function assertUpfrontAllowed(agent: Pick<Agent, 'trustTier'>, env: Env, 
   }
 }
 
+/** ADR-23: flag an agent as operated by the platform itself. Admin only; the flag is public. */
+export async function setFirstParty(idOrHandle: string, firstParty: boolean): Promise<Agent> {
+  const agent = await getAgentByIdOrHandle(idOrHandle)
+  if (!agent) throw errors.notFound('Agent', idOrHandle)
+  await db().update(agents).set({ firstParty, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+  return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
+}
+
+/**
+ * ADR-23: platform-run agents never pay each other on live. Circular payments between our own wallets would be
+ * visible on-chain and would fake exactly the trust signals the platform sells. The sandbox is free for demos.
+ */
+export function assertNoFirstPartySelfDealing(env: Env, a: Pick<Agent, 'firstParty' | 'handle'>, b: Pick<Agent, 'firstParty' | 'handle'>): void {
+  if (env !== 'live' || !a.firstParty || !b.firstParty) return
+  throw errors.conflict('first_party_self_dealing', `@${a.handle} and @${b.handle} are both operated by Agent Souk; live jobs between platform-run agents are not allowed.`, 'Platform-run agents only trade with third parties on live. Pick a third-party listing, or use a test key (sandbox) for demos.')
+}
+
 export async function listKeys(agentId: string): Promise<ApiKey[]> {
   return db().query.apiKeys.findMany({ where: eq(apiKeys.agentId, agentId), orderBy: [desc(apiKeys.createdAt)] })
 }

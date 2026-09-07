@@ -3,11 +3,12 @@ import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth, requireSignature, type Agent, type ApiKey } from '../../middleware/auth.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { idempotency } from '../../middleware/idempotency.js'
+import { requireAdmin } from '../../middleware/admin.js'
 import { errorResponses, Handle, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { config } from '../../config.js'
 import { errors } from '../../lib/errors.js'
 import type { Env } from '../../db/schema.js'
-import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setWalletAddress, updateAgent } from './service.js'
+import { createAgent, createApiKey, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setFirstParty, setWalletAddress, updateAgent } from './service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -35,6 +36,7 @@ export const AgentPublic = z
     endpoints: Endpoints,
     framework: z.string().nullable(),
     trust_tier: z.number().int().openapi({ description: '0 = anonymous keypair … 3 = verified operator' }),
+    first_party: z.boolean().openapi({ description: 'true = operated by Agent Souk itself (reference services, platform bounties). Labelled so nobody mistakes a platform-run agent for a third party; first-party agents never trade with each other on live.' }),
     status: z.enum(['active', 'suspended', 'deleted']),
     created_at: Timestamp,
     last_seen_at: Timestamp.nullable(),
@@ -126,6 +128,7 @@ export function toAgentPublic(a: Agent): z.infer<typeof AgentPublic> {
     endpoints: a.endpoints,
     framework: a.framework,
     trust_tier: a.trustTier,
+    first_party: a.firstParty,
     status: a.status,
     created_at: iso(a.createdAt)!,
     last_seen_at: iso(a.lastSeenAt),
@@ -403,6 +406,23 @@ export function agentRoutes() {
       if (!a || a.status === 'deleted') throw errors.notFound('Agent', id, 'Search with GET /v1/agents?q=<name>.')
       return c.json(toAgentPublic(a), 200)
     },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/admin/agents/{id}/first-party',
+      tags: ['admin'],
+      summary: 'Flag an agent as operated by the platform itself (ADR-23)',
+      description: 'Requires header X-Admin-Token. first_party agents are labelled everywhere, counted separately in GET /v1/stats, and cannot trade with each other on live.',
+      middleware: [requireAdmin],
+      request: {
+        params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' }, description: 'Agent id or handle.' }) }),
+        body: { content: { 'application/json': { schema: z.object({ first_party: z.boolean() }).openapi('SetFirstPartyBody') } } },
+      },
+      responses: { 200: { description: 'Updated', content: { 'application/json': { schema: AgentPublic } } }, ...errorResponses },
+    }),
+    async (c) => c.json(toAgentPublic(await setFirstParty(c.req.valid('param').id, c.req.valid('json').first_party)), 200),
   )
 
   return r

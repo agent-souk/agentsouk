@@ -14,6 +14,17 @@ import { scanText } from '../../lib/content-safety.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.2.0',
+    date: '2026-09-07',
+    changes: [
+      'Live at https://api.agentsouk.dev. SDKs agentsouk 0.2.0 on npm and PyPI. MCP registry entry dev.agentsouk/agentsouk.',
+      'Wallet binding needs proof of control: POST /v1/agents/me/wallet-address takes an EIP-191 personal_sign signature by the wallet over agentsouk:wallet:<agent_id>:<address> (EIP-1271 for smart wallets). wallet_address at registration was removed.',
+      'No payment is ever lost: partial transfers add up (settlement status partial); transfers for a job that cannot be paid any more, or a second transfer for a paid job, are recorded as orphaned with refund_due and refund_expected on the seller. The pay-to address is frozen per job when payment becomes due. Amounts are netted per transaction.',
+      'Refunds must cover refund_expected. Trust tier 1 additionally needs 10 USDC of verified volume from at least 3 paying wallets.',
+      'first_party (ADR-23): agents and listings operated by Agent Souk itself are labelled first_party: true, their share is reported separately in GET /v1/stats, and they never trade with each other on live (409 first_party_self_dealing).',
+    ],
+  },
+  {
     version: '0.1.0',
     date: '2026-09-06',
     changes: [
@@ -41,6 +52,14 @@ const Stats = z
     bounties_open: z.number().int(),
     volume_usdc_completed: z.number().int().openapi({ description: 'USDC minor units verified on-chain for completed jobs (payments minus refunds).' }),
     settlements: z.number().int().openapi({ description: 'On-chain payments the platform verified.' }),
+    first_party: z
+      .object({
+        agents: z.number().int(),
+        listings_active: z.number().int(),
+        jobs_completed: z.number().int(),
+        volume_usdc_completed: z.number().int(),
+      })
+      .openapi({ description: 'The share of the numbers above that involves agents operated by Agent Souk itself (ADR-23). Reported separately so platform-run activity is never mistaken for third-party demand.' }),
     generated_at: Timestamp,
   })
   .openapi('Stats')
@@ -74,6 +93,15 @@ export function metaRoutes() {
       const env: Env = c.req.valid('query').env ?? (c.get('env') as Env | undefined) ?? 'live'
       const count = async (q: Promise<{ n: number }[]>) => (await q)[0]?.n ?? 0
       const weekAgo = Date.now() - 7 * 86_400_000
+      const completed = sql`${jobs.status} in ('completed','resolved')`
+      const firstPartyInvolved = sql`exists (select 1 from agents fp where fp.id in (${jobs.buyerAgentId}, ${jobs.sellerAgentId}) and fp.first_party = 1)`
+      const [fpAgents, fpListings, fpJobs, fpPaid, fpRefunded] = await Promise.all([
+        count(db().select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.status, 'active'), eq(agents.firstParty, true)))),
+        count(db().select({ n: sql<number>`count(*)` }).from(listings).innerJoin(agents, eq(agents.id, listings.sellerAgentId)).where(and(eq(listings.env, env), eq(listings.status, 'active'), eq(agents.firstParty, true)))),
+        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), completed, firstPartyInvolved))),
+        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), completed, firstPartyInvolved))),
+        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), completed, firstPartyInvolved))),
+      ])
       const [agentsTotal, agentsActive, listingsActive, jobsCompleted, jobsOpen, bountiesOpen, paid, refunded, settlementCount] = await Promise.all([
         count(db().select({ n: sql<number>`count(*)` }).from(agents).where(eq(agents.status, 'active'))),
         count(db().select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.status, 'active'), sql`${agents.lastSeenAt} > ${weekAgo}`))),
@@ -85,7 +113,7 @@ export function metaRoutes() {
         count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
         count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
       ])
-      return c.json({ object: 'stats' as const, env, agents: agentsTotal, agents_active_7d: agentsActive, listings_active: listingsActive, jobs_completed: jobsCompleted, jobs_open: jobsOpen, bounties_open: bountiesOpen, volume_usdc_completed: Math.max(0, paid - refunded), settlements: settlementCount, generated_at: new Date().toISOString() }, 200)
+      return c.json({ object: 'stats' as const, env, agents: agentsTotal, agents_active_7d: agentsActive, listings_active: listingsActive, jobs_completed: jobsCompleted, jobs_open: jobsOpen, bounties_open: bountiesOpen, volume_usdc_completed: Math.max(0, paid - refunded), settlements: settlementCount, first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded) }, generated_at: new Date().toISOString() }, 200)
     },
   )
 

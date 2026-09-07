@@ -2,6 +2,19 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 37: MCP-Registry veröffentlicht, `first_party` gebaut (134 Tests grün)
+
+- **MCP-Registry:** `dev.agentsouk/agentsouk` 0.2.0 ist veröffentlicht (DNS-Auth über Nicks TXT-Record, Suche
+  `https://registry.modelcontextprotocol.io/v0.1/servers?search=agentsouk`). `repository` fehlt im Eintrag, bis das Repo
+  öffentlich ist (Org `agent-souk` existiert noch nicht); dann neue Version mit `repository` publizieren.
+- **ADR-23, Teil 1 gebaut:** Spalte `agents.first_party` (Migration `0002_first_party`), Admin-Endpunkt
+  `POST /v1/admin/agents/{id}/first-party`, Feld `first_party` auf Agentenprofil und Listings (vom Verkäufer geerbt),
+  `GET /v1/stats.first_party` (Anteil eigener Agents), Live-Sperre 409 `first_party_self_dealing` bei Jobs, Proposals und
+  Awards zwischen zwei eigenen Agents. Tests in `modules/agents/first-party.test.ts`. Details `docs/SPEC-MARKETPLACE.md` (Nachtrag).
+- `APP_VERSION` auf 0.2.0, Changelog-Eintrag 0.2.0 (`GET /v1/changelog`), `llms.txt` erklärt `first_party`.
+- Noch offen aus ADR-23: `packages/agents` mit drei Referenz-Diensten, Betreiber-Wallet + Bounty-Budget (Nick).
+- SDK-Typen (`first_party`) sind im Repo, aber noch nicht als 0.2.1 veröffentlicht (nur Typen, Laufzeit unverändert).
+
 ## Stand 2026-09-07, Checkpoint 36: Domain live, SDKs 0.2.0 veröffentlicht
 
 - **`https://api.agentsouk.dev` ist live.** Nick hat den Cloudflare-CNAME gesetzt, Let's Encrypt hat das Zertifikat
@@ -118,17 +131,16 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
 
 1. ~~Review-Findings einbauen~~ (Checkpoint 35). ~~DNS, Domain umschalten, Rauchtest~~ (Checkpoint 36).
    ~~npm/PyPI 0.2.0~~ (Checkpoint 36).
-2. **MCP-Registry:** Nick setzt den TXT-Record (LAUNCH-CHECKLIST), dann `mcp-publisher login dns` + `publish`
-   mit `packages/api/server.json` (Version 0.2.0, nur `remotes`, kein stdio-Paket; `validate` ist grün).
-   Vorher die `repository`-URL prüfen: sie zeigt auf `github.com/agent-souk/agentsouk`, die Org gibt es noch nicht;
-   entweder Org anlegen und Repo dorthin öffentlich verschieben oder auf das bestehende Repo umstellen.
-   CLI: `~/.agentsouk-ops/bin/mcp-publisher.exe` (v1.8.1).
-3. ClawHub-Skill (`packages/sdk/SKILL.md`), Repo öffentlich (Org `agent-souk`, Nick), GitHub-Topics,
-   Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6 (Verzeichnisse, Awesome-Listen, llms.txt-Crawler).
-4. **ADR-23 umsetzen:** Spalte `first_party` (agents, listings) + Admin-Endpunkt + Live-Sperre `first_party_self_dealing`
-   + Stats-Aufschlüsselung; `packages/agents` mit drei Referenz-Diensten (Übersetzung, Zusammenfassung, Web-Extraktion)
-   als normale SDK-Nutzer; Bounty-Budget 50 USDC (Nick befüllt eine Betreiber-Wallet, Schlüssel lokal).
-5. Beim nächsten Deploy: Health-Version (`0.1.0`) auf 0.2.0 ziehen.
+2. ~~MCP-Registry~~ (Checkpoint 37; CLI `~/.agentsouk-ops/bin/mcp-publisher.exe` v1.8.1, Login per
+   `mcp-publisher login dns --domain agentsouk.dev --private-key <seed-hex>`). Offen: `repository` nachtragen, sobald
+   das Repo öffentlich ist (neue Version in `server.json` + `publish`).
+3. ClawHub-Skill (`packages/sdk/SKILL.md`), Repo öffentlich (Org `agent-souk`, Nick; vorher Git-Historie auf die
+   Rabby-Adresse prüfen, die vor Commit 3667f8c in Docs stand), GitHub-Topics, Discovery-Playbook aus
+   `research/00-STRATEGIC-BRIEF.md` §6 (Verzeichnisse, Awesome-Listen, llms.txt-Crawler).
+4. **ADR-23, Teil 2:** `packages/agents` mit drei Referenz-Diensten (Übersetzung, Zusammenfassung, Web-Extraktion) als
+   normale SDK-Nutzer, per Admin-Endpunkt als `first_party` markiert; Bounty-Budget 50 USDC (Nick befüllt eine
+   Betreiber-Wallet, Schlüssel lokal). ~~Teil 1 (Feld, Sperre, Stats)~~ ist gebaut.
+5. SDK 0.2.1 (Typen `first_party`) veröffentlichen, wenn die nächste Laufzeitänderung ansteht.
 6. Danach: Sanktionsscreening der Wallet-Adressen, Evaluator-/Schlichtungs-Panel, semantische Suche,
    `receiveWithAuthorization`-Pfad als gasfreie Zahlmethode dokumentieren (der Käufer reicht selbst beim Facilitator ein).
 

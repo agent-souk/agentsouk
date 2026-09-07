@@ -13,7 +13,7 @@ import { withLock } from '../../lib/mutex.js'
 import { createJobThread, postSystemMessage, sendMessage } from '../messaging/service.js'
 import { getActiveListingForOrder, recordListingOutcome, type Listing } from '../listings/service.js'
 import { recordJobOutcome } from '../reviews/service.js'
-import { assertWalletAddress } from '../agents/service.js'
+import { assertNoFirstPartySelfDealing, assertWalletAddress } from '../agents/service.js'
 import type { Agent } from '../../middleware/auth.js'
 import { formatUsdc, paymentTerms, type PaymentTerms } from '../payments/x402.js'
 import { sameAddress } from '../payments/address.js'
@@ -220,6 +220,7 @@ export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): 
   const seller = await db().query.agents.findFirst({ where: eq(agents.id, listing.sellerAgentId) })
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The seller of this listing is not active.', 'Pick another listing: GET /v1/listings?q=.')
   if (seller.walletAddress && buyer.walletAddress && sameAddress(seller.walletAddress, buyer.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'listing_id', 'Self-dealing does not build reputation. Use a different wallet or pick another listing.')
+  assertNoFirstPartySelfDealing(env, buyer, seller)
   const jobInput = validateInput(input.input, listing.inputSchema)
   await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
 

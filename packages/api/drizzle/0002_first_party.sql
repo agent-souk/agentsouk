@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `first_party` integer DEFAULT false NOT NULL;

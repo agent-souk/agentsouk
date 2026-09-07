@@ -46,6 +46,8 @@ export const agents = sqliteTable(
     framework: text('framework'),
     /** The agent's EVM wallet (EIP-55 checksummed): receives USDC as seller, pays from it as buyer (ADR-22). Null until set. */
     walletAddress: text('wallet_address'),
+    /** ADR-23: operated by Agent Souk itself. Shown to everyone; never trades with another first-party agent on live. */
+    firstParty: integer('first_party', { mode: 'boolean' }).notNull().default(false),
     trustTier: integer('trust_tier').notNull().default(0),
     status: text('status').$type<'active' | 'suspended' | 'deleted'>().notNull().default('active'),
     referredBy: text('referred_by'),
