@@ -24,7 +24,28 @@
 - **Awesome-Listen:** Forks `nickillig3-dotcom/awesome-mcp-servers{,-1,-2}` (punkpeye 94k★ → Aggregators, appcypher → AI Services,
   wong2 → Community Servers), Branch `add-agent-souk` je Fork gepusht; PRs folgen nach dem Deploy.
 - **Für Nick (LAUNCH-CHECKLIST 10–13):** TXT `_agent` (AID v2) und `_mcp`, Claims bei Glama/Smithery/Context7, ClawHub-Login.
-- **Review:** Workflow mit 2 Reviewern (Korrektheit/Betrieb; Spezifikationstreue der Kataloge und Manifeste), Funde siehe unten.
+- **Review (Workflow, 2 Reviewer, 181k Tokens, 7 min, Funde auf Platte):** keine hohen, 6 mittlere + 12 kleine Funde, alle
+  eingebaut: Flush behält bei DB-Fehler genau die ungeschriebenen Zeilen (kein Verlust, kein Doppelzählen) und teilt einen
+  laufenden Flush; das globale `Cache-Control: no-store` überschrieb bisher jede Doku-/Katalog-Antwort (jetzt nur Standard, wenn
+  die Route nichts setzt: skill.md 300 s, Kataloge 3600 s, Key-Datei 1 Tag); interne Sub-Requests (`x-agentsouk-internal`)
+  zählen nicht (llms-full.txt erzeugte Phantom-Reads von openapi.json); nur 2xx (301-Aliase zählten doppelt), HEAD wie GET,
+  Pfad-Trim ohne Regex, UA-Liste = neueste je (Klasse, Fläche) und ohne Steuerzeichen (nicht flutbar), Flush bei SIGTERM.
+  Kataloge: `server.json` ohne `status` (nicht im Schema 2025-12-11), AI Catalog ohne nackte `extensions`-Keys (ARD-Einträge
+  sind gültige Katalog-Einträge), `host.documentationUrl`, Skill-Typ `application/agent-skills+md`, ANP-Item als schema.org
+  `WebAPI`-Zeiger statt falscher `ad:AgentDescription`, `$schema` der Server-Card ist beim SEP-Entwurf noch 404 (Kommentar),
+  skill.md-`version` unter `metadata`, Push vor Deploy (Plugin-Installer laden von GitHub main).
+- **Deployt und live geprüft (2026-09-07, 19:43 UTC):** `/health` 0.3.5; alle Kataloge 200 mit `public, max-age=3600` und
+  CORS `*`, `ai-catalog.json` als `application/ai-catalog+json`, drei 301-Aliase; skill.md `max-age=300`; Root `install.*`;
+  Sitemap 22 URLs; **IndexNow 202 Accepted für 22 URLs**; Plugin-Dateien unter raw.githubusercontent.com erreichbar; Admin-
+  Übersicht zeigt die Zähler (heute: nur curl/node von der Prüfung). Rauchtest siehe unten.
+- **PR eröffnet (2026-09-07):** https://github.com/punkpeye/awesome-mcp-servers/pull/13922 (Aggregators, Agent-Fast-Track 🤖🤖🤖,
+  94k★). **appcypher/awesome-mcp-servers ist seit 2026-05 archiviert** (keine PRs), **wong2/awesome-mcp-servers lehnt
+  `createPullRequest` für Nicks Konto ab** (vermutlich Interaktionslimit auf bestehende Beitragende; Fork-Name war es nicht).
+  Die Forks heißen jetzt `awesome-mcp-servers-{punkpeye,appcypher,wong2}`; die letzten beiden kann Nick löschen (Token hat kein `delete_repo`).
+  Rauchtest live: **PASSED** (`scripts/smoke.ts https://api.agentsouk.dev`).
+- **Nächste Kandidaten ohne Nick:** Referral in Payloads (`referred_by`, Brief §6 #10), Hugging-Face-Space (#14), Well-known
+  `/.well-known/http-message-signatures-directory` für eigene ausgehende Agents (#19), Cluster-Erkennung (Brief §5 #7),
+  gasfreier `receiveWithAuthorization`-Pfad (Doku). Täglich: `discovery` in der Admin-Übersicht lesen und das Playbook danach neu ordnen.
 
 ## Stand 2026-09-07, Checkpoint 49: Bounty-Desk nach Review gehärtet, Suche mit Relevanz (45 + 173 Tests grün)
 

@@ -141,7 +141,8 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
     Browser), dann aus dem Repo `clawhub skill publish plugins/agentsouk/skills/agentsouk`. Ich kann den Befehl ausführen, sobald das
     Login einmal im Browser gemacht ist.
 13. **Erledigt ohne dich (2026-09-07):** MCP-Registry auf 0.3.5, IndexNow-Key gesetzt (Bing/Yandex/Naver/Seznam bekommen jede
-    Sitemap-Änderung per `npx tsx packages/api/scripts/indexnow.ts`), Pull Requests an die drei großen Awesome-MCP-Listen
-    (punkpeye, appcypher, wong2) aus deinem GitHub-Konto, Claude-Code-Plugin-Marktplatz und Gemini-CLI-Extension im Repo,
+    Sitemap-Änderung per `npx tsx packages/api/scripts/indexnow.ts`), Pull Request an die größte Awesome-MCP-Liste aus deinem
+    GitHub-Konto (https://github.com/punkpeye/awesome-mcp-servers/pull/13922; appcypher ist archiviert, wong2 nimmt keine PRs von
+    deinem Konto an; die Forks `awesome-mcp-servers-appcypher` und `-wong2` kannst du löschen), Claude-Code-Plugin-Marktplatz und Gemini-CLI-Extension im Repo,
     Well-known-Kataloge (`/.well-known/mcp-server-card`, `ard.json`, `ai-catalog.json`). Wer die Doku liest, siehst du in
     `GET /v1/admin/overview` → `discovery` (Header `x-admin-token`, Wert aus `~/.agentsouk-ops/agentsouk-api.env`).
