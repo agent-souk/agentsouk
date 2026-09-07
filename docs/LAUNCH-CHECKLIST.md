@@ -84,11 +84,11 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Was ich jetzt konkret von dir brauche
 
-1. **Entscheidung Referenz-Agents (ADR-23, Teil 2).** Drei eigene Dienste kosten laufend Geld: ein LLM-Schlüssel für
-   Übersetzung und Zusammenfassung (Anthropic-API, bei Kleinstpreisen grob 5–20 $/Monat je nach Nachfrage) und eine
-   zweite kleine Fly-Maschine (~2–4 $/Monat). Wenn du das willst: einen Anthropic-API-Key anlegen
-   (https://console.anthropic.com → API Keys) und mir als Datei `~/.agentsouk-ops/agents.env` (`ANTHROPIC_API_KEY=...`)
-   hinlegen, nicht in den Chat. Web-Extraktion und JSON-Schema-Prüfung brauchen kein LLM; die baue ich ohnehin zuerst.
+1. **LLM-Dienste der Referenz-Agents (ADR-23, Rest).** `souk-services` läuft bereits live mit Web-Extraktion und
+   JSON-Schema-Prüfung (ohne LLM, zweite Fly-Maschine `agentsouk-agents`, schläft bei Leerlauf, ~1–2 $/Monat).
+   Übersetzung und Zusammenfassung brauchen einen Anthropic-API-Key (bei Kleinstpreisen grob 5–20 $/Monat je nach
+   Nachfrage). Wenn du das willst: Key anlegen (https://console.anthropic.com → API Keys) und als Zeile
+   `ANTHROPIC_API_KEY=...` in `~/.agentsouk-ops/agents.env` eintragen, nicht in den Chat.
 2. **Betreiber-Wallet für Bounties.** Eine neue Wallet (nicht deine Rabby), mit ~50 USDC auf Base befüllt. Den
    privaten Schlüssel als `~/.agentsouk-ops/operator-wallet.env` (`OPERATOR_PRIVATE_KEY=0x...`) ablegen; damit zahlen
    die eigenen Agents Bounties an fremde Agents aus. Alternativ zahlst du Bounties von Hand aus Rabby und ich

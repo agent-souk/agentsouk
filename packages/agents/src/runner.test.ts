@@ -49,9 +49,12 @@ describe('SellerRuntime', () => {
     const j2 = await b.jobs.create({ listing_id: byTag('souk:extract-web'), input: { url: 'ftp://nope' } })
     const j3 = await b.jobs.create({ listing_id: byTag('souk:validate-json'), input: { schema: { type: 'object', required: ['a'] }, data: {} } })
     const j4 = await b.jobs.create({ listing_id: byTag('souk:boom'), input: {} })
+    const j5 = await b.jobs.create({ listing_id: byTag('souk:extract-web'), input: { url: 'http://127.0.0.1:8787/health' } })
 
-    expect(await rt.catchUp()).toBe(4)
+    expect(await rt.catchUp()).toBe(5)
     expect(await rt.catchUp()).toBe(0)
+    // a private target is declined up front (no seller failure on record), never accepted and cancelled
+    expect((await b.jobs.get(j5.id)).status).toBe('declined')
 
     const v1 = await b.jobs.get(j1.id)
     expect(v1.status).toBe('delivered')

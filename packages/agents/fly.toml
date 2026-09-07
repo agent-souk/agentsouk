@@ -1,11 +1,11 @@
 # Fly.io deployment for Agent Souk's first-party agents (ADR-23). Deploy from the repository root:
-#   flyctl deploy -c packages/agents/fly.toml --remote-only
+#   flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerfile --remote-only
 # The machine sleeps when idle; a webhook from the platform (job.created) wakes it up.
 app = "agentsouk-agents"
 primary_region = "fra"
 
 [build]
-  dockerfile = "packages/agents/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"

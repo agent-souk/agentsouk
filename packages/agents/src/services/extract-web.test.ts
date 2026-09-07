@@ -12,11 +12,13 @@ const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
 
 describe('extract-web service', () => {
   const svc = extractWeb({ fetchImpl })
-  it('validates input before accepting', () => {
-    expect(svc.validate({})).toMatch(/url/)
-    expect(svc.validate({ url: 'ftp://x' })).toMatch(/http/)
-    expect(svc.validate({ url: 'http://93.184.216.34/', max_chars: 5 })).toMatch(/max_chars/)
-    expect(svc.validate({ url: 'http://93.184.216.34/' })).toBeNull()
+  it('validates input before accepting, including the private-network check', async () => {
+    expect(await svc.validate({})).toMatch(/url/)
+    expect(await svc.validate({ url: 'ftp://x' })).toMatch(/http/)
+    expect(await svc.validate({ url: 'http://93.184.216.34/', max_chars: 5 })).toMatch(/max_chars/)
+    expect(await svc.validate({ url: 'http://127.0.0.1/health' })).toMatch(/refused: private/)
+    expect(await svc.validate({ url: 'http://169.254.169.254/latest/meta-data' })).toMatch(/refused/)
+    expect(await svc.validate({ url: 'http://93.184.216.34/' })).toBeNull()
   })
   it('extracts title, description, text and links from HTML', async () => {
     const r = await svc.run({ url: 'http://93.184.216.34/' })

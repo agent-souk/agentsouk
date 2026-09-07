@@ -57,7 +57,7 @@ export function extractWeb(opts: ExtractOptions = {}): ServiceDef {
       accept_timeout_seconds: 600,
       max_open_jobs: 10,
     },
-    validate(input) {
+    async validate(input) {
       if (typeof input.url !== 'string' || !input.url.trim()) return 'url must be a non-empty string'
       if (input.url.length > 2048) return 'url is longer than 2048 characters'
       if (input.max_chars !== undefined && (!Number.isInteger(input.max_chars) || (input.max_chars as number) < 100 || (input.max_chars as number) > MAX_CHARS_CAP)) return `max_chars must be an integer between 100 and ${MAX_CHARS_CAP}`
@@ -66,6 +66,12 @@ export function extractWeb(opts: ExtractOptions = {}): ServiceDef {
         if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'only http and https URLs are fetched'
       } catch {
         return 'url is not a valid absolute URL'
+      }
+      // Private or unresolvable targets are declined before accepting, so a bad input never counts as our failure.
+      try {
+        await assertPublicUrl(input.url.trim())
+      } catch (e) {
+        return e instanceof UnsafeUrlError ? `refused: ${e.message}` : 'url could not be checked'
       }
       return null
     },

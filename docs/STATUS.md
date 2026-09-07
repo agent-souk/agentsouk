@@ -2,6 +2,24 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 40: eigene Agents live (`souk-services`), SDKs 0.2.1
+
+- **ADR-23, Teil 2 gebaut und deployt:** neues Paket `packages/agents` (`@agentsouk/agents`, privat). Eine Identität
+  `souk-services` (`agt_01M1XYK56B94YZ06T76V0N006P`, `first_party: true`, eigene Empfangs-Wallet, Schlüssel nur in
+  `~/.agentsouk-ops/agents.env`) verkauft zwei deterministische Dienste ohne LLM, je 0,01 USDC, in Live **und** Sandbox:
+  `extract-web` (Seite holen, Text/Titel/Links; private Netze werden abgelehnt, 2 MB / 15 s Grenzen) und
+  `validate-json` (ajv, draft-07/2019-09/2020-12, Formate). `SellerRuntime`: Listings idempotent per Tag `souk:<key>`,
+  signierter Webhook auf `job.created`, Vorprüfung → decline, accept → run → deliver (versiegelt), bei Fehler cancel
+  mit Grund, Inbox-Poll als Netz. 24 Tests, davon ein End-to-End-Test gegen die API im Prozess.
+- **Deploy:** Fly-App `agentsouk-agents` (fra, eine Maschine, 256 MB, schläft bei Leerlauf, Webhook weckt sie;
+  `flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerfile --remote-only` aus dem Repo-Root).
+  Secrets: die drei Keys aus `agents.env`. Health: `https://agentsouk-agents.fly.dev/health`.
+- **Live geprüft:** Wegwerf-Käufer im Sandbox-Umfeld bestellte drei Jobs; Lieferung nach 3 s per Webhook (versiegelt,
+  Vorschau sichtbar, 0,01 USDC fällig), private URL wird jetzt vor dem Annehmen abgelehnt. `GET /v1/stats` zeigt
+  `first_party: {agents: 1, listings_active: 2}` in beiden Umgebungen.
+- **SDKs 0.2.1** veröffentlicht (Typen `first_party`, `agents.delete`).
+- Offen aus ADR-23: Übersetzung/Zusammenfassung (brauchen LLM-Key, Nick), Bounty-Budget (Betreiber-Wallet, Nick).
+
 ## Stand 2026-09-07, Checkpoint 37: MCP-Registry veröffentlicht, `first_party` gebaut (134 Tests grün)
 
 - **MCP-Registry:** `dev.agentsouk/agentsouk` 0.2.0 ist veröffentlicht (DNS-Auth über Nicks TXT-Record, Suche
@@ -142,10 +160,10 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
 3. ClawHub-Skill (`packages/sdk/SKILL.md`), Repo öffentlich (Org `agent-souk`, Nick; vorher Git-Historie auf die
    Rabby-Adresse prüfen, die vor Commit 3667f8c in Docs stand), GitHub-Topics, Discovery-Playbook aus
    `research/00-STRATEGIC-BRIEF.md` §6 (Verzeichnisse, Awesome-Listen, llms.txt-Crawler).
-4. **ADR-23, Teil 2:** `packages/agents` mit drei Referenz-Diensten (Übersetzung, Zusammenfassung, Web-Extraktion) als
-   normale SDK-Nutzer, per Admin-Endpunkt als `first_party` markiert; Bounty-Budget 50 USDC (Nick befüllt eine
-   Betreiber-Wallet, Schlüssel lokal). ~~Teil 1 (Feld, Sperre, Stats)~~ ist gebaut.
-5. SDK 0.2.1 (Typen `first_party`) veröffentlichen, wenn die nächste Laufzeitänderung ansteht.
+4. **ADR-23, Rest:** ~~`packages/agents` mit Web-Extraktion und JSON-Validierung~~ (Checkpoint 40, live). Offen:
+   Übersetzung und Zusammenfassung als weitere `ServiceDef`s, sobald ein Anthropic-Key in `~/.agentsouk-ops/agents.env`
+   liegt (`ANTHROPIC_API_KEY`, dann als Fly-Secret setzen); Bounty-Budget 50 USDC (Nick befüllt eine Betreiber-Wallet).
+5. ~~SDK 0.2.1~~ veröffentlicht. Nächste SDK-Version erst bei der nächsten Laufzeitänderung.
 6. Danach: Sanktionsscreening der Wallet-Adressen, Evaluator-/Schlichtungs-Panel, semantische Suche,
    `receiveWithAuthorization`-Pfad als gasfreie Zahlmethode dokumentieren (der Käufer reicht selbst beim Facilitator ein).
 

@@ -94,7 +94,7 @@ export class SellerRuntime {
         return 'declined'
       }
       const input = (job.input ?? {}) as Record<string, unknown>
-      const reason = service.validate(input)
+      const reason = await service.validate(input)
       if (reason) {
         await this.client.jobs.decline(id, `Invalid input: ${reason}. See the listing input_schema and example_input.`.slice(0, 500))
         this.log('declined: invalid input', { env: this.env, job_id: id, service: service.key, reason })

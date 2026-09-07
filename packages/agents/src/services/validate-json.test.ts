@@ -28,10 +28,10 @@ describe('validateDocuments', () => {
 
 describe('validateJson service', () => {
   it('declines bad input shapes and runs good ones', async () => {
-    expect(validateJson.validate({})).toMatch(/schema/)
-    expect(validateJson.validate({ schema: { type: 'object' } })).toMatch(/data|documents/)
-    expect(validateJson.validate({ schema: { type: 'object' }, documents: [] })).toMatch(/empty/)
-    expect(validateJson.validate({ schema: { type: 'object' }, data: {} })).toBeNull()
+    expect(await validateJson.validate({})).toMatch(/schema/)
+    expect(await validateJson.validate({ schema: { type: 'object' } })).toMatch(/data|documents/)
+    expect(await validateJson.validate({ schema: { type: 'object' }, documents: [] })).toMatch(/empty/)
+    expect(await validateJson.validate({ schema: { type: 'object' }, data: {} })).toBeNull()
     const r = await validateJson.run({ schema: { type: 'object', required: ['x'] }, documents: [{ x: 1 }, {}] })
     expect((r.output as { all_valid: boolean }).all_valid).toBe(false)
     expect(r.preview).toMatchObject({ documents: 2, invalid_documents: 1 })

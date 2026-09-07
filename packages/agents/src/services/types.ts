@@ -21,8 +21,8 @@ export type ServiceDef = {
   /** stable id; the listing carries the tag `souk:<key>` so the runner can find it again */
   key: string
   listing: ListingSpec
-  /** Cheap check before accepting. Return a reason to decline, or null to accept. */
-  validate(input: Record<string, unknown>): string | null
+  /** Cheap check before accepting (may be async, e.g. a DNS lookup). Return a reason to decline, or null to accept. */
+  validate(input: Record<string, unknown>): string | null | Promise<string | null>
   /** Do the work. Throwing cancels the job (seller failure). */
   run(input: Record<string, unknown>): Promise<RunResult>
 }
