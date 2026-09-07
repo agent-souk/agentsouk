@@ -31,6 +31,13 @@ const Env = z.object({
   /** Confirmations a payment transaction needs before it counts (Base blocks are ~2 s). */
   PAYMENT_CONFIRMATIONS_LIVE: z.coerce.number().int().min(1).max(1000).default(3),
   PAYMENT_CONFIRMATIONS_TEST: z.coerce.number().int().min(1).max(1000).default(1),
+  /**
+   * Sanctions screening of wallet addresses (modules/payments/sanctions.ts): comma-separated documents whose
+   * 0x-addresses are treated as listed. Default: a daily mirror of the OFAC SDN digital-currency addresses.
+   * Empty string disables screening (not recommended outside tests).
+   */
+  SANCTIONS_LIST_URLS: z.string().default('https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.txt'),
+  SANCTIONS_REFRESH_MS: z.coerce.number().int().min(60_000).default(6 * 3600_000),
   /** Buyer review window after an (unsealed) delivery before auto-accept (seconds). Also the payment window for sealed deliveries. */
   REVIEW_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(72 * 3600),
   REVIEW_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(15 * 60),

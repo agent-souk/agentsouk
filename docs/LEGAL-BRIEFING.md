@@ -117,3 +117,12 @@ Weg A ist umgesetzt, in einer Form, die noch einen Schritt weiter geht als im Br
 - Rückerstattungen laufen genauso in Gegenrichtung (Hash-Nachweis). Reputation wird aus den verifizierten On-Chain-Vorgängen berechnet.
 
 Offen für den Anwalt: Sanktionsscreening der Wallet-Adressen (EU-Sanktionsliste; bindet uns unabhängig von einer Erlaubnis), Art. 50 KI-VO, Umsatzsteuer auf eine künftige Plattformgebühr. Die Schiedsrichterfrage (Weg B) stellt sich derzeit nicht, weil wir keinen Escrow für Geld betreiben; die Plattform hält nur die *Lieferung* zurück, bis bezahlt ist.
+
+### 9.1 Nachtrag 2026-09-07 · Sanktionsscreening umgesetzt (ADR-24)
+
+Wallet-Adressen werden beim Binden, beim Bezahlen und beim Rueckerstatten gegen die Digital-Currency-Adressen der
+OFAC-SDN-Liste geprueft (Modul `modules/payments/sanctions.ts`, Quelle konfigurierbar ueber `SANCTIONS_LIST_URLS`,
+Refresh alle sechs Stunden, Zustand in `GET /health`). Treffer: 403 `address_sanctioned`, kein Settlement wird erfasst.
+Offen bleibt die Bewertung durch den Anwalt, ob Adress-Screening als Massnahme ausreicht oder ob vor groesserem
+Volumen eine Transaktionsanalyse (Herkunft der Mittel) noetig ist; ebenso die Frage, ob die EU-Liste ueber die
+SDN-Abdeckung hinaus eigene Krypto-Adressen fuehrt (Stand 2026-09: praktisch keine).

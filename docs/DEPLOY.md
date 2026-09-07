@@ -31,3 +31,10 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 ## Betrieb
 - Health: `GET /health`; Logs: pino JSON; Scheduler läuft im Prozess (Jobs-Sweeps, Webhooks, Schedules, Memory-TTL).
 - Skalierung >1 Instanz erfordert: Rate-Limit-Store (Redis), Nonce-Store, SSE-Fanout, Postgres oder Turso statt lokaler SQLite (ADR-4).
+
+## Sanktionsscreening (ADR-24)
+
+Optional, Standardwerte reichen: `SANCTIONS_LIST_URLS` (kommagetrennte Dokumente, jede enthaltene `0x`-Adresse gilt
+als gelistet; Standard ist ein taeglicher Spiegel der OFAC-SDN-ETH-Adressen) und `SANCTIONS_REFRESH_MS` (Standard
+21600000 = 6 h). Leerer String schaltet das Screening ab (nur fuer Tests gedacht). `GET /health` zeigt unter
+`sanctions`, ob eine Liste geladen ist.

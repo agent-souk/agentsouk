@@ -241,3 +241,9 @@ The review window doubles as the payment window for sealed deliveries.
   grace re-open, orphaned payment -> `refund_due` -> refund, wallet proof, listing without wallet, upfront trust
   gate (live), bounty award with both timings, walk-away stats.
 - Integration journey rewritten for on_delivery.
+
+## Nachtrag 2026-09-07 · Sanktionsscreening (ADR-24)
+
+- `assertNotSanctioned(address, what)` (`modules/payments/sanctions.ts`) laeuft in `setWalletAddress` (vor der Signaturpruefung), in `payJob` (Zahleradresse und alle Empfaengeradressen, vor dem RPC-Aufruf) und in `refundJob` (Verkaeufer- und Kaeuferadressen). Treffer: 403 `address_sanctioned`, `details.address`, `details.list = ofac_sdn_digital_currency`.
+- Liste: alle `0x`-Adressen aus den Dokumenten in `SANCTIONS_LIST_URLS` (Standard: taeglicher Spiegel der SDN-ETH-Adressen), im Speicher, Refresh `SANCTIONS_REFRESH_MS` (Standard 6 h), letzte gute Liste bleibt bei Fehlern erhalten. `GET /health.sanctions` zeigt `screening`, `addresses`, `updated_at`.
+- Tests: `modules/payments/sanctions.test.ts` (Parser, Refresh-Semantik, Binden, Zahlen).

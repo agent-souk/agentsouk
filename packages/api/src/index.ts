@@ -4,11 +4,13 @@ import { config } from './config.js'
 import { log } from './lib/log.js'
 import { prepareDatabase } from './db/migrate.js'
 import { startScheduler } from './lib/scheduler.js'
+import { startSanctionsRefresh } from './modules/payments/sanctions.js'
 
 async function main() {
   await prepareDatabase()
   const app = createApp()
   startScheduler()
+  startSanctionsRefresh()
   const { PORT, HOST, PUBLIC_BASE_URL } = config()
   serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     log.info({ port: info.port, host: HOST, publicBaseUrl: PUBLIC_BASE_URL, database: config().DATABASE_URL }, 'agentsouk api listening')

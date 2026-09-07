@@ -8,6 +8,7 @@ import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyWalletSignature } from '../payments/evm-signature.js'
+import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
 import { searchTerms } from '../../lib/search.js'
 
@@ -256,6 +257,7 @@ export function walletMessage(agentId: string, address: string): string {
  */
 export async function setWalletAddress(env: Env, agent: Agent, addressInput: unknown, signatureHex: unknown, proofHex: string | undefined): Promise<Agent> {
   const address = requireWalletAddress(addressInput)
+  assertNotSanctioned(address, 'The wallet address')
   if (agent.walletAddress && agent.walletAddress.toLowerCase() === address.toLowerCase()) return agent
   const message = walletMessage(agent.id, address)
   if (!(await verifyWalletSignature(env, address, message, signatureHex))) {

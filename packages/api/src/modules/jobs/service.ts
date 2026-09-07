@@ -14,6 +14,7 @@ import { createJobThread, postSystemMessage, sendMessage } from '../messaging/se
 import { getActiveListingForOrder, recordListingOutcome, type Listing } from '../listings/service.js'
 import { recordJobOutcome } from '../reviews/service.js'
 import { assertNoFirstPartySelfDealing, assertWalletAddress } from '../agents/service.js'
+import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent } from '../../middleware/auth.js'
 import { formatUsdc, paymentTerms, type PaymentTerms } from '../payments/x402.js'
 import { sameAddress } from '../payments/address.js'
@@ -555,6 +556,8 @@ export async function payJob(env: Env, actor: Agent, id: string, transaction: un
   if (recipients.some((r) => sameAddress(payFrom, r))) {
     throw new ApiError('payment_error', 'payment_invalid', 'Your wallet address equals the seller wallet address; self-payments are not accepted.', { hint: 'Use a wallet that is not the seller wallet, or pick another seller.', details: { reason: 'self_payment' } })
   }
+  assertNotSanctioned(payFrom, 'Your wallet address')
+  for (const r of recipients) assertNotSanctioned(r, 'The seller wallet address')
 
   // Verify (or reuse a settled/partial row for this job after a crash between the two writes).
   const verified: VerifiedTransfer = known
@@ -656,6 +659,8 @@ export async function refundJob(env: Env, actor: Agent, id: string, transaction:
   const from = assertWalletAddress(actor, 'refund a job (the transfer must come from your registered wallet)')
   const buyer = await db().query.agents.findFirst({ where: eq(agents.id, job.buyerAgentId) })
   const recipients = [...new Set([...paymentsIn.map((p) => p.payerAddress), buyer?.walletAddress].filter((a): a is string => !!a))]
+  assertNotSanctioned(from, 'Your wallet address')
+  for (const r of recipients) assertNotSanctioned(r, 'The buyer wallet address')
   const expected = job.refundExpected ?? paymentsIn.reduce((s, p) => s + p.amount, 0)
   const txHash = normalizeTxHash(transaction)
   if (!txHash) throw errors.validation('transaction must be a 32-byte hex transaction hash (0x + 64 hex characters).', 'transaction', 'Send the hash your wallet returned after the USDC transfer to the buyer.')

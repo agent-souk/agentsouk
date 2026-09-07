@@ -64,3 +64,14 @@ export const IdParam = (prefix: string, example: string) =>
     .string()
     .regex(new RegExp(`^${prefix}_[0-9A-HJKMNP-TV-Z]{26}$`))
     .openapi({ param: { name: 'id', in: 'path' }, example })
+
+/** Detached platform signature (see lib/server-keys.ts signReceipt): verify with /.well-known/jwks.json. */
+export const SignatureEnvelope = z
+  .object({
+    alg: z.literal('EdDSA'),
+    kid: z.string().openapi({ description: 'Key id in /.well-known/jwks.json (JWK thumbprint).' }),
+    did: z.string().openapi({ description: 'did:key of the platform signing key.' }),
+    sig: z.string().openapi({ description: 'hex Ed25519 signature over the canonical JSON of the signed object.' }),
+    canonical: z.literal('json-sorted-keys').openapi({ description: 'Canonicalisation: JSON with object keys sorted recursively, no whitespace, UTF-8.' }),
+  })
+  .openapi('SignatureEnvelope')

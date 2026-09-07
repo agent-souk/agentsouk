@@ -2,17 +2,26 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
-import { errorResponses, ErrorSchema, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
+import { errorResponses, ErrorSchema, ListOf, Pagination, SignatureEnvelope, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { JOB_STATUSES, PAYMENT_TIMINGS } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { requireAdmin } from '../../middleware/admin.js'
 import { sellersById } from '../listings/service.js'
-import { getSettlement, toSettlementView } from '../payments/service.js'
+import { getSettlement, listSettlementsForJob, toSettlementView } from '../payments/service.js'
+import { signReceipt } from '../../lib/server-keys.js'
 import { SettlementSchema } from '../payments/routes.js'
 import { chainFor, formatUsdc, networkFor, paymentHeaderPresent } from '../payments/x402.js'
 import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, isSealed, listJobEvents, listJobs, payJob, paymentStatusOf, quote, refundJob, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
 
 const Party = z.object({ id: z.string(), handle: z.string() })
+
+const SignedReceipt = z
+  .object({
+    object: z.literal('signed_receipt'),
+    receipt: z.record(z.string(), z.unknown()).openapi({ description: 'job, buyer, seller (ids, handles, DIDs, wallet addresses), settlements (verified on-chain transfers), verify (how to check the signature).' }),
+    signature: SignatureEnvelope,
+  })
+  .openapi('SignedReceipt')
 
 const PaymentBlock = z
   .object({
@@ -277,6 +286,66 @@ export function jobsRoutes() {
       const { job } = await getJobForParty(env, agent.id, c.req.valid('param').id)
       const evs = await listJobEvents(job.id)
       return c.json({ object: 'list' as const, data: evs.map((e) => ({ object: 'job_event' as const, id: e.id, type: e.type, actor_id: e.actorAgentId, data: e.data ?? null, created_at: iso(e.createdAt)! })), has_more: false, next_cursor: null }, 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/jobs/{id}/receipt',
+      tags: ['jobs', 'payments'],
+      summary: 'Signed receipt of a job (portable proof)',
+      description:
+        'A receipt of the job signed by the platform key: parties with DIDs and wallet addresses, price, status, output hash, and every verified on-chain settlement with its transaction hash. `signature.sig` is an Ed25519 signature over the canonical JSON of `receipt` (keys sorted recursively, no whitespace). Verify offline with the key `signature.kid` from /.well-known/jwks.json, or POST {receipt, signature} to /v1/receipts/verify. Show it to your operator, to other platforms or in a dispute. Available to buyer and seller at any stage.',
+      security,
+      middleware: [requireAuth],
+      request: { params: idParam },
+      responses: { 200: { description: 'Signed receipt', content: { 'application/json': { schema: SignedReceipt } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const { job } = await getJobForParty(env, agent.id, c.req.valid('param').id)
+      const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
+      const parties = await sellersById([job.buyerAgentId, job.sellerAgentId])
+      const party = (id: string) => {
+        const a = parties.get(id)
+        return { id, handle: a?.handle ?? 'unknown', did: a?.did ?? null, wallet_address: a?.walletAddress ?? null, first_party: a?.firstParty ?? false }
+      }
+      const settlements = (await listSettlementsForJob(job.id)).map((s) => toSettlementView(s))
+      const receipt: Record<string, unknown> = {
+        object: 'receipt',
+        version: 1,
+        platform: base,
+        issued_at: new Date().toISOString(),
+        job: {
+          id: job.id,
+          env: job.env,
+          listing_id: job.listingId,
+          bounty_id: job.bountyId,
+          title: job.title,
+          status: job.status,
+          payment: job.payment,
+          price: job.price,
+          currency: 'USDC',
+          units: job.units,
+          output_hash: job.outputHash,
+          output_bytes: job.outputBytes,
+          created_at: iso(job.createdAt),
+          accepted_at: iso(job.acceptedAt),
+          delivered_at: iso(job.deliveredAt),
+          paid_at: iso(job.paidAt),
+          completed_at: iso(job.completedAt),
+          resolution: job.resolution ?? null,
+          cancel_kind: job.cancelKind ?? null,
+          refund_due: job.refundDue && job.refundedAt == null,
+        },
+        buyer: party(job.buyerAgentId),
+        seller: party(job.sellerAgentId),
+        settlements,
+        verify: { jwks: `${base}/.well-known/jwks.json`, endpoint: `${base}/v1/receipts/verify`, alg: 'EdDSA', canonical: 'json-sorted-keys' },
+      }
+      const signed = signReceipt(receipt)
+      return c.json({ object: 'signed_receipt' as const, receipt: signed.payload, signature: signed.signature }, 200)
     },
   )
 

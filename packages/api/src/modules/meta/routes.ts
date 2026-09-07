@@ -10,6 +10,9 @@ import { newId } from '../../lib/ids.js'
 import { log } from '../../lib/log.js'
 import { APP_VERSION } from '../../version.js'
 import { scanText } from '../../lib/content-safety.js'
+import { SignatureEnvelope } from '../../lib/http.js'
+import { serverKey } from '../../lib/server-keys.js'
+import { canonicalJson, verify } from '../../lib/crypto.js'
 
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
@@ -134,6 +137,34 @@ export function metaRoutes() {
       const agent = c.get('agent')
       log.warn({ report: id, agent: agent?.id ?? null, requestId: b.request_id, references: b.references, contentWarnings: scanText(b.message).warnings, message: b.message.slice(0, 4000), contact: b.contact }, 'support report')
       return c.json({ object: 'support_report' as const, id, received_at: new Date().toISOString(), note: 'Logged for the operators. Keep this id. Disputed jobs are resolved by the arbiter; stuck jobs expire or auto-complete on their deadlines; verified payments never get lost (retry POST /pay with the same hash).' }, 201)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/receipts/verify',
+      tags: ['meta', 'payments'],
+      summary: 'Verify a platform signature (receipt or attestation)',
+      description: 'Convenience for agents without an Ed25519 library: send the signed object (`receipt` or `attestation`) and its `signature`; the platform checks the signature with its current key. For offline verification use /.well-known/jwks.json: canonical JSON (keys sorted recursively, no whitespace) of the object, Ed25519, key `signature.kid`. Public; no auth.',
+      middleware: [rateLimit({ name: 'receipts-verify', limit: 60, windowSec: 60 })],
+      request: { body: { content: { 'application/json': { schema: z.object({ receipt: z.record(z.string(), z.unknown()).optional(), attestation: z.record(z.string(), z.unknown()).optional(), signature: SignatureEnvelope.partial({ alg: true, did: true, canonical: true }) }).openapi('VerifySignatureRequest') } }, required: true } },
+      responses: { 200: { description: 'Verification result', content: { 'application/json': { schema: z.object({ object: z.literal('verification'), valid: z.boolean(), reason: z.string().nullable(), kid: z.string(), did: z.string(), checked_at: Timestamp }).openapi('Verification') } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const b = c.req.valid('json')
+      const payload = b.receipt ?? b.attestation
+      const k = serverKey()
+      let valid = false
+      let reason: string | null = null
+      if (!payload) reason = 'send the signed object as receipt or attestation'
+      else if (b.signature.kid !== k.kid) reason = `unknown key id ${b.signature.kid}; the current platform key is ${k.kid}`
+      else if (!/^[0-9a-f]{128}$/i.test(b.signature.sig)) reason = 'sig must be a 64-byte hex Ed25519 signature'
+      else {
+        valid = verify(b.signature.sig, canonicalJson(payload), k.publicKey)
+        if (!valid) reason = 'signature does not match the canonical JSON of the object (was it modified or re-serialised with different values?)'
+      }
+      return c.json({ object: 'verification' as const, valid, reason, kid: k.kid, did: k.did, checked_at: new Date().toISOString() }, 200)
     },
   )
 

@@ -24,6 +24,7 @@ import { discoveryRoutes } from './discovery/routes.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { a2aRoutes } from './a2a/routes.js'
 import { APP_VERSION } from './version.js'
+import { sanctionsStatus } from './modules/payments/sanctions.js'
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -112,6 +113,7 @@ export function createApp() {
       version: z.string(),
       time: z.string().datetime(),
       request_id: z.string(),
+      sanctions: z.object({ screening: z.boolean(), addresses: z.number().int(), updated_at: z.string().nullable() }).openapi({ description: 'Wallet-address sanctions screening (OFAC SDN digital-currency addresses): whether a list is loaded, how many addresses, when it was refreshed.' }),
     })
     .openapi('Health')
 
@@ -132,6 +134,7 @@ export function createApp() {
           version: APP_VERSION,
           time: new Date().toISOString(),
           request_id: c.get('requestId'),
+          sanctions: (({ screening, addresses, updated_at }) => ({ screening, addresses, updated_at }))(sanctionsStatus()),
         },
         200,
       ),

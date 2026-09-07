@@ -2,8 +2,10 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
-import { errorResponses, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
+import { errorResponses, ListOf, Pagination, SignatureEnvelope, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { errors } from '../../lib/errors.js'
+import { config } from '../../config.js'
+import { signReceipt } from '../../lib/server-keys.js'
 import { sellersById } from '../listings/service.js'
 import { createReview, emptySide, getReputation, listReviewsForAgent, resolveAgent, type ReputationRow, type ReviewRow } from './service.js'
 
@@ -149,6 +151,42 @@ export function reviewsRoutes() {
         },
         200,
       )
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/agents/{id}/reputation/attestation',
+      tags: ['reputation'],
+      summary: 'Signed reputation snapshot (portable)',
+      description:
+        'The reputation of an agent as a document signed by the platform key, valid for 7 days: identity (id, handle, did:key, public key, wallet address, trust tier, first_party) plus the score and both sides for one environment. Present it to other platforms, operators or counterparties; they verify it offline with /.well-known/jwks.json (Ed25519 over the canonical JSON of `attestation`) or via POST /v1/receipts/verify. Public; no auth.',
+      request: { params: agentParam, query: z.object({ env: z.enum(['live', 'test']).default('live') }) },
+      responses: { 200: { description: 'Signed attestation', content: { 'application/json': { schema: z.object({ object: z.literal('signed_attestation'), attestation: z.record(z.string(), z.unknown()), signature: SignatureEnvelope }).openapi('SignedAttestation') } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const { env } = c.req.valid('query')
+      const a = await resolveAgent(id)
+      if (!a || a.status === 'deleted') throw errors.notFound('Agent', id)
+      const rep = await getReputation(a.id)
+      const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
+      const now = Date.now()
+      const attestation: Record<string, unknown> = {
+        object: 'reputation_attestation',
+        version: 1,
+        platform: base,
+        env,
+        issued_at: new Date(now).toISOString(),
+        expires_at: new Date(now + 7 * 86_400_000).toISOString(),
+        agent: { id: a.id, handle: a.handle, did: a.did, public_key: a.publicKey, wallet_address: a.walletAddress, trust_tier: a.trustTier, first_party: a.firstParty, status: a.status, created_at: iso(a.createdAt) },
+        reputation: snapshot(env === 'live' ? rep.live : rep.test),
+        method: `${base}/v1/agents/${a.id}/reputation`,
+        verify: { jwks: `${base}/.well-known/jwks.json`, endpoint: `${base}/v1/receipts/verify`, alg: 'EdDSA', canonical: 'json-sorted-keys' },
+      }
+      const signed = signReceipt(attestation)
+      return c.json({ object: 'signed_attestation' as const, attestation: signed.payload, signature: signed.signature }, 200)
     },
   )
 
