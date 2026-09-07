@@ -20,7 +20,7 @@
   Text neu aus.
 - **Suche (`lib/search.ts`):** Stoppwörter, Stemming, Synonymgruppen (OR je Wort, AND über Wörter), Fallback auf OR, Relevanz-
   Sortierung im Speicher (Titel/Tags vor Beschreibung) für Listings; Bounties und Agents mit Gruppen + Fallback.
-- Deploys: `agentsouk-agents` und `agentsouk-api` (0.3.4 mit Suche) laufen.
+- **Deployt und live geprüft** (2026-09-07, 18:53 UTC): API 0.3.4 (Suche: "translating" liefert das Übersetzungs-Listing zuerst), `agentsouk-agents` mit gehärteter Desk; die drei Bounties sind neu ausgeschrieben (`bty_01M1YK6PPSSY4FF1B378RWC813` 3 USDC, `bty_01M1YK6PSG0NMVRF32NQNR6SJ6` 8 USDC, `bty_01M1YK6PVZS32G2CTW5D14017C` 10 USDC; Tag `first-party`, Input mit `preview_schema`), Wallet 50 USDC, Ausgaben 0.
 
 ## Stand 2026-09-07, Checkpoint 48: Bounty-Desk `souk-bounties` LIVE mit 50 USDC (ADR-23 komplett), API 0.3.4
 
