@@ -1,8 +1,28 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-07 (Checkpoint 36). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Abhängigkeit.
+Stand: 2026-09-08 (Checkpoint 51). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
 
-**Live:** `https://api.agentsouk.dev` (Rauchtest 20/20) · npm `agentsouk@0.2.0` · PyPI `agentsouk` 0.2.0.
+**Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.3.3 · Repo https://github.com/agent-souk/agentsouk
+
+---
+
+## DEINE OFFENE LISTE (Stand 2026-09-08, sonst nichts)
+
+Alles andere läuft ohne dich. Diese sechs Punkte kann ich nicht selbst machen, weil sie einen Browser-Login,
+ein DNS-Menü oder dein Urteil brauchen. Reihenfolge = Wirkung pro Aufwand.
+
+| # | Was | Wo | Dauer | Warum es zählt |
+|---|---|---|---|---|
+| 1 | **Glama-Listing** für den MCP-Server anlegen | https://glama.ai/mcp/servers (Login mit GitHub `nickillig3-dotcom`), Server einreichen: Repo `agent-souk/agentsouk`, Remote-URL `https://api.agentsouk.dev/mcp`; danach auch https://glama.ai/mcp/connectors | ~10 min | Ohne Glama-Score wird unser Eintrag in der größten MCP-Liste (94.000 Sterne) **nicht** gemergt. Das ist gerade der größte einzelne Reichweiten-Hebel. Sag mir Bescheid, sobald der Score da ist, dann setze ich das Badge in den offenen PR. |
+| 2 | **Zwei DNS-TXT-Records** in Cloudflare, beide "DNS only" | Name `_agent`, Typ TXT, Wert: `v=aid2;p=mcp;u=https://api.agentsouk.dev/mcp;a=pat;s=Agent Souk: marketplace for AI agents;d=https://api.agentsouk.dev/llms.txt` · Name `_mcp`, Typ TXT, Wert: `v=mcp1;registry=https://api.agentsouk.dev/.well-known/mcp.json;public=true;version=2026-09` | ~5 min | Agents, die per DNS nach Diensten suchen, finden uns dann direkt über die Domain. |
+| 3 | **Apex-Domain auflösen lassen** (`https://agentsouk.dev/` antwortet bis heute gar nicht) | Cloudflare, DNS only: `A agentsouk.dev → 66.241.124.182`, `AAAA agentsouk.dev → 2a09:8280:1::185:2f1c:0`, `CNAME www → agentsouk-api.fly.dev` | ~5 min | Die Fly-Zertifikate stehen auf "Not verified" und warten nur darauf. Ohne Apex wirkt die Marke halb tot, wenn jemand den nackten Domainnamen probiert. |
+| 4 | **Anthropic-Key austauschen** | https://console.anthropic.com → alten Key widerrufen, neuen anlegen, Zeile `ANTHROPIC_API_KEY=` in `~/.agentsouk-ops/agents.env` ersetzen, mir Bescheid sagen (ich setze ihn als Fly-Secret) | ~5 min | Der aktuelle Key stand einmal im Chat. Reine Hygiene, kein akutes Problem. |
+| 5 | **Security-Bounty bestätigen, wenn eine kommt** | Wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator` einen Job nennt: sag mir Bescheid, ich zeige dir den Fund; du entscheidest ja/nein | nur bei Bedarf | 10 USDC gehen nur nach menschlicher Bestätigung raus. Bewusst so gebaut. |
+| 6 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
+
+**Nicht nötig:** Geld nachlegen (50 USDC liegen bereit, 0 ausgegeben), Code anfassen, Server bedienen, Verträge.
+**Optional, wenn du magst:** die alten Forks `awesome-mcp-servers-appcypher` und `-wong2` sowie das alte private Repo
+`nickillig3-dotcom/agentsouk` löschen (mein Token darf das nicht).
 
 ---
 
