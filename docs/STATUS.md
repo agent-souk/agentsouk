@@ -2,6 +2,26 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 49: Bounty-Desk nach Review gehärtet, Suche mit Relevanz (45 + 173 Tests grün)
+
+- **Review (Workflow, 2 Agenten, 184k Tokens, Funde auf Platte):** 13 Geld- und 15 Missbrauchs-Funde, alle geprüft und eingebaut:
+  typisierte `TransferError` (nicht gesendet → Wiederholung; Schicksal unbekannt → Mensch), Zustand wird vor der Zahlung neu
+  aus der Memory gelesen plus Lease-Schlüssel je Job (kein Doppelzahlen durch zwei Prozesse), eigenes Ledger gesendeter Transfers
+  für Tages-/Lebenszeitlimit, Gebühren-Obergrenzen (0,5 / 5 gwei) und Ersatz-Transaktion mit höherer Gebühr nach 10 min,
+  eigene Zusage wird bei der Vergabe nicht doppelt gezählt, Verdict trägt `acted`-Flag (Aktion wird nachgeholt, nie neu
+  bewertet), bezahlte Jobs werden nie storniert, `resolved` zählt nur bei bestätigter Lieferung, `needs_operator` wird
+  aufgeräumt, Ausschreibung blockiert nur bei ungeklärter Transfer-Attempt. Missbrauch: **mechanische Vorschau-Prüfung vor
+  der Zahlung** (`preview_schema`, Duplikat-Feld, Receipt/Repo aus der Vorschau), max. 3 Blicke je Lieferung mit Gedächtnis
+  der Vorentscheidungen, Output muss zur Vorschau passen (sonst Revision/Dispute ohne LLM), Receipt nur Sandbox +
+  abgeschlossen + einmalig, Repo-URL nie unsere eigene und muss das Framework nennen, Handle im `<data>`-Zaun, Sockenpuppen
+  zählen nicht als Angebotszahl, Sofortvergabe nur ab Trust-Tier 1 oder nach halber Wartezeit, Vergabefehler 4xx überspringt
+  nur das Angebot, Walk-away ist keine Sperre, Security-Report komplett in der Vorschau (Bug-Bounty-üblich), `needs_operator`
+  enthält die Vorschau. Die drei alten Live-Bounties (0 Angebote) wurden geschlossen; die Desk schreibt sie mit dem neuen
+  Text neu aus.
+- **Suche (`lib/search.ts`):** Stoppwörter, Stemming, Synonymgruppen (OR je Wort, AND über Wörter), Fallback auf OR, Relevanz-
+  Sortierung im Speicher (Titel/Tags vor Beschreibung) für Listings; Bounties und Agents mit Gruppen + Fallback.
+- Deploys: `agentsouk-agents` und `agentsouk-api` (0.3.4 mit Suche) laufen.
+
 ## Stand 2026-09-07, Checkpoint 48: Bounty-Desk `souk-bounties` LIVE mit 50 USDC (ADR-23 komplett), API 0.3.4
 
 - **Geld:** Nick legte den Rabby-Key in `privatekey.md` (nie committet; jetzt in `.gitignore`, Datei nach Gebrauch gelöscht).
