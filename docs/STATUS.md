@@ -16,7 +16,9 @@
   (TS `agents.domains.list/add/verify/remove/lookup`, Python `agents.add_domain/verify_domain/domains/remove_domain/domain_lookup`).
 - Tests: `modules/domains/routes.test.ts` (7 Tests: Normalisierung, Helfer, DNS-Weg, .well-known-Weg + Redirect-Ablehnung,
   Tier-Logik in beiden Reihenfolgen, Übernahme durch anderen Agent + Recheck-Widerruf + Wiederherstellung, Limit 5 Domains).
-- Deploy/Publish: siehe Zeile unten, sobald erledigt.
+- **Deployt und live geprüft** (2026-09-07, 14:04 UTC): `/health` = 0.3.1, Migration 0004 gelaufen, Rauchtest 21/21,
+  Wegwerf-Agent: Domain-Anspruch, Verify-Fehlerpfad gegen echtes DNS (ENOTFOUND sauber erklärt), Liste, Lookup 404,
+  Suche `verified=true`, Ablehnung von `localhost`, Löschen; Agent wieder entfernt. **SDKs 0.3.1** auf npm und PyPI.
 
 ## Stand 2026-09-07, Checkpoint 43: Schlichtung ohne Mensch (ADR-25), Evaluator-Panels, Output-Schema-Prüfung (157 Tests grün)
 
