@@ -84,18 +84,20 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Was ich jetzt konkret von dir brauche
 
-1. **LLM-Dienste der Referenz-Agents (ADR-23, Rest).** `souk-services` läuft bereits live mit Web-Extraktion und
-   JSON-Schema-Prüfung (ohne LLM, zweite Fly-Maschine `agentsouk-agents`, schläft bei Leerlauf, ~1–2 $/Monat).
-   Übersetzung und Zusammenfassung brauchen einen Anthropic-API-Key (bei Kleinstpreisen grob 5–20 $/Monat je nach
-   Nachfrage). Wenn du das willst: Key anlegen (https://console.anthropic.com → API Keys) und als Zeile
-   `ANTHROPIC_API_KEY=...` in `~/.agentsouk-ops/agents.env` eintragen, nicht in den Chat.
-2. **Betreiber-Wallet für Bounties.** Eine neue Wallet (nicht deine Rabby), mit ~50 USDC auf Base befüllt. Den
-   privaten Schlüssel als `~/.agentsouk-ops/operator-wallet.env` (`OPERATOR_PRIVATE_KEY=0x...`) ablegen; damit zahlen
-   die eigenen Agents Bounties an fremde Agents aus. Alternativ zahlst du Bounties von Hand aus Rabby und ich
-   reiche nur den Hash ein; dann brauche ich nichts.
-3. **GitHub-Organisation `agent-souk`** anlegen (https://github.com/account/organizations/new). Vor dem Öffentlichmachen
-   des Repos eine Entscheidung: deine Rabby-Adresse stand vor Commit `3667f8c` in den Docs und ist in der Git-Historie
-   noch enthalten. Eine Wallet-Adresse ist öffentlich auf der Kette, aber wenn sie nicht mit dem Repo verknüpft sein
-   soll, muss ich die Historie umschreiben (neues Repo mit frischer Historie ist am einfachsten). Sag, was du willst.
+1. ~~**LLM-Dienste der Referenz-Agents (ADR-23, Rest).**~~ **Key liegt vor** (2026-09-07): `ANTHROPIC_API_KEY` steht in
+   `~/.agentsouk-ops/agents.env`, gegen die API geprüft (Haiku antwortet, Guthaben vorhanden). Übersetzung und
+   Zusammenfassung als weitere Dienste von `souk-services` sind damit baubar. **Offen bei dir:** Der erste Key stand
+   im Chat; bitte in der Konsole widerrufen, einen neuen anlegen und die Zeile in der Datei ersetzen.
+2. **Betreiber-Wallet für Bounties.** Eine neue Wallet (nicht deine Rabby), mit ~50 USDC auf Base befüllt, dazu
+   2–3 $ in ETH auf Base als Gasgeld. Den privaten Schlüssel als `~/.agentsouk-ops/operator-wallet.env`
+   (`OPERATOR_PRIVATE_KEY=0x...`) ablegen; damit zahlen die eigenen Agents Bounties an fremde Agents aus. Alternativ
+   zahlst du Bounties von Hand aus Rabby und ich reiche nur den Hash ein; dann brauche ich nichts. **Verschoben**
+   (2026-09-07, Nick: "machen wir später").
+3. **GitHub-Organisation `agent-souk`** anlegen (https://github.com/account/organizations/new). Danach schiebe ich die
+   (jetzt saubere) Historie in ein öffentliches Repo der Organisation.
+   ~~Entscheidung zur Rabby-Adresse in der Historie~~ **erledigt am 2026-09-07:** Historie mit `git-filter-repo`
+   umgeschrieben, die Adresse ist aus allen 60 Commits verschwunden (Platzhalter in den zwei alten Commits von
+   `docs/LEGAL-BRIEFING.md`), Inhalt des aktuellen Standes unverändert, `git push --force` auf das private Repo.
+   Vollsicherung der alten Historie: `~/.agentsouk-ops/backups/agentsouk-history-20260907-1639.bundle`.
    ~~CNAME `api`~~ und ~~TXT-Record~~ sind erledigt.
-3. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.
+4. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.

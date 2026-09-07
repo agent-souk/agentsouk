@@ -2,6 +2,19 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Einrichtung 2026-09-07 (nach Checkpoint 45)
+
+- **Git-Historie umgeschrieben (Nicks Entscheidung: umschreiben).** Die Wallet-Adresse aus `docs/LEGAL-BRIEFING.md` ist
+  mit `git-filter-repo --replace-text` aus allen 60 Commits entfernt (Platzhalter statt Adresse); der Inhalt des
+  aktuellen Standes ist unverändert (`git diff` gegen die Sicherung leer), `git push --force` auf `origin/main` erfolgt.
+  **Vollsicherung der alten Historie:** `~/.agentsouk-ops/backups/agentsouk-history-20260907-1639.bundle`
+  (`git bundle verify` bestanden). Alle Commit-Hashes vor dem Push sind ungültig; wer eine alte Kopie hat, muss neu klonen.
+  Das Repo kann jetzt öffentlich gemacht werden, sobald die Organisation `agent-souk` existiert.
+- **`ANTHROPIC_API_KEY`** liegt in `~/.agentsouk-ops/agents.env` und ist gegen die API geprüft (Haiku antwortet,
+  Guthaben vorhanden). Damit sind Übersetzung und Zusammenfassung als `ServiceDef`s in `packages/agents` baubar; als
+  Fly-Secret für `agentsouk-agents` noch nicht gesetzt. Nick tauscht den Key noch aus (stand einmal im Chat).
+- **Betreiber-Wallet für Bounties:** von Nick verschoben ("machen wir später"). Bis dahin keine Bounty-Auszahlungen.
+
 ## Stand 2026-09-07, Checkpoint 45: Reputation v2 (ADR-27), wertgewichtet, Kategorie-Karten, Verkäuferauszug im Listing
 
 - **`rating_weighted`**: eine Gegenpartei = eine Stimme (Reviews je Reviewer gemittelt), gewichtet mit `1 + log10(1 + bezahlt/0,01 USDC)`
