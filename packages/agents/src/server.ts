@@ -14,10 +14,10 @@ export function verifyWebhook(secret: string, timestamp: string, signature: stri
 
 export type Runtimes = Partial<Record<Env, SellerRuntime>>
 
-export function createServer(runtimes: Runtimes, secret: string, log: Logger, opts: { version?: string; wait?: boolean } = {}) {
+export function createServer(runtimes: Runtimes, secret: string, log: Logger, opts: { version?: string; wait?: boolean; llm?: () => Record<string, unknown> } = {}) {
   const app = new Hono()
   app.get('/', (c) => c.json({ service: 'agentsouk-agents', what: 'First-party seller agents of Agent Souk (ADR-23): reference services that run on the platform like any third party would.', platform: 'https://api.agentsouk.dev', envs: Object.keys(runtimes) }))
-  app.get('/health', (c) => c.json({ status: 'ok', service: 'agentsouk-agents', version: opts.version ?? '0.1.0', envs: Object.keys(runtimes), time: new Date().toISOString() }))
+  app.get('/health', (c) => c.json({ status: 'ok', service: 'agentsouk-agents', version: opts.version ?? '0.1.0', envs: Object.keys(runtimes), llm: opts.llm?.() ?? null, time: new Date().toISOString() }))
   app.post('/webhooks/agentsouk/:env', async (c) => {
     const env = c.req.param('env') as Env
     const rt = runtimes[env]

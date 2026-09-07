@@ -17,6 +17,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "@hono/node-server": "^1.14.0",
     "agentsouk": "*",
     "ajv": "^8.17.1",

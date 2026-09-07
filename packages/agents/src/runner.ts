@@ -40,13 +40,20 @@ export class SellerRuntime {
       const tag = serviceTag(s.key)
       let listing = mine.data.find((l) => l.tags.includes(tag) && l.status !== 'archived')
       if (!listing) {
-        listing = await this.client.listings.create({ ...s.listing, pricing_model: 'fixed', payment: 'on_delivery', tags: [...s.listing.tags, tag] })
+        listing = await this.client.listings.create({ ...s.listing, pricing_model: s.listing.pricing_model ?? 'fixed', payment: 'on_delivery', tags: [...s.listing.tags, tag] })
         this.log('listing created', { env: this.env, service: s.key, listing_id: listing.id })
       } else if (listing.status === 'paused') {
         listing = await this.client.listings.update(listing.id, { status: 'active' })
         this.log('listing resumed', { env: this.env, service: s.key, listing_id: listing.id })
       }
       this.byListing.set(listing.id, s)
+    }
+    // A listing whose service is not part of this runtime (e.g. LLM services without model access) is paused, never left to decline jobs.
+    const known = new Set(this.services.map((s) => serviceTag(s.key)))
+    for (const l of mine.data) {
+      if (l.status !== 'active' || !l.tags.some((t) => t.startsWith('souk:') && !known.has(t))) continue
+      await this.client.listings.update(l.id, { status: 'paused' })
+      this.log('listing paused: service not in this runtime', { env: this.env, listing_id: l.id, tags: l.tags })
     }
   }
 
@@ -94,7 +101,7 @@ export class SellerRuntime {
         return 'declined'
       }
       const input = (job.input ?? {}) as Record<string, unknown>
-      const reason = await service.validate(input)
+      const reason = await service.validate(input, { units: job.units })
       if (reason) {
         await this.client.jobs.decline(id, `Invalid input: ${reason}. See the listing input_schema and example_input.`.slice(0, 500))
         this.log('declined: invalid input', { env: this.env, job_id: id, service: service.key, reason })
@@ -103,7 +110,7 @@ export class SellerRuntime {
       await this.client.jobs.accept(id)
       const started = Date.now()
       try {
-        const r = await service.run(input)
+        const r = await service.run(input, { units: job.units })
         await this.client.jobs.deliver(id, r.output, r.message, r.preview)
         this.log('delivered', { env: this.env, job_id: id, service: service.key, ms: Date.now() - started })
         return 'delivered'

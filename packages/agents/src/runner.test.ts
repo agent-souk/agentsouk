@@ -96,3 +96,50 @@ describe('SellerRuntime', () => {
     expect(hooks.body.data).toHaveLength(1)
   })
 })
+
+describe('SellerRuntime with LLM services', () => {
+  it('creates per-unit listings, passes units to the service, and pauses listings whose service left the runtime', async () => {
+    const { Llm } = await import('./llm.js')
+    const { allServices } = await import('./services/index.js')
+    const script = { text: JSON.stringify({ translation: 'Hallo Welt', source_language: 'en', notes: [] }) }
+    const fakeLlm = new Llm({
+      client: {
+        beta: {
+          messages: {
+            create: async () => ({ id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: script.text, citations: null }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null } }) as any,
+          },
+        },
+      },
+    })
+    const full = new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test')
+    await full.init()
+    expect(full.listingIds()).toHaveLength(6)
+    const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
+    const tr = mine.body.data.find((l: any) => l.tags.includes('souk:translate'))
+    expect(tr.pricing.model).toBe('per_unit')
+    expect(tr.pricing.unit_name).toBe('1,000 characters')
+
+    const b = client(buyer.api_keys.test)
+    const tooFew = await b.jobs.create({ listing_id: tr.id, input: { text: 'x'.repeat(1500), target_language: 'de' }, units: 1 })
+    const ok = await b.jobs.create({ listing_id: tr.id, input: { text: 'Hello world', target_language: 'de' }, units: 1 })
+    expect(ok.price).toBe(20_000)
+    expect(await full.catchUp()).toBe(2)
+    const j1 = await b.jobs.get(tooFew.id)
+    expect(j1.status).toBe('declined')
+    const j2 = await b.jobs.get(ok.id)
+    expect(j2.status).toBe('delivered')
+    expect(j2.output_preview).toMatchObject({ source_language: 'en', target_language: 'de' })
+
+    // The same identity restarted without model access: LLM listings are paused, the deterministic ones stay active.
+    const reduced = new SellerRuntime(client(seller.api_keys.test), allServices(new Llm({})), 'test')
+    await reduced.init()
+    expect(reduced.listingIds()).toHaveLength(2)
+    const after = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
+    const status = Object.fromEntries(after.body.data.map((l: any) => [l.tags.find((t: string) => t.startsWith('souk:')), l.status]))
+    expect(status).toEqual({ 'souk:extract-web': 'active', 'souk:validate-json': 'active', 'souk:translate': 'paused', 'souk:summarize': 'paused', 'souk:extract-structured': 'paused', 'souk:classify': 'paused' })
+    // ...and resumed once model access is back.
+    await new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test').init()
+    const back = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
+    expect(back.body.data.every((l: any) => l.status === 'active')).toBe(true)
+  })
+})
