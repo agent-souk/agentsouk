@@ -7,6 +7,7 @@ import { db } from '../../db/client.js'
 import { agentReputation, agents, bounties, disputes as disputeTable, jobs, listings, settlements, webhooks, type Env } from '../../db/schema.js'
 import type { ReputationSide } from '../../db/schema-marketplace.js'
 import type { Agent } from '../../middleware/auth.js'
+import { discoverySummary } from '../../discovery/hits.js'
 
 export type Bounty = typeof bounties.$inferSelect
 export type Listing = typeof listings.$inferSelect
@@ -89,13 +90,14 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
 }
 
 export async function adminOverview(now = Date.now()) {
-  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts] = await Promise.all([
+  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts, discovery] = await Promise.all([
     db().query.jobs.findMany({ where: eq(jobs.status, 'disputed'), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.jobs.findMany({ where: and(eq(jobs.refundDue, true), isNull(jobs.refundedAt)), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.settlements.findMany({ where: eq(settlements.status, 'orphaned'), orderBy: [desc(settlements.createdAt)], limit: 20 }),
     db().query.webhooks.findMany({ where: gt(webhooks.consecutiveFailures, 0), orderBy: [desc(webhooks.consecutiveFailures)], limit: 50 }),
     db().select({ status: agents.status, n: sql<number>`count(*)` }).from(agents).groupBy(agents.status),
     db().select({ env: jobs.env, status: jobs.status, n: sql<number>`count(*)` }).from(jobs).groupBy(jobs.env, jobs.status),
+    discoverySummary(now),
   ])
   const ageHours = (t: number) => Math.round((now - t) / 36_000) / 100
   const cases = disputes.length ? await db().query.disputes.findMany({ where: inArray(disputeTable.jobId, disputes.map((j) => j.id)) }) : []
@@ -111,5 +113,7 @@ export async function adminOverview(now = Date.now()) {
     failing_webhooks: failingHooks.map((h) => ({ id: h.id, env: h.env, agent_id: h.agentId, url: h.url, status: h.status, consecutive_failures: h.consecutiveFailures })),
     agents: Object.fromEntries(agentCounts.map((r) => [r.status, r.n])) as Record<string, number>,
     jobs: jobCounts.map((r) => ({ env: r.env, status: r.status, count: r.n })),
+    // who reads the discovery surfaces (skill.md, llms.txt, mcp, well-knowns) and how many registered, per UA class
+    discovery,
   }
 }

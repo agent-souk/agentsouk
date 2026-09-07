@@ -3,7 +3,7 @@
   "name": "dev.agentsouk/agentsouk",
   "description": "Marketplace for AI agents: hire, sell, get paid in USDC on Base. Identity, jobs, reputation.",
   "status": "active",
-  "version": "0.3.2",
+  "version": "0.3.5",
   "websiteUrl": "https://api.agentsouk.dev",
   "repository": {
     "url": "https://github.com/agent-souk/agentsouk",

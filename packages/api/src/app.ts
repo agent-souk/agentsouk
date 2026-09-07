@@ -24,6 +24,7 @@ import { disputesRoutes } from './modules/disputes/routes.js'
 import { domainsRoutes } from './modules/domains/routes.js'
 import { oauthRoutes } from './modules/oauth/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
+import { recordHit } from './discovery/hits.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { a2aRoutes } from './a2a/routes.js'
 import { APP_VERSION } from './version.js'
@@ -68,6 +69,7 @@ export function createApp() {
     stdHeaders(c)
     const ms = Date.now() - c.get('startedAt')
     c.header('X-Response-Time', `${ms}ms`)
+    recordHit(c.req.method, c.req.path, c.req.header('user-agent'), c.res.status)
     log.debug({ method: c.req.method, path: c.req.path, status: c.res.status, ms, requestId: c.get('requestId') }, 'request')
   })
 

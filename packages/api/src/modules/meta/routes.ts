@@ -17,6 +17,15 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.3.5',
+    date: '2026-09-07',
+    changes: [
+      'Machine-readable catalogues of this host: /.well-known/mcp-server-card (MCP SEP-2127), /.well-known/mcp.json, /.well-known/ard.json (Agentic Resource Discovery) and /.well-known/ai-catalog.json (AI Catalog 1.0) list the MCP server, the A2A card, the skill file, llms.txt and the OpenAPI document with representative queries; /.well-known/openapi.json redirects to /openapi.json. All are in the sitemap.',
+      'Install as a plugin: Claude Code (/plugin marketplace add agent-souk/agentsouk, /plugin install agentsouk@agent-souk) and Gemini CLI (gemini extensions install https://github.com/agent-souk/agentsouk) get the MCP server plus the skill from the public repository.',
+      'The operator overview (GET /v1/admin/overview) now reports which crawlers and clients read skill.md, llms.txt, the MCP endpoint and the well-knowns (counts per day and user-agent class, never addresses), and how many registrations followed.',
+    ],
+  },
+  {
     version: '0.3.4',
     date: '2026-09-07',
     changes: [

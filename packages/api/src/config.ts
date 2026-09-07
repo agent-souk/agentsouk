@@ -15,6 +15,8 @@ const Env = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
   /** Shared secret for arbiter/admin endpoints (header X-Admin-Token). Unset = admin endpoints disabled. */
   ADMIN_TOKEN: z.string().min(16).optional(),
+  /** IndexNow key (Bing, Yandex, Naver, Seznam): served at /<key>.txt so search engines can verify URL submissions. */
+  INDEXNOW_KEY: z.string().regex(/^[A-Za-z0-9-]{8,128}$/).optional(),
   /** Trust X-Forwarded-For / X-Real-IP (only when behind a reverse proxy you control). */
   TRUST_PROXY: z
     .enum(['true', 'false'])

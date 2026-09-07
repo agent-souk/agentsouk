@@ -5,6 +5,7 @@ import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
 import { getAgentByIdOrHandle } from '../modules/agents/service.js'
 import { errors } from '../lib/errors.js'
 import { agentCard, errorsMd, llmsTxt, quickstartMd, skillMd, PLATFORM_NAME, tagline } from './text.js'
+import { agentDescriptions, aiCatalog, ardManifest, mcpServerCard, mcpWellKnown } from './wellknown.js'
 import { APP_VERSION } from '../version.js'
 
 /**
@@ -28,6 +29,10 @@ export const SITEMAP_PATHS: [path: string, changefreq: 'hourly' | 'daily' | 'wee
   ['/docs/errors', 'weekly'],
   ['/openapi.json', 'weekly'],
   ['/.well-known/agent-card.json', 'weekly'],
+  ['/.well-known/mcp-server-card', 'weekly'],
+  ['/.well-known/mcp.json', 'weekly'],
+  ['/.well-known/ard.json', 'weekly'],
+  ['/.well-known/ai-catalog.json', 'weekly'],
   ['/.well-known/jwks.json', 'weekly'],
   ['/v1/changelog', 'weekly'],
   ['/v1/payments', 'weekly'],
@@ -64,9 +69,30 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       description: tagline(),
       start: { method: 'POST', path: '/v1/agents', body: { name: '<your name>', description: '<what you do>' } },
       docs: { skill: `${base()}/skill.md`, llms: `${base()}/llms.txt`, llms_full: `${base()}/llms-full.txt`, quickstart: `${base()}/docs/quickstart`, openapi: `${base()}/openapi.json`, errors: `${base()}/docs/errors` },
-      interfaces: { mcp: `${base()}/mcp`, a2a_card: `${base()}/.well-known/agent-card.json`, jwks: `${base()}/.well-known/jwks.json` },
+      interfaces: { mcp: `${base()}/mcp`, mcp_server_card: `${base()}/.well-known/mcp-server-card`, a2a_card: `${base()}/.well-known/agent-card.json`, ard: `${base()}/.well-known/ard.json`, ai_catalog: `${base()}/.well-known/ai-catalog.json`, jwks: `${base()}/.well-known/jwks.json` },
+      install: { claude_code: '/plugin marketplace add agent-souk/agentsouk && /plugin install agentsouk@agent-souk', gemini_cli: 'gemini extensions install https://github.com/agent-souk/agentsouk', npm: 'npx agentsouk register --name "<name>"', pip: 'pip install agentsouk' },
       did: serverKey().did,
     })
+  })
+
+  // Machine-readable catalogues of this host (strategic brief §6 #13). JSON, CORS-open, cacheable.
+  const catalog = (c: { body: (b: string, status?: 200, headers?: Record<string, string>) => Response }, body: unknown, type = 'application/json; charset=utf-8') =>
+    c.body(JSON.stringify(body, null, 2), 200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type', ...discoveryHeaders() })
+  r.get('/.well-known/mcp-server-card', (c) => catalog(c, mcpServerCard(base())))
+  r.get('/.well-known/mcp/server-card.json', (c) => c.redirect('/.well-known/mcp-server-card', 301))
+  r.get('/mcp/server-card', (c) => c.redirect('/.well-known/mcp-server-card', 301))
+  r.get('/.well-known/mcp.json', (c) => catalog(c, mcpWellKnown(base())))
+  r.get('/.well-known/ard.json', (c) => catalog(c, ardManifest(base())))
+  r.get('/.well-known/ai-catalog.json', (c) => catalog(c, aiCatalog(base(), serverKey().did), 'application/ai-catalog+json; charset=utf-8'))
+  r.get('/.well-known/agent-descriptions', (c) => catalog(c, agentDescriptions(base()), 'application/ld+json; charset=utf-8'))
+  r.get('/.well-known/openapi.json', (c) => c.redirect('/openapi.json', 301))
+
+  // IndexNow key file (Bing, Yandex, Naver, Seznam verify URL submissions against it). Only when a key is configured.
+  // Falls through (next) when the name is not the key, so /llms-full.txt and future .txt files keep working.
+  r.get('/:file{[A-Za-z0-9-]{8,128}\\.txt}', async (c, next) => {
+    const key = config().INDEXNOW_KEY
+    if (!key || c.req.param('file') !== `${key}.txt`) return next()
+    return c.body(key, 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' })
   })
 
   // Crawler access (strategic brief §6 #6): every agent search index is welcome; the sitemap lists what is worth reading.

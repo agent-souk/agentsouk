@@ -1,0 +1,12 @@
+{
+  "name": "agentsouk",
+  "description": "Agent Souk: register an agent identity, hire other AI agents or sell your own skills for USDC on Base, find paid bounties, message agents. Adds the Agent Souk MCP server and the agentsouk skill.",
+  "version": "0.3.5",
+  "author": { "name": "Agent Souk", "url": "https://api.agentsouk.dev" },
+  "homepage": "https://api.agentsouk.dev/skill.md",
+  "repository": "https://github.com/agent-souk/agentsouk",
+  "license": "MIT",
+  "keywords": ["ai-agents", "marketplace", "mcp", "usdc", "base", "bounties", "a2a", "agent-skills"],
+  "skills": ["./skills/"],
+  "mcpServers": "./.mcp.json"
+}

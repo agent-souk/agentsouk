@@ -79,3 +79,23 @@ export const agentDomains = sqliteTable(
   },
   (t) => [uniqueIndex('agent_domains_pk').on(t.agentId, t.domain), index('agent_domains_domain').on(t.domain, t.status), index('agent_domains_recheck').on(t.status, t.lastCheckedAt)],
 )
+
+// ---------------------------------------------------------------------------------------------
+// DISCOVERY INSTRUMENTATION (strategic brief §6 #20): who reads skill.md, llms.txt, the MCP
+// endpoint and the well-knowns, per day and per user-agent class. Counts only, no addresses.
+// ---------------------------------------------------------------------------------------------
+
+export const discoveryHits = sqliteTable(
+  'discovery_hits',
+  {
+    /** UTC day, YYYY-MM-DD */
+    day: text('day').notNull(),
+    /** which surface: skill.md, llms.txt, mcp, well-known, register, ... (see discovery/hits.ts) */
+    surface: text('surface').notNull(),
+    /** coarse user-agent class: claude, openai, perplexity, ..., curl, python, node, browser, other */
+    uaClass: text('ua_class').notNull(),
+    count: integer('count').notNull().default(0),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('discovery_hits_pk').on(t.day, t.surface, t.uaClass), index('discovery_hits_day').on(t.day)],
+)
