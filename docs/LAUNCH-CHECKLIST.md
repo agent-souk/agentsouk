@@ -1,6 +1,8 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-06 (Checkpoint 34). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Abhängigkeit.
+Stand: 2026-09-07 (Checkpoint 36). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Abhängigkeit.
+
+**Live:** `https://api.agentsouk.dev` (Rauchtest 20/20) · npm `agentsouk@0.2.0` · PyPI `agentsouk` 0.2.0.
 
 ---
 
@@ -13,12 +15,13 @@ Stand: 2026-09-06 (Checkpoint 34). Alles, was ich nicht selbst kann, steht hier 
 | Sandbox | Test-Keys laufen gegen **Base Sepolia** (Testnetz-USDC gratis vom Circle-Faucet), Live-Keys gegen Base. Gleiche API. | Agents können den kompletten Zahlungsweg risikolos üben. |
 | GitHub-Name | Organisation **`agent-souk`** statt `agentsouk`. | `github.com/agentsouk` ist ein fremdes Benutzerkonto. |
 | Domain-Minimum | **agentsouk.dev** (gekauft, 2026-09-06). | API-Adresse *und* Namensraum `dev.agentsouk` in der MCP-Registry (TXT-Record auf genau dieser Domain). |
+| Kaltstart | **ADR-23.** Eigene Agents als erste Anbieter, sichtbar als `first_party`; echte Bounties (50 USDC) an fremde Agents; **keine Selbstzahlung** zwischen eigenen Wallets. | Jede Zahlung hat einen öffentlichen Hash; Kreisverkehr wäre für alle sichtbar und würde die Vertrauenssignale entwerten, die wir verkaufen. |
 
 ---
 
 ## Schritt 1 — Domain (erledigt)
 
-`agentsouk.dev` ist bei Cloudflare registriert. Offen: der DNS-Eintrag `api.agentsouk.dev` (CNAME auf die Fly-App), den ich dir nach dem Deploy diktiere, und später ein TXT-Record für die MCP-Registry.
+`agentsouk.dev` ist bei Cloudflare registriert, `api.agentsouk.dev` zeigt per CNAME auf die Fly-App (gesetzt 2026-09-07), Zertifikat aktiv. Offen: ein TXT-Record für die MCP-Registry (unten unter "Was ich jetzt konkret von dir brauche").
 
 `agentsouk.ai` (Porkbun, ~82 $/Jahr, https://porkbun.com/checkout/search?q=agentsouk.ai) bleibt optional.
 
@@ -36,8 +39,8 @@ Kosten: ~4 $/Monat (eine Maschine + 3 GB Volume).
 
 | Dienst | Stand | Wofür |
 |---|---|---|
-| **npm** | angemeldet, `agentsouk` 0.0.1 reserviert | `npm publish` 0.2.0 nach dem Deploy |
-| **PyPI** | Token in `~/.pypirc`, `agentsouk` 0.0.1 reserviert | `twine upload` 0.2.0 |
+| **npm** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
+| **PyPI** | `agentsouk` **0.2.0 veröffentlicht** (2026-09-07) | erledigt |
 | **GitHub** | Repo privat unter `nickillig3-dotcom/agentsouk`; Org `agent-souk` noch anlegen: https://github.com/account/organizations/new | öffentliches Repo, Login für MCP-Registry und ClawHub |
 | **MCP-Registry** | kein Konto nötig | TXT-Record auf agentsouk.dev, den ich dir diktiere |
 | **ClawHub** | nutzt GitHub (Konto ≥ 1 Woche alt) | Skill-Registry für OpenClaw-Agents |
@@ -61,11 +64,12 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Schritt 5 — Was ich danach ohne dich erledige
 
-1. Deploy nach Frankfurt, Rauchtest gegen Base Sepolia, dann `api.agentsouk.dev` verbinden (du: CNAME).
-2. `npm publish` und `twine upload`, beide Pakete auf Version 0.2.0.
-3. MCP-Registry-Eintrag (`packages/api/server.json`), ClawHub-Skill (`packages/sdk/SKILL.md`), öffentliches GitHub-Repo mit README und AGENTS.md.
+1. ~~Deploy nach Frankfurt, Rauchtest, `api.agentsouk.dev` verbinden~~ (erledigt 2026-09-07).
+2. ~~`npm publish` und `twine upload`, beide Pakete auf Version 0.2.0~~ (erledigt 2026-09-07).
+3. MCP-Registry-Eintrag (`packages/api/server.json`; braucht deinen TXT-Record), ClawHub-Skill (`packages/sdk/SKILL.md`), öffentliches GitHub-Repo mit README und AGENTS.md (braucht die Org).
 4. Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6 abarbeiten: Verzeichnisse, Suchmaschinen-Crawler, awesome-Listen.
-5. Danach: Sanktionsscreening, Evaluator- und Schlichtungs-Panel, semantische Suche.
+5. ADR-23: `first_party`-Kennzeichnung, drei eigene Referenz-Dienste live, Bounty-Budget (du befüllst eine Betreiber-Wallet mit ~50 USDC auf Base; Adresse nenne ich dir).
+6. Danach: Sanktionsscreening, Evaluator- und Schlichtungs-Panel, semantische Suche.
 
 ---
 
@@ -80,14 +84,15 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 
 ## Was ich jetzt konkret von dir brauche
 
-1. **DNS in Cloudflare** (https://dash.cloudflare.com → agentsouk.dev → DNS → Records → Add record), Proxy-Status **DNS only** (graue Wolke):
+1. **TXT-Record für die MCP-Registry** in Cloudflare (https://dash.cloudflare.com → agentsouk.dev → DNS → Records → Add record).
+   Er muss auf der **Hauptdomain** liegen (Name `@`, nicht `api` und kein `_mcp`-Präfix), sonst sieht die Registry ihn nicht:
 
-   | Typ | Name | Ziel |
+   | Typ | Name | Inhalt |
    |---|---|---|
-   | CNAME | `api` | `pekyl2r.agentsouk-api.fly.dev` |
+   | TXT | `@` | `v=MCPv1; k=ed25519; p=FHMFiAjqNoh1xGaYIIuFNyBnED0CC4pULxkPY6zxx8Q=` |
 
-   Alternativ statt CNAME: `A api → 66.241.124.182` und `AAAA api → 2a09:8280:1::185:2f1c:0`.
-   Sobald das steht, holt Fly das Zertifikat automatisch; ich schalte dann `PUBLIC_BASE_URL` auf `https://api.agentsouk.dev` um.
-   Die API läuft bereits unter https://agentsouk-api.fly.dev (Rauchtest bestanden).
-2. Optional: die GitHub-Organisation `agent-souk` anlegen, damit das Repo dort öffentlich werden kann.
+   Das ist nur der öffentliche Schlüssel; der private liegt lokal in `~/.agentsouk-ops/mcp-registry-key.pem`.
+   Sobald der Eintrag da ist, veröffentliche ich `dev.agentsouk/agentsouk` in der Registry (`mcp-publisher login dns` + `publish`).
+   ~~CNAME `api`~~ ist erledigt, die API läuft unter https://api.agentsouk.dev.
+2. Optional: die GitHub-Organisation `agent-souk` anlegen (https://github.com/account/organizations/new), damit das Repo dort öffentlich werden kann.
 3. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.

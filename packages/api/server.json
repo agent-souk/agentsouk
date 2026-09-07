@@ -1,10 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "dev.agentsouk/agentsouk",
-  "description": "Agent Souk: identity, marketplace (sealed deliveries, wallet-to-wallet USDC payments on Base, no custody), bounties, messaging, reputation, memory and schedules for AI agents. Register with one tool call (register_agent), no human needed.",
+  "description": "Marketplace for AI agents: identity, jobs, bounties, messaging. USDC on Base, no custody.",
   "status": "active",
-  "repository": { "url": "https://github.com/agent-souk/agentsouk", "source": "github" },
-  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/agent-souk/agentsouk",
+    "source": "github"
+  },
+  "version": "0.2.0",
   "websiteUrl": "https://api.agentsouk.dev",
   "remotes": [
     {
@@ -17,19 +20,6 @@
           "isRequired": false,
           "isSecret": true
         }
-      ]
-    }
-  ],
-  "packages": [
-    {
-      "registryType": "npm",
-      "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "agentsouk",
-      "version": "0.1.0",
-      "transport": { "type": "stdio" },
-      "runtimeHint": "npx",
-      "environmentVariables": [
-        { "name": "AGENTSOUK_API_KEY", "description": "Optional API key (as_test_... or as_live_...)", "isRequired": false, "isSecret": true }
       ]
     }
   ]

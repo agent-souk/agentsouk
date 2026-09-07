@@ -2,6 +2,19 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 36: Domain live, SDKs 0.2.0 veröffentlicht
+
+- **`https://api.agentsouk.dev` ist live.** Nick hat den Cloudflare-CNAME gesetzt, Let's Encrypt hat das Zertifikat
+  ausgestellt, `PUBLIC_BASE_URL` ist umgeschaltet (Maschine neu gestartet). Rauchtest gegen die Domain 20/20 bestanden.
+- **npm `agentsouk@0.2.0` und PyPI `agentsouk` 0.2.0 veröffentlicht** (2026-09-07, npm-Konto `nickaiworld`, PyPI-Token in `~/.pypirc`).
+- **ADR-23 (Kaltstart)** festgehalten: eigene Agents als erste Anbieter mit `first_party`-Kennzeichnung, echte Bounties
+  (Startbudget 50 USDC aus einer Betreiber-Wallet), keine Selbstzahlung (Live-Sperre für Jobs zwischen `first_party`-Agents).
+  Noch nicht gebaut; Reihenfolge steht in den nächsten Schritten.
+- **MCP-Registry vorbereitet:** Ed25519-Schlüssel für die DNS-Verifikation des Namensraums `dev.agentsouk` liegt in
+  `~/.agentsouk-ops/mcp-registry-key.pem` (nicht im Repo). Nick muss den TXT-Record setzen (Text in
+  `docs/LAUNCH-CHECKLIST.md`), danach `mcp-publisher login dns --domain agentsouk.dev --private-key <seed-hex>` und
+  `mcp-publisher publish` im Ordner `packages/api`.
+
 ## Stand 2026-09-07, Checkpoint 35: Review-Findings eingebaut, 129 Tests grün
 
 Beide Review-Agenten starben am Session-Limit, hinterließen aber 23 Kandidaten; alle geprüft, neun Punkte umgesetzt
@@ -103,23 +116,31 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
 
 ### Nächste Schritte (Reihenfolge)
 
-1. Findings des adversarialen Reviews (läuft/lief am 2026-09-06 abends, Notizen im Session-Scratchpad) einbauen, Tests, Checkpoint.
-2. Nick: DNS-Eintrag setzen (oben). Dann Domain umschalten und Rauchtest gegen `api.agentsouk.dev`.
-3. npm/PyPI 0.2.0 veröffentlichen (`packages/sdk`: `npm publish`; `sdk-python`: `python -m build && twine upload`).
-4. MCP-Registry (`packages/api/server.json`, TXT-Record auf agentsouk.dev), ClawHub-Skill, Repo öffentlich,
-   Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6.
-5. Danach: Sanktionsscreening, Evaluator-/Schlichtungs-Panel, semantische Suche, `receiveWithAuthorization`-
-   Pfad als gasfreie Zahlmethode dokumentieren (der Käufer reicht selbst beim Facilitator ein; schon im 402 erklärt).
+1. ~~Review-Findings einbauen~~ (Checkpoint 35). ~~DNS, Domain umschalten, Rauchtest~~ (Checkpoint 36).
+   ~~npm/PyPI 0.2.0~~ (Checkpoint 36).
+2. **MCP-Registry:** Nick setzt den TXT-Record (LAUNCH-CHECKLIST), dann `mcp-publisher login dns` + `publish`
+   mit `packages/api/server.json` (Version dort auf 0.2.0 gezogen, nur `remotes`, kein stdio-Paket).
+3. ClawHub-Skill (`packages/sdk/SKILL.md`), Repo öffentlich (Org `agent-souk`, Nick), GitHub-Topics,
+   Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6 (Verzeichnisse, Awesome-Listen, llms.txt-Crawler).
+4. **ADR-23 umsetzen:** Spalte `first_party` (agents, listings) + Admin-Endpunkt + Live-Sperre `first_party_self_dealing`
+   + Stats-Aufschlüsselung; `packages/agents` mit drei Referenz-Diensten (Übersetzung, Zusammenfassung, Web-Extraktion)
+   als normale SDK-Nutzer; Bounty-Budget 50 USDC (Nick befüllt eine Betreiber-Wallet, Schlüssel lokal).
+5. Beim nächsten Deploy: Health-Version (`0.1.0`) auf 0.2.0 ziehen.
+6. Danach: Sanktionsscreening der Wallet-Adressen, Evaluator-/Schlichtungs-Panel, semantische Suche,
+   `receiveWithAuthorization`-Pfad als gasfreie Zahlmethode dokumentieren (der Käufer reicht selbst beim Facilitator ein).
 
 ## Setup-Stand
 
 - **Domain: agentsouk.dev gehört Nick** (registriert 2026-09-06 15:54 UTC, Cloudflare, aktiv bis 2027-09-06,
-  NS `rachel.ns.cloudflare.com` / `tony.ns.cloudflare.com`). DNS-Einträge noch nicht gesetzt.
+  NS `rachel.ns.cloudflare.com` / `tony.ns.cloudflare.com`). DNS: `CNAME api → pekyl2r.agentsouk-api.fly.dev`
+  gesetzt (2026-09-07, DNS only), Zertifikat aktiv. Offen: TXT-Record für die MCP-Registry (LAUNCH-CHECKLIST).
   `.ai` verschoben (Mindestlaufzeit zwei Jahre, ~160 $), `.io` frei, `.com` geparkt.
-- **npm:** angemeldet als `nickaiworld`, Token in `~/.npmrc`. Paket `agentsouk` **0.0.1 veröffentlicht** (Platzhalter).
-- **PyPI:** Token in `~/.pypirc`. Paket `agentsouk` **0.0.1 veröffentlicht** (Platzhalter).
-- **flyctl:** v0.4.99 unter `~/.fly/bin/flyctl.exe`, angemeldet als `nickillig3@gmail.com`, Org `personal`,
-  **noch keine App angelegt**, Name `agentsouk-api` frei.
+- **npm:** angemeldet als `nickaiworld`, Token in `~/.npmrc`. Paket `agentsouk` **0.2.0 veröffentlicht** (2026-09-07).
+- **PyPI:** Token in `~/.pypirc`. Paket `agentsouk` **0.2.0 veröffentlicht** (2026-09-07).
+- **flyctl:** v0.4.99 unter `~/.fly/bin/flyctl.exe` (nicht auf dem PowerShell-Pfad; in Bash
+  `export PATH="$HOME/.fly/bin:$PATH"`), angemeldet als `nickillig3@gmail.com`, Org `personal`, App `agentsouk-api` in `fra`.
+- **MCP-Registry:** Ed25519-Schlüssel `~/.agentsouk-ops/mcp-registry-key.pem` (Seed-Hex:
+  `openssl pkey -in ~/.agentsouk-ops/mcp-registry-key.pem -noout -text | grep -A3 "priv:" | tail -n +2 | tr -d ' :\n'`).
 - **GitHub:** `nickillig3-dotcom`, Repo `https://github.com/nickillig3-dotcom/agentsouk`, **privat**, Branch `main`.
   Org `agent-souk` noch nicht angelegt.
 - **Rabby-Adresse** liegt auskommentiert in `packages/api/.env`. Im neuen Modell wird sie nur gebraucht, falls
