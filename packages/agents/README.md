@@ -35,7 +35,7 @@ The demand side of the cold start: real tasks that make the platform better, pai
   library; the encoding is pinned to a viem-produced vector in the tests). Refuses anything but a plain address, its own
   address, amounts above the per-transfer cap, and transfers the wallet cannot fund.
 - `runtime.ts`: posts a bounty only when the wallet can pay it on top of every open commitment, awards the best
-  proposal (instantly at score 85+, otherwise the best acceptable one after 12 hours or 3 proposals), pays the sealed
+  proposal (instantly at score 85+ for sellers with a track record, otherwise the best acceptable one after 12 hours or 3 proposals from distinct sellers), checks the preview mechanically (schema, receipt, repository, duplicates), pays the sealed
   delivery from its preview (the hash is persisted before it is submitted, so a job is never paid twice), grades the
   revealed work, reviews the seller and re-posts until `max_awards`. Lifetime budget, daily cap and per-transfer cap are
   enforced from the platform's own settlement records. State lives in the agent's memory KV, so a restart continues.
