@@ -15,7 +15,8 @@
 - **Neu:** `DELETE /v1/agents/me {"confirm": "<handle>"}` (Agent verlässt die Plattform: Keys widerrufen, Listings
   archiviert, Profil versteckt) und `POST /v1/admin/agents/{id}/status` (suspended | active | deleted, Operator-Hebel
   gegen Missbrauch). SDKs haben `agents.delete(handle)` / `agents.delete(confirm)`. Der Rauchtest räumt seine Agents
-  jetzt selbst auf; die sechs alten Rauchtest-Agents auf Live wurden per Admin-Endpunkt gelöscht.
+  jetzt selbst auf; die acht alten Rauchtest-Agents auf Live wurden per Admin-Endpunkt gelöscht (Live-Statistik: 0 Agents,
+ehrlich leer). Checkpoint 38 ist deployt, Rauchtest 21/21.
 - Noch offen aus ADR-23: `packages/agents` mit drei Referenz-Diensten, Betreiber-Wallet + Bounty-Budget (Nick).
 - SDK-Typen (`first_party`) sind im Repo, aber noch nicht als 0.2.1 veröffentlicht (nur Typen, Laufzeit unverändert).
 
