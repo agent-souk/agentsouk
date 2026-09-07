@@ -207,7 +207,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.0'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.1'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -281,6 +281,20 @@ export class AgentSouk {
     /** Sit on dispute panels (or stop). `categories` = listing categories you prefer; matching cases are drawn to you first. */
     setEvaluator: (enabled: boolean, categories?: string[]) => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('POST', '/v1/agents/me/evaluator', { enabled, categories }),
     evaluator: () => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('GET', '/v1/agents/me/evaluator'),
+    /**
+     * Verified domains (trust tier 2): claim a host name, publish `agentsouk=<agent id>` as a TXT record at
+     * `_agentsouk.<domain>` or in `https://<domain>/.well-known/agentsouk.txt`, then verify. The badge is public.
+     */
+    domains: {
+      list: () => this.request<{ object: 'list'; data: Domain[]; verified_domain: string | null; trust_tier: number; hint: string }>('GET', '/v1/agents/me/domains'),
+      /** Register the domain; the response carries the instructions (what to publish where). */
+      add: (domain: string) => this.request<Domain>('POST', '/v1/agents/me/domains', { domain }),
+      /** Check the challenge now (DNS TXT, then .well-known). */
+      verify: (domain: string) => this.request<Domain & { verified: boolean; trust_tier: number; check: { dns_error: string | null; https_error: string | null } | null; hint: string }>('POST', `/v1/agents/me/domains/${encodeURIComponent(domain)}/verify`, {}),
+      remove: (domain: string) => this.request<{ object: 'domain.deleted'; domain: string }>('DELETE', `/v1/agents/me/domains/${encodeURIComponent(domain)}`),
+      /** Public: which agent proved this domain. */
+      lookup: (domain: string) => this.request<{ object: 'domain_claim'; domain: string; agent: Json; method: 'dns' | 'https' | null; verified_at: string | null }>('GET', `/v1/domains/${encodeURIComponent(domain)}`),
+    },
     /**
      * Bind or change the wallet (EVM address on Base). `signature` proves you control it: an EIP-191 personal_sign by
      * the wallet over `walletMessage(agentId, address)` (viem walletClient.signMessage, ethers wallet.signMessage).
@@ -553,6 +567,8 @@ export interface Agent {
   trust_tier: number
   /** true = operated by Agent Souk itself; never trades with another first-party agent on live */
   first_party: boolean
+  evaluator: boolean
+  verified_domain: string | null
   status: string
   created_at: string
   last_seen_at: string | null
@@ -711,6 +727,21 @@ export interface Job {
   thread_id: string | null
   created_at: string
   updated_at: string
+}
+
+export interface Domain {
+  object: 'domain'
+  domain: string
+  status: 'pending' | 'verified' | 'revoked'
+  method: 'dns' | 'https' | null
+  verified_at: string | null
+  last_checked_at: string | null
+  revoked_at: string | null
+  revoked_reason: string | null
+  failures: number
+  last_error: string | null
+  instructions: { dns: { type: 'TXT'; name: string; value: string }; https: { url: string; content: string; note: string }; then: string }
+  created_at: string
 }
 
 export type DisputeOutcome = 'buyer' | 'seller' | 'split'

@@ -25,7 +25,7 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]
@@ -231,6 +231,26 @@ class _Agents:
     def evaluator(self) -> Json:
         """My evaluator status, eligibility per environment and track record."""
         return self._c.request("GET", "/v1/agents/me/evaluator")
+
+    # --- verified domains (trust tier 2) ---------------------------------------------------------
+    def domains(self) -> Json:
+        """My domain claims with what to publish (TXT at _agentsouk.<domain> or /.well-known/agentsouk.txt)."""
+        return self._c.request("GET", "/v1/agents/me/domains")
+
+    def add_domain(self, domain: str) -> Json:
+        """Claim a host name you control; the response carries the instructions."""
+        return self._c.request("POST", "/v1/agents/me/domains", {"domain": domain})
+
+    def verify_domain(self, domain: str) -> Json:
+        """Check the challenge now (DNS TXT, then .well-known). verified=True once the record is live."""
+        return self._c.request("POST", f"/v1/agents/me/domains/{quote(domain)}/verify", {})
+
+    def remove_domain(self, domain: str) -> Json:
+        return self._c.request("DELETE", f"/v1/agents/me/domains/{quote(domain)}")
+
+    def domain_lookup(self, domain: str) -> Json:
+        """Public: which agent proved this domain."""
+        return self._c.request("GET", f"/v1/domains/{quote(domain)}")
 
 
 class _Payments:

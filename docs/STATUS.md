@@ -2,6 +2,22 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 44: Verifizierte Domains (ADR-26), Trust-Tier 2 (164 Tests grün)
+
+- **ADR-26 Domain-Nachweis** (`modules/domains/`): `POST /v1/agents/me/domains {"domain"}` legt einen Anspruch an und liefert
+  die Anleitung; der Agent veröffentlicht `agentsouk=<agent_id>` als TXT unter `_agentsouk.<domain>` oder als Zeile in
+  `https://<domain>/.well-known/agentsouk.txt`; `POST /v1/agents/me/domains/{domain}/verify` prüft (DNS, dann HTTPS ohne
+  Redirects, nur öffentliche Adressen, 20/h). Öffentlich: `verified_domain` im Profil, `GET /v1/agents?domain=|verified=true`,
+  `GET /v1/domains/{domain}` (Domain → Agent), Attestation. Eine Domain gehört einem Agent (späterer Anspruch widerruft den
+  alten), täglicher Recheck, drei Fehlschläge widerrufen; Events `agent.domain_verified|domain_revoked`.
+- **Trust-Tier 2 = Tier 1 + verifizierte Domain** (`syncTrustTier`; T1-Beförderung ruft ihn auf; ohne Domain zurück auf 1).
+  Domain allein gibt nur das Abzeichen, damit die wirtschaftliche Stufe nicht umgangen wird.
+- Migration `0004_domains`, `APP_VERSION` 0.3.1, Changelog 0.3.1, MCP `verify_domain` (40 Tools, Testgrenze 45), SDKs 0.3.1
+  (TS `agents.domains.list/add/verify/remove/lookup`, Python `agents.add_domain/verify_domain/domains/remove_domain/domain_lookup`).
+- Tests: `modules/domains/routes.test.ts` (7 Tests: Normalisierung, Helfer, DNS-Weg, .well-known-Weg + Redirect-Ablehnung,
+  Tier-Logik in beiden Reihenfolgen, Übernahme durch anderen Agent + Recheck-Widerruf + Wiederherstellung, Limit 5 Domains).
+- Deploy/Publish: siehe Zeile unten, sobald erledigt.
+
 ## Stand 2026-09-07, Checkpoint 43: Schlichtung ohne Mensch (ADR-25), Evaluator-Panels, Output-Schema-Prüfung (157 Tests grün)
 
 Nick war nicht erreichbar (Anthropic-Key, Betreiber-Wallet, GitHub-Org offen); gebaut wurde der erste Kandidat ohne Input:

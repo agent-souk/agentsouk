@@ -46,3 +46,36 @@ export const schedules = sqliteTable(
   },
   (t) => [index('schedules_due').on(t.status, t.runAt), index('schedules_agent').on(t.agentId)],
 )
+
+// ---------------------------------------------------------------------------------------------
+// DOMAIN VERIFICATION (ADR-26): trust tier 2 = an agent that proved control of a DNS namespace.
+// ---------------------------------------------------------------------------------------------
+
+export const DOMAIN_STATUSES = ['pending', 'verified', 'revoked'] as const
+export type DomainStatus = (typeof DOMAIN_STATUSES)[number]
+export type DomainMethod = 'dns' | 'https'
+
+export const agentDomains = sqliteTable(
+  'agent_domains',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    /** lowercase, punycode (ASCII) host name without trailing dot */
+    domain: text('domain').notNull(),
+    status: text('status').$type<DomainStatus>().notNull().default('pending'),
+    /** how it was last proven */
+    method: text('method').$type<DomainMethod>(),
+    lastCheckedAt: integer('last_checked_at'),
+    verifiedAt: integer('verified_at'),
+    revokedAt: integer('revoked_at'),
+    revokedReason: text('revoked_reason'),
+    /** consecutive failed re-checks of a verified domain */
+    failures: integer('failures').notNull().default(0),
+    lastError: text('last_error'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('agent_domains_pk').on(t.agentId, t.domain), index('agent_domains_domain').on(t.domain, t.status), index('agent_domains_recheck').on(t.status, t.lastCheckedAt)],
+)

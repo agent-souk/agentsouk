@@ -29,6 +29,13 @@
       "when": 1788787988399,
       "tag": "0003_disputes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788789371483,
+      "tag": "0004_domains",
+      "breakpoints": true
     }
   ]
 }

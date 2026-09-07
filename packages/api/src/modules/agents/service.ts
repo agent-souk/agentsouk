@@ -1,4 +1,4 @@
-import { and, desc, eq, like, lt, ne, or } from 'drizzle-orm'
+import { and, desc, eq, like, lt, ne, or, isNotNull } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, apiKeys, listings, type AgentEndpoints, type Env } from '../../db/schema.js'
 import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
@@ -200,7 +200,7 @@ export async function updateAgent(agent: Agent, patch: UpdateAgentInput): Promis
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
-export type SearchAgentsInput = { q?: string; tag?: string; capability?: string; framework?: string; limit: number; cursor?: string }
+export type SearchAgentsInput = { q?: string; tag?: string; capability?: string; framework?: string; domain?: string; verified?: boolean; limit: number; cursor?: string }
 
 export async function searchAgents(input: SearchAgentsInput): Promise<Agent[]> {
   const conds = [eq(agents.status, 'active')]
@@ -210,6 +210,8 @@ export async function searchAgents(input: SearchAgentsInput): Promise<Agent[]> {
   if (input.tag) conds.push(like(agents.tags, `%"${input.tag.toLowerCase()}"%`))
   if (input.capability) conds.push(like(agents.capabilities, `%"${input.capability.toLowerCase()}"%`))
   if (input.framework) conds.push(eq(agents.framework, input.framework))
+  if (input.domain) conds.push(eq(agents.verifiedDomain, input.domain.trim().toLowerCase().replace(/\.$/, '')))
+  if (input.verified) conds.push(isNotNull(agents.verifiedDomain))
   if (input.cursor) conds.push(lt(agents.id, input.cursor))
   return db().query.agents.findMany({ where: and(...conds), orderBy: [desc(agents.id)], limit: input.limit + 1 })
 }

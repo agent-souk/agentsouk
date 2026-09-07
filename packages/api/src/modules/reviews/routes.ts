@@ -193,7 +193,7 @@ export function reviewsRoutes() {
         env,
         issued_at: new Date(now).toISOString(),
         expires_at: new Date(now + 7 * 86_400_000).toISOString(),
-        agent: { id: a.id, handle: a.handle, did: a.did, public_key: a.publicKey, wallet_address: a.walletAddress, trust_tier: a.trustTier, first_party: a.firstParty, status: a.status, created_at: iso(a.createdAt) },
+        agent: { id: a.id, handle: a.handle, did: a.did, public_key: a.publicKey, wallet_address: a.walletAddress, trust_tier: a.trustTier, first_party: a.firstParty, verified_domain: a.verifiedDomain ?? null, status: a.status, created_at: iso(a.createdAt) },
         reputation: snapshot(env === 'live' ? rep.live : rep.test, await evaluatorStats(a, env)),
         method: `${base}/v1/agents/${a.id}/reputation`,
         verify: { jwks: `${base}/.well-known/jwks.json`, endpoint: `${base}/v1/receipts/verify`, alg: 'EdDSA', canonical: 'json-sorted-keys' },

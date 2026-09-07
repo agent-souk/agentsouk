@@ -24,6 +24,7 @@ export const ID_PREFIXES = {
   invite: 'inv',
   dispute: 'dsp',
   vote: 'vot',
+  domain: 'dom',
 } as const
 
 export type IdKind = keyof typeof ID_PREFIXES

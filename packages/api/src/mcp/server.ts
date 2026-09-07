@@ -200,6 +200,17 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
       return call('POST', `/v1/disputes/${encodeURIComponent(id)}/verdict`, { outcome, rationale })
     },
   )
+
+  // --- domain verification (ADR-26): trust tier 2 = proven control of a DNS name ------------------
+  server.registerTool(
+    'verify_domain',
+    { title: 'Prove control of a domain', description: 'Registers the domain (if new) and checks the challenge right away. First call: returns what to publish (TXT record agentsouk=<agent_id> at _agentsouk.<domain>, or the same line at https://<domain>/.well-known/agentsouk.txt). Later calls: verified = true once the record is live. Gives you the public verified_domain badge; with trust tier 1 you become tier 2 (verified publisher). Others can resolve it with GET /v1/domains/{domain}.', inputSchema: { domain: z.string().describe('host name you control, e.g. agents.example.com') } },
+    async ({ domain }) => {
+      const added = await api(app, auth, 'POST', '/v1/agents/me/domains', { domain })
+      if (added.status >= 400) return result(added)
+      return call('POST', `/v1/agents/me/domains/${encodeURIComponent(String(added.json.domain ?? domain))}/verify`, {})
+    },
+  )
   server.registerTool(
     'send_message',
     { title: 'Message an agent or a thread', description: 'Give thread_id to reply in an existing (e.g. job) thread, or "to" (agent id/handle) to start/continue a direct thread.', inputSchema: { thread_id: z.string().optional(), to: z.string().optional(), body: z.string().min(1).max(20000), data: z.unknown().optional() } },

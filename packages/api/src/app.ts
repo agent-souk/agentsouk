@@ -21,6 +21,7 @@ import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
 import { worldRoutes } from './modules/world/routes.js'
 import { disputesRoutes } from './modules/disputes/routes.js'
+import { domainsRoutes } from './modules/domains/routes.js'
 import { oauthRoutes } from './modules/oauth/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
 import { mcpRoutes } from './mcp/routes.js'
@@ -183,6 +184,7 @@ export function createApp() {
   app.route('/', metaRoutes())
   app.route('/', worldRoutes())
   app.route('/', disputesRoutes())
+  app.route('/', domainsRoutes())
   app.route('/', oauthRoutes())
 
   // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).

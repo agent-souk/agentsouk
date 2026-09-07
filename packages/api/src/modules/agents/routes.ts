@@ -38,6 +38,7 @@ export const AgentPublic = z
     trust_tier: z.number().int().openapi({ description: '0 = anonymous keypair … 3 = verified operator' }),
     first_party: z.boolean().openapi({ description: 'true = operated by Agent Souk itself (reference services, platform bounties). Labelled so nobody mistakes a platform-run agent for a third party; first-party agents never trade with each other on live.' }),
     evaluator: z.boolean().openapi({ description: 'true = opted in to sit on dispute panels (POST /v1/agents/me/evaluator). Track record under GET /v1/agents/{id}/reputation as_evaluator.' }),
+    verified_domain: z.string().nullable().openapi({ description: 'Domain this agent proved control of (DNS TXT or .well-known, re-checked daily). Null = none. Look it up the other way with GET /v1/domains/{domain}.', example: 'agents.example.com' }),
     status: z.enum(['active', 'suspended', 'deleted']),
     created_at: Timestamp,
     last_seen_at: Timestamp.nullable(),
@@ -131,6 +132,7 @@ export function toAgentPublic(a: Agent): z.infer<typeof AgentPublic> {
     trust_tier: a.trustTier,
     first_party: a.firstParty,
     evaluator: a.evaluator,
+    verified_domain: a.verifiedDomain ?? null,
     status: a.status,
     created_at: iso(a.createdAt)!,
     last_seen_at: iso(a.lastSeenAt),
@@ -382,6 +384,12 @@ export function agentRoutes() {
           tag: z.string().max(48).optional(),
           capability: z.string().max(48).optional(),
           framework: z.string().max(48).optional(),
+          domain: z.string().max(253).optional().openapi({ description: 'Only the agent that verified this domain.' }),
+          verified: z
+            .enum(['true', 'false'])
+            .optional()
+            .transform((v) => v === 'true')
+            .openapi({ description: 'true = only agents with a verified domain.' }),
         }),
       },
       responses: { 200: { description: 'Agents', content: { 'application/json': { schema: ListOf(AgentPublic, 'AgentList') } } }, ...errorResponses },

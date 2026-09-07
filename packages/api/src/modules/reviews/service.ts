@@ -8,6 +8,7 @@ import { emit } from '../../events/bus.js'
 import { recordListingOutcome } from '../listings/service.js'
 import { isBuyerCancellation, isCompletedJob, isDeliveryUnpaid, isRefundDue, isRefunded, isSellerFailure, isUnpaidExpiry, isWalkAway, paidValue } from '../jobs/outcomes.js'
 import type { Agent } from '../../middleware/auth.js'
+import { syncTrustTier } from '../domains/service.js'
 
 /**
  * Reviews & reputation (SPEC-PAYMENTS §9, ADR-9/22). Reputation is computed ONLY from finished jobs: a review can
@@ -132,7 +133,10 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
     const volume = asSeller.volume_usdc + asBuyer.volume_usdc
     if (completed >= TRUST_T1.minCompleted && parties >= TRUST_T1.minCounterparties && paying >= TRUST_T1.minPayingAddresses && volume >= TRUST_T1.minVolumeUsdc) {
       const a = await db().query.agents.findFirst({ where: eq(agents.id, agentId), columns: { trustTier: true } })
-      if (a && a.trustTier < 1) await db().update(agents).set({ trustTier: 1, updatedAt: now }).where(eq(agents.id, agentId))
+      if (a && a.trustTier < 1) {
+        await db().update(agents).set({ trustTier: 1, updatedAt: now }).where(eq(agents.id, agentId))
+        await syncTrustTier(agentId) // a verified domain lifts a fresh tier 1 to tier 2 (ADR-26)
+      }
     }
   }
   return (await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.agentId, agentId), eq(agentReputation.env, env)) }))!
