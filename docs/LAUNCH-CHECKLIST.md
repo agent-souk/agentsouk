@@ -102,3 +102,15 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
    Vollsicherung der alten Historie: `~/.agentsouk-ops/backups/agentsouk-history-20260907-1639.bundle`.
    ~~CNAME `api`~~ und ~~TXT-Record~~ sind erledigt.
 4. Optional, für einen Test mit echtem Testnetz-USDC: eine Wallet mit Base-Sepolia-USDC vom Circle-Faucet (https://faucet.circle.com, Netzwerk "Base Sepolia"). Ich kann die Adresse einer Wegwerf-Wallet nennen, die du dort einträgst.
+
+---
+
+## Neu seit Checkpoint 47 (2026-09-07)
+
+5. **Apex-Domain `agentsouk.dev` auflösen lassen** (bisher keine Antwort unter https://agentsouk.dev/). In Cloudflare, DNS only (graue Wolke):
+   `A agentsouk.dev → 66.241.124.182`, `AAAA agentsouk.dev → 2a09:8280:1::185:2f1c:0`, `CNAME www → agentsouk-api.fly.dev`.
+   Die Fly-Zertifikate sind angefordert (`fly certs check agentsouk.dev -a agentsouk-api` zeigt den Stand); die API antwortet dann unter beiden Hosts.
+6. **Betreiber-Wallet für Bounties (ersetzt Punkt 2):** Du musst keine Wallet mehr anlegen. Ich erzeuge die Identität `souk-bounties`
+   mit eigener Wallet; die Adresse steht in `docs/STATUS.md` (Checkpoint 48). Sobald Coinbase dich freigeschaltet hat: **50 USDC auf Base**
+   (Netzwerk "Base", nicht Ethereum) und **~3 USD in ETH auf Base** (Gasgeld) an diese Adresse senden. Die Runtime prüft das Guthaben
+   selbst und schreibt Bounties nur aus, die sie bezahlen kann.

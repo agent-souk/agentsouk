@@ -2,6 +2,27 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 47: Crawler-Zugang (API 0.3.3), LLM-Dienste live auf `souk-services`
+
+- **API 0.3.3 deployt:** `/robots.txt` (alle Agent-Crawler namentlich erlaubt, Sitemap-Link), `/sitemap.xml` (öffentliche Seiten,
+  im Test alle auf 200 geprüft), `X-Llms-Txt`- und `Link rel="llms-txt"/"agent-skill"`-Header auf allen Doku-Antworten,
+  `GET /` mit `Accept: text/markdown` liefert den Doku-Index. Changelog 0.3.3. Live geprüft (Header sichtbar).
+- **Apex-Domain:** `https://agentsouk.dev/` löste bisher gar nicht auf. Fly-Zertifikate für `agentsouk.dev` und `www.agentsouk.dev`
+  sind angefordert; **Nick muss A/AAAA setzen** (siehe LAUNCH-CHECKLIST). Danach liefert die API unter beiden Hosts.
+- **LLM-Dienste (ADR-23, Rest):** `packages/agents/src/llm.ts` (Anthropic SDK, `claude-opus-5`, Tagesbudget
+  `LLM_DAILY_BUDGET_USD` = 5, Refusal/Truncation → ehrlicher Abbruch statt Müll-Lieferung, Kundentext immer als Daten in
+  `<input>`-Tags, Server-Fallback bei Policy-Ablehnung). Vier `per_unit`-Listings: `translate` 0,02 USDC je 1.000 Zeichen,
+  `summarize` 0,04 je 10.000 Zeichen (Text oder URL), `extract-structured` 0,03 je 10.000 Zeichen (ajv-geprüft gegen das
+  Käufer-Schema), `classify` 0,02 je 10 Items. `ServiceDef.validate/run` bekommen `{units}`; Listings ohne Dienst im Prozess
+  werden pausiert (und wieder aktiviert). 37 Tests in `packages/agents` grün (Fake-Client, Ende-zu-Ende gegen die API im Prozess).
+- **Deployt:** Fly-Secrets `ANTHROPIC_API_KEY`, `LLM_DAILY_BUDGET_USD` auf `agentsouk-agents`; `/health.llm` zeigt Budget/Verbrauch.
+  **Sandbox-Rauchtest 4/4** mit echten Modellaufrufen (`packages/agents/scripts/smoke-llm.ts`), Wegwerf-Käufer wieder gelöscht.
+  Live: 6 Listings von `souk-services` in beiden Umgebungen.
+- Aufgeräumt: Wegwerf-Agent `recon-buyer-probe` (Live-Probe der Vorsession) gelöscht, offener Live-Job storniert, Probe-Skripte entfernt.
+- **In Arbeit:** Bounty-Betreiber-Runtime (`souk-bounties`: eigene Identität mit bezahlender Wallet, USDC-Sender auf Base,
+  Bounty-Katalog mit echten Aufgaben, LLM-Bewertung von Angeboten und Lieferungen, Ausgabenlimits), damit Nicks 50 USDC
+  sofort arbeiten, sobald sie auf der Wallet liegen.
+
 ## Einrichtung 2026-09-07 (nach Checkpoint 45)
 
 - **Git-Historie umgeschrieben (Nicks Entscheidung: umschreiben).** Die Wallet-Adresse aus `docs/LEGAL-BRIEFING.md` ist
