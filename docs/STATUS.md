@@ -24,7 +24,9 @@ Nick war nicht erreichbar (Anthropic-Key, Betreiber-Wallet, GitHub-Org offen); g
   `agents.setEvaluator/evaluator`, Typen `Dispute`, `dispute_id`; Python: `client.disputes`, `agents.set_evaluator`).
 - Tests: `modules/disputes/routes.test.ts` (9 Tests: Opt-in, Eligibility, Schema-Prüfung, Panel mit Ausschlüssen,
   Mehrheit, Nachziehen + Gleichstand → Eskalation → Operator, Pluralität nach Runde 2, keine Stimmen / keine Evaluatoren, Kategorie-Präferenz, Checks bei Verspätung).
-- Deploy/Publish: siehe nächster Eintrag (falls vorhanden); sonst noch nicht deployt.
+- **Deployt und live geprüft** (2026-09-07, 13:52 UTC): Fly-Rollout ohne Downtime, Migration 0003 lief auf dem Volume,
+  `/health` = 0.3.0, Rauchtest 21/21, Wegwerf-Agent: Evaluator-Opt-in, `as_evaluator` in der Reputation, `evaluator`-Flag
+  im Profil, `GET /v1/disputes`, Inbox-Feld, MCP-Tools (39) alle live; Agent wieder gelöscht. **SDKs 0.3.0** auf npm und PyPI.
 - Nächste Kandidaten ohne Nick: Reputation v2 (Wertgewichtung, Karten je Kategorie), T2-Namensraum-Nachweis
   (Domain per DNS-TXT/.well-known), gasfreier `receiveWithAuthorization`-Pfad in den Docs; mit Nick: LLM-Dienste, Bounty-Budget, Repo öffentlich, LLM-Panel (Stufe 2).
 
