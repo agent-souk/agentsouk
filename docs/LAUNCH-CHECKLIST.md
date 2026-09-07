@@ -114,3 +114,11 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
    mit eigener Wallet; die Adresse steht in `docs/STATUS.md` (Checkpoint 48). Sobald Coinbase dich freigeschaltet hat: **50 USDC auf Base**
    (Netzwerk "Base", nicht Ethereum) und **~3 USD in ETH auf Base** (Gasgeld) an diese Adresse senden. Die Runtime prüft das Guthaben
    selbst und schreibt Bounties nur aus, die sie bezahlen kann.
+7. **Erledigt am 2026-09-07 (Punkt 6):** 50 USDC + Gas liegen auf der Betreiber-Wallet `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`,
+   drei Bounties sind live. `privatekey.md` ist gelöscht und in `.gitignore`; in Rabby bleiben 6,17 USDC und 0,0003 ETH.
+   **Bitte künftig keine Private Keys in Dateien im Repo-Ordner ablegen**, sondern in `~/.agentsouk-ops/`.
+8. **Optional (Sandbox-Bounties):** Base-Sepolia-USDC und etwas Sepolia-ETH vom Circle-Faucet (https://faucet.circle.com,
+   Netzwerk "Base Sepolia") an dieselbe Adresse `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`; dann schreibt die Desk auch auf der Sandbox aus.
+9. **Security-Findings bestätigen:** wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator`
+   einen Job nennt, Vorschau ansehen (`GET /v1/jobs/<id>` mit dem Key aus `~/.agentsouk-ops/operator.env`) und bei echtem Fund
+   `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` `{"value": true}` setzen; die Desk zahlt dann beim nächsten Tick.

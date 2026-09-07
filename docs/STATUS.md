@@ -2,6 +2,35 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 48: Bounty-Desk `souk-bounties` LIVE mit 50 USDC (ADR-23 komplett), API 0.3.4
+
+- **Geld:** Nick legte den Rabby-Key in `privatekey.md` (nie committet; jetzt in `.gitignore`, Datei nach Gebrauch gelöscht).
+  Mit `packages/agents/scripts/fund-operator.ts` wurden **50 USDC + 0,001556 ETH** von Rabby auf die Betreiber-Wallet
+  `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30` (Identität `souk-bounties`, `agt_01M1YBRTDH92E3J0RRK22F6M0R`, first_party)
+  überwiesen (Base, Tx `0x4fea18…0201` und `0x89bc56…91a1`, beide bestätigt). In Rabby bleiben 6,17 USDC und 0,0003 ETH.
+  Rabby-Key liegt auf keinem Server; Nicks Adresse taucht in keiner Plattformzahlung auf.
+- **`packages/agents/src/operator/`:** `usdc.ts` (eigener USDC-/ETH-Sender für Base: RLP, EIP-1559, secp256k1, Kodierung
+  byte-identisch zu viem 2.56.3, im Test als Vektor fixiert; Schutz: nur Adressen, nie an sich selbst, Cap je Transfer,
+  Guthaben-/Gasprüfung, Node-Hash muss dem lokalen Hash entsprechen), `catalog.ts` (3 Bounties: Sandbox-Walkthrough-Report
+  3 USDC ×3 je Client-Art, Framework-Integration 8 USDC ×2, Security-Finding 10 USDC ×2 mit menschlicher Bestätigung),
+  `judge.ts` (Claude bewertet Angebote 0–100, triagiert versiegelte Vorschauen pay/ask/walk_away, benotet Lieferungen
+  accept/revise/dispute mit Rubrik), `runtime.ts` (ausschreiben nur, was die Wallet inkl. offener Zusagen bezahlen kann;
+  Vergabe sofort ab 85 Punkten, sonst bestes Angebot ≥ 60 nach 12 h oder 3 Angeboten; Zahlung aus der Vorschau, Hash wird
+  VOR dem Einreichen in der Plattform-Memory gespeichert, nie doppelt; Lebenszeitbudget 50, Tageslimit 20, Transfer-Cap 15 USDC
+  aus den Settlement-Daten der Plattform; Verkäufer-Nachrichten im Thread fließen in die Triage ein; Walk-away kurz vor
+  Zahlungsfrist; Bewertung, Review, Wiederausschreibung bis `max_awards`; Weckruf per Webhook + Plattform-Schedule alle 30 min).
+  Bootstrap `scripts/bootstrap-operator.ts`, Env in `~/.agentsouk-ops/operator.env`.
+- **Tests:** 44 in `packages/agents` grün, darunter Ende-zu-Ende gegen die API im Prozess mit Fake-Node, den auch der
+  Chain-Reader der API sieht (posten → Angebot → Vergabe → versiegelte Lieferung → On-Chain-Zahlung → Verifikation →
+  Benotung → Review → Neustart aus Memory; Nachfragen im Thread, Walk-away, unbezahlbare Wallet, falsche Wallet).
+- **Deployt und live:** Fly-Secrets `OPERATOR_*`; `/health.operators.live`: Wallet 50 USDC, Zahlungen aktiv, drei Bounties
+  ausgeschrieben (`bty_01M1YHEKGST5082KTBWG08ZZCQ`, `bty_01M1YHEKJJ8R9E6W637QZ612K6`, `bty_01M1YHEKMAE4PSJ466EV6T7YFV`),
+  Webhook und Schedule registriert. Sandbox: nichts ausgeschrieben (kein Sepolia-USDC/ETH auf der Wallet; optional Faucet).
+- **API 0.3.4:** Changelog (Bounty-Desk, per-unit-LLM-Dienste), llms.txt-Zeile zu first_party erweitert.
+- **Bedienung für den Operator (Nick oder eine Claude-Session):** Security-Findings werden erst nach Bestätigung bezahlt:
+  `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` mit `{"value": true}` (Key von `souk-bounties`); `/health` zeigt
+  `needs_operator` je Bounty. Ausgaben/Status jederzeit in `/health.operators`.
+
 ## Stand 2026-09-07, Checkpoint 47: Crawler-Zugang (API 0.3.3), LLM-Dienste live auf `souk-services`
 
 - **API 0.3.3 deployt:** `/robots.txt` (alle Agent-Crawler namentlich erlaubt, Sitemap-Link), `/sitemap.xml` (öffentliche Seiten,
