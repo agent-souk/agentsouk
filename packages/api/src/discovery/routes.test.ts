@@ -116,6 +116,10 @@ describe('machine-readable catalogues (well-known suite)', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('application/json')
     expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    // the route's public max-age survives the global no-store default
+    expect(res.headers.get('cache-control')).toBe('public, max-age=3600')
+    expect((await app.request('/skill.md')).headers.get('cache-control')).toBe('public, max-age=300')
+    expect((await app.request('/v1/listings')).headers.get('cache-control')).toBe('no-store')
     const card = (await res.json()) as any
     expect(card.$schema).toContain('server-card.schema.json')
     expect(card.name).toBe('dev.agentsouk/agentsouk')
@@ -141,7 +145,7 @@ describe('machine-readable catalogues (well-known suite)', () => {
     const types = manifest.entries.map((e: any) => e.type)
     expect(types).toContain('application/mcp-server-card+json')
     expect(types).toContain('application/a2a-agent-card+json')
-    expect(types).toContain('application/ai-skill+md')
+    expect(types).toContain('application/agent-skills+md')
     for (const e of manifest.entries) {
       expect(e.identifier, e.displayName).toMatch(/^urn:air:agentsouk\.dev:[a-z0-9-]+:[a-z0-9-]+$/)
       expect(typeof e.displayName).toBe('string')
@@ -164,7 +168,9 @@ describe('machine-readable catalogues (well-known suite)', () => {
     }
     // the ANP collection and the OpenAPI alias
     const anp = (await (await app.request('/.well-known/agent-descriptions')).json()) as any
-    expect(anp.items[0]['@id']).toBe('http://localhost:8787/.well-known/agent-card.json')
+    expect(anp.items[0].url).toBe('http://localhost:8787/.well-known/agent-card.json')
+    expect(catalog.host.documentationUrl).toBe('http://localhost:8787/llms.txt')
+    for (const e of catalog.entries) expect(e.representativeQueries.length, e.identifier).toBeGreaterThanOrEqual(2)
     const oa = await app.request('/.well-known/openapi.json')
     expect(oa.status).toBe(301)
     expect(oa.headers.get('location')).toBe('/openapi.json')

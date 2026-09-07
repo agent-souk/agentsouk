@@ -2,6 +2,30 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 50: Discovery, Runde 2 (Brief §6 #3, #9, #13, #20), API 0.3.5 (179 Tests grün)
+
+- **Ausgangslage:** Bounty-Desk live mit 50 USDC, 3 Bounties, 0 Angebote → der Engpass ist Auffindbarkeit, nicht Funktion.
+- **Well-known-Kataloge (`discovery/wellknown.ts`):** `/.well-known/mcp-server-card` (SEP-2127, Aliase `/.well-known/mcp/server-card.json`
+  und `/mcp/server-card` → 301), `/.well-known/mcp.json`, `/.well-known/ard.json` (Agentic Resource Discovery: 5 Einträge mit
+  `urn:air:agentsouk.dev:…`, je 2–5 `representativeQueries`), `/.well-known/ai-catalog.json` (AI Catalog 1.0, `application/ai-catalog+json`,
+  Host = Plattform-DID), `/.well-known/agent-descriptions` (ANP), `/.well-known/openapi.json` → 301. CORS offen, 1 h Cache, alle in der
+  Sitemap; Root-JSON hat `interfaces.*` und `install.*`; llms.txt/skill.md/README nennen Plugin-Installation und Kataloge.
+- **Zugriffszählung (`discovery/hits.ts`, Tabelle `discovery_hits`, Migration 0005):** je UTC-Tag × Fläche (skill.md, llms.txt,
+  llms-full.txt, docs, openapi.json, root, mcp, a2a, well-known:<name>, register = POST /v1/agents) × UA-Klasse (claude, openai,
+  perplexity, exa, google, bing, brave, …, agentsouk-sdk, curl, python, node, browser). Nur 2xx/3xx, keine IPs, keine rohen UAs auf
+  Platte (letzte 50 nur im Speicher). Zähler im Speicher, Sweep schreibt additiv (Upsert). Sichtbar in `GET /v1/admin/overview` → `discovery`
+  (heute, 7 Tage, je Klasse, je Fläche, Registrierungen, letzte User-Agents).
+- **IndexNow:** `INDEXNOW_KEY` (Fly-Secret, in `~/.agentsouk-ops/agentsouk-api.env`), Key-Datei unter `/<key>.txt` (Regex-Route reicht
+  bei Nichttreffer weiter), `scripts/indexnow.ts` reicht alle Sitemap-URLs bei api.indexnow.org ein.
+- **Plugins im Repo:** `.claude-plugin/marketplace.json` + `plugins/agentsouk/` (plugin.json, `.mcp.json` mit HTTP-MCP, Skill = SKILL.md)
+  → `/plugin marketplace add agent-souk/agentsouk`, `/plugin install agentsouk@agent-souk`; `gemini-extension.json` + `GEMINI.md`
+  → `gemini extensions install https://github.com/agent-souk/agentsouk`.
+- **MCP-Registry:** `dev.agentsouk/agentsouk` 0.3.5 veröffentlicht (Login per DNS-Key, `server.json` validiert).
+- **Awesome-Listen:** Forks `nickillig3-dotcom/awesome-mcp-servers{,-1,-2}` (punkpeye 94k★ → Aggregators, appcypher → AI Services,
+  wong2 → Community Servers), Branch `add-agent-souk` je Fork gepusht; PRs folgen nach dem Deploy.
+- **Für Nick (LAUNCH-CHECKLIST 10–13):** TXT `_agent` (AID v2) und `_mcp`, Claims bei Glama/Smithery/Context7, ClawHub-Login.
+- **Review:** Workflow mit 2 Reviewern (Korrektheit/Betrieb; Spezifikationstreue der Kataloge und Manifeste), Funde siehe unten.
+
 ## Stand 2026-09-07, Checkpoint 49: Bounty-Desk nach Review gehärtet, Suche mit Relevanz (45 + 173 Tests grün)
 
 - **Review (Workflow, 2 Agenten, 184k Tokens, Funde auf Platte):** 13 Geld- und 15 Missbrauchs-Funde, alle geprüft und eingebaut:

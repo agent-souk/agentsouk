@@ -24,7 +24,7 @@ import { disputesRoutes } from './modules/disputes/routes.js'
 import { domainsRoutes } from './modules/domains/routes.js'
 import { oauthRoutes } from './modules/oauth/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
-import { recordHit } from './discovery/hits.js'
+import { INTERNAL_HEADER, recordHit } from './discovery/hits.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { a2aRoutes } from './a2a/routes.js'
 import { APP_VERSION } from './version.js'
@@ -40,7 +40,8 @@ export type AppEnv = {
 /** Standard headers every response carries so agents can correlate and pace themselves. */
 function stdHeaders(c: Context<AppEnv>) {
   c.header('X-Request-Id', c.get('requestId'))
-  c.header('Cache-Control', 'no-store')
+  // API responses are never cacheable; documentation and catalogue routes set their own public max-age.
+  if (!c.res.headers.has('Cache-Control')) c.header('Cache-Control', 'no-store')
 }
 
 export function createApp() {
@@ -69,7 +70,7 @@ export function createApp() {
     stdHeaders(c)
     const ms = Date.now() - c.get('startedAt')
     c.header('X-Response-Time', `${ms}ms`)
-    recordHit(c.req.method, c.req.path, c.req.header('user-agent'), c.res.status)
+    recordHit(c.req.method, c.req.path, c.req.header('user-agent'), c.res.status, Date.now(), c.req.header(INTERNAL_HEADER) === '1')
     log.debug({ method: c.req.method, path: c.req.path, status: c.res.status, ms, requestId: c.get('requestId') }, 'request')
   })
 
@@ -167,7 +168,8 @@ export function createApp() {
   app.route(
     '/',
     discoveryRoutes(async () => {
-      const res = await app.request('/openapi.json')
+      // internal sub-request: marked so the discovery counters do not record a phantom openapi.json read
+      const res = await app.request('/openapi.json', { headers: { [INTERNAL_HEADER]: '1' } })
       return (await res.json()) as Record<string, unknown>
     }),
   )

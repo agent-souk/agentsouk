@@ -25,6 +25,7 @@ export const REPRESENTATIVE_QUERIES = {
 
 export function mcpServerCard(base: string) {
   return {
+    // The $schema value SEP-2127 prescribes; the file did not resolve as of 2026-09-07 (the SEP is a draft), so validators that dereference it fail until it is published.
     $schema: 'https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json',
     name: MCP_SERVER_NAME,
     version: APP_VERSION,
@@ -56,6 +57,11 @@ export function mcpServerCard(base: string) {
   }
 }
 
+/**
+ * /.well-known/mcp.json has no adopted specification (community drafts: modelcontextprotocol issues #1649
+ * and #1960). Kept as a plain pointer list because some tooling probes the path; the SEP-2127 server card
+ * above is the document that follows a written spec.
+ */
 export function mcpWellKnown(base: string) {
   return {
     version: '1',
@@ -117,7 +123,8 @@ export function catalogEntries(base: string): CatalogEntry[] {
     {
       identifier: 'urn:air:agentsouk.dev:skill:agentsouk',
       displayName: 'agentsouk skill',
-      type: 'application/ai-skill+md',
+      // the token AI Catalog 1.0 recognises for a SKILL.md file; ARD accepts any media type
+      type: 'application/agent-skills+md',
       url: `${base}/skill.md`,
       description: 'Agent Skills file: when to use Agent Souk and the exact calls to register, bind a wallet, hire, sell and get paid.',
       tags: ['skill', 'agent-skills', 'quickstart'],
@@ -155,25 +162,28 @@ export function ardManifest(base: string) {
   }
 }
 
+/**
+ * AI Catalog 1.0. Every ARD entry is a well-formed catalog entry (ARD §4), so representativeQueries and
+ * capabilities stay plain members; `extensions` keys would have to be reverse-DNS or URLs.
+ */
 export function aiCatalog(base: string, did: string) {
   const publisher = { identifier: did, displayName: PLATFORM_NAME }
   return {
     specVersion: '1.0',
-    host: { displayName: PLATFORM_NAME, identifier: did, url: base },
-    entries: catalogEntries(base).map(({ representativeQueries, capabilities, ...e }) => ({
-      ...e,
-      publisher,
-      extensions: { representativeQueries, capabilities },
-    })),
+    host: { displayName: PLATFORM_NAME, identifier: did, documentationUrl: `${base}/llms.txt` },
+    entries: catalogEntries(base).map((e) => ({ ...e, publisher })),
   }
 }
 
-/** ANP (Agent Network Protocol) style collection: points at the A2A card, which carries the real description. */
+/**
+ * ANP-style collection at /.well-known/agent-descriptions. We do not serve a native ad:AgentDescription,
+ * so the item is typed as a schema.org WebAPI whose url is the A2A card (an honest pointer, not a claim).
+ */
 export function agentDescriptions(base: string) {
   return {
-    '@context': { '@vocab': 'https://schema.org/', did: 'https://w3id.org/did#', ad: 'https://agent-network-protocol.com/ad#' },
+    '@context': { '@vocab': 'https://schema.org/' },
     '@type': 'CollectionPage',
     url: `${base}/.well-known/agent-descriptions`,
-    items: [{ '@type': 'ad:AgentDescription', name: PLATFORM_NAME, description: tagline(), '@id': `${base}/.well-known/agent-card.json` }],
+    items: [{ '@type': 'WebAPI', name: PLATFORM_NAME, description: tagline(), url: `${base}/.well-known/agent-card.json`, documentation: `${base}/llms.txt` }],
   }
 }

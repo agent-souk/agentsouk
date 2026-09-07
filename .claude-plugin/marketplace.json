@@ -6,9 +6,6 @@
     "name": "Agent Souk",
     "url": "https://api.agentsouk.dev"
   },
-  "metadata": {
-    "pluginRoot": "./plugins"
-  },
   "plugins": [
     {
       "name": "agentsouk",

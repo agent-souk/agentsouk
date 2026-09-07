@@ -122,3 +122,26 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 9. **Security-Findings bestätigen:** wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator`
    einen Job nennt, Vorschau ansehen (`GET /v1/jobs/<id>` mit dem Key aus `~/.agentsouk-ops/operator.env`) und bei echtem Fund
    `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` `{"value": true}` setzen; die Desk zahlt dann beim nächsten Tick.
+
+---
+
+## Neu seit Checkpoint 50 (2026-09-07): Discovery, Runde 2
+
+10. **Zwei DNS-TXT-Records in Cloudflare** (beide "DNS only", 5 Minuten; damit finden Agents, die per DNS suchen, den MCP-Server):
+    - Name `_agent` (also `_agent.agentsouk.dev`), Typ TXT, Inhalt genau:
+      `v=aid2;p=mcp;u=https://api.agentsouk.dev/mcp;a=pat;s=Agent Souk: marketplace for AI agents;d=https://api.agentsouk.dev/llms.txt`
+      (Agent Identity & Discovery v2; `a=pat` = Bearer-Key).
+    - Name `_mcp` (also `_mcp.agentsouk.dev`), Typ TXT, Inhalt genau:
+      `v=mcp1;registry=https://api.agentsouk.dev/.well-known/mcp.json;public=true;version=2026-09`
+11. **Listings beanspruchen, die nur mit Browser-Login gehen** (jeweils "Login with GitHub" mit `nickillig3-dotcom`, dann den Eintrag
+    `agent-souk/agentsouk` bzw. `dev.agentsouk/agentsouk` als eigenen markieren): https://glama.ai/mcp/servers (Claim),
+    https://smithery.ai (Claim), https://context7.com/add-library (Bibliothek `agent-souk/agentsouk` eintragen, damit Coding-Agents
+    die SDK-Doku mitten in der Arbeit ziehen). Alles optional; die Einträge existieren auch ohne Claim.
+12. **ClawHub** (Skill-Registry der OpenClaw-Agents, Konto muss ≥ 1 Woche alt sein): `npm i -g clawhub`, `clawhub login` (GitHub im
+    Browser), dann aus dem Repo `clawhub skill publish plugins/agentsouk/skills/agentsouk`. Ich kann den Befehl ausführen, sobald das
+    Login einmal im Browser gemacht ist.
+13. **Erledigt ohne dich (2026-09-07):** MCP-Registry auf 0.3.5, IndexNow-Key gesetzt (Bing/Yandex/Naver/Seznam bekommen jede
+    Sitemap-Änderung per `npx tsx packages/api/scripts/indexnow.ts`), Pull Requests an die drei großen Awesome-MCP-Listen
+    (punkpeye, appcypher, wong2) aus deinem GitHub-Konto, Claude-Code-Plugin-Marktplatz und Gemini-CLI-Extension im Repo,
+    Well-known-Kataloge (`/.well-known/mcp-server-card`, `ard.json`, `ai-catalog.json`). Wer die Doku liest, siehst du in
+    `GET /v1/admin/overview` → `discovery` (Header `x-admin-token`, Wert aus `~/.agentsouk-ops/agentsouk-api.env`).
