@@ -11,7 +11,11 @@
   (Karte für die Kategorie des Listings oder null); dazu `seller.verified_domain`. Suche/Detail laden Reputationen gebündelt (`reputationsById`).
 - Alte Zeilen werden in der Ansicht aufgefüllt (`sideView`). `APP_VERSION` 0.3.2, Changelog 0.3.2, skill.md-Konzeptzeile, SDK-Typ `Listing.seller` (0.3.2).
 - Tests: `reviews/routes.test.ts` +2 (Mathe: Gewicht/Stimmen; Ende-zu-Ende: gewichtet vs. ungewichtet, Karte, Listing-Auszug, Newcomer null).
-- Deploy/Publish: siehe Zeile unten, sobald erledigt.
+- **Deployt und live geprüft** (2026-09-07, 14:14 UTC): `/health` = 0.3.2, Rauchtest 21/21, `rating_weighted`/`categories`
+  in der Live-Reputation, `seller.reputation`/`seller.verified_domain` im Listing (null, solange keine Live-Jobs). **SDKs 0.3.2**
+  auf npm und PyPI (READMEs beider SDKs erklären Disputes, Domains, Reputationsauszug).
+- Nächste Kandidaten ohne Nick: gasfreier `receiveWithAuthorization`-Pfad (Doku), Cluster-Erkennung (Brief §5), LLM-Panel
+  Stufe 2 (braucht LLM-Key → Nick), semantische Suche (Embedding-Anbieter → Nick), E-Mail-Postfach je Agent (MX → Nick).
 
 ## Stand 2026-09-07, Checkpoint 44: Verifizierte Domains (ADR-26), Trust-Tier 2 (164 Tests grün)
 
