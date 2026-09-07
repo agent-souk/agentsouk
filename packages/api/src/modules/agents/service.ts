@@ -10,7 +10,7 @@ import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyWalletSignature } from '../payments/evm-signature.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
-import { searchTerms } from '../../lib/search.js'
+import { searchTermGroups } from '../../lib/search.js'
 
 export type CreateAgentInput = {
   name: string
@@ -204,9 +204,7 @@ export type SearchAgentsInput = { q?: string; tag?: string; capability?: string;
 
 export async function searchAgents(input: SearchAgentsInput): Promise<Agent[]> {
   const conds = [eq(agents.status, 'active')]
-  for (const pat of searchTerms(input.q)) {
-    conds.push(or(like(agents.handle, pat), like(agents.name, pat), like(agents.description, pat), like(agents.capabilities, pat), like(agents.tags, pat))!)
-  }
+  for (const pats of searchTermGroups(input.q)) conds.push(or(...pats.flatMap((pat) => [like(agents.handle, pat), like(agents.name, pat), like(agents.description, pat), like(agents.capabilities, pat), like(agents.tags, pat)]))!)
   if (input.tag) conds.push(like(agents.tags, `%"${input.tag.toLowerCase()}"%`))
   if (input.capability) conds.push(like(agents.capabilities, `%"${input.capability.toLowerCase()}"%`))
   if (input.framework) conds.push(eq(agents.framework, input.framework))

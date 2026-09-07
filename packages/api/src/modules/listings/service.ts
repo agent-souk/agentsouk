@@ -4,7 +4,7 @@ import { agents, jobs, listings, reviews, type Env, type ListingStats, type Paym
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { scanFields } from '../../lib/content-safety.js'
-import { searchTerms } from '../../lib/search.js'
+import { relevanceScore, searchTermGroups, searchTerms } from '../../lib/search.js'
 import { publishFeed } from '../../events/bus.js'
 import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
 import { isCompletedJob, isSellerFailure, paidValue } from '../jobs/outcomes.js'
@@ -207,8 +207,16 @@ export type SearchListingsInput = {
 /** Returns limit+1 rows; cursor is id-based for sort=newest, offset-based otherwise. */
 export async function searchListings(env: Env, input: SearchListingsInput): Promise<{ rows: Listing[]; nextCursor: (last: Listing, index: number) => string }> {
   const conds: SQL[] = [eq(listings.env, env), eq(listings.status, 'active')]
-  for (const pat of searchTerms(input.q)) {
-    conds.push(or(like(listings.title, pat), like(listings.description, pat), like(listings.tags, pat), like(listings.category, pat))!)
+  // Query words: OR within a word's variants (stem, synonyms), AND across words; when no listing matches every
+  // word, any word will do and the relevance ranking below sorts the best matches first.
+  const groups = searchTermGroups(input.q)
+  const groupCond = (pats: string[]) => or(...pats.flatMap((pat) => [like(listings.title, pat), like(listings.description, pat), like(listings.tags, pat), like(listings.category, pat)]))!
+  const andQuery = groups.map(groupCond)
+  const orQuery = groups.length > 1 ? [or(...groups.map(groupCond))!] : andQuery
+  const withQuery = async (run: (queryConds: SQL[]) => Promise<Listing[]>): Promise<Listing[]> => {
+    const rows = await run(andQuery)
+    if (rows.length || orQuery === andQuery) return rows
+    return run(orQuery)
   }
   if (input.category) conds.push(eq(listings.category, input.category.toLowerCase()))
   if (input.tag) conds.push(like(listings.tags, `%"${input.tag.toLowerCase()}"%`))
@@ -241,13 +249,24 @@ export async function searchListings(env: Env, input: SearchListingsInput): Prom
 
   if (sort === 'newest') {
     if (input.cursor) conds.push(lt(listings.id, input.cursor))
-    const rows = await db().select().from(listings).where(and(...conds)).orderBy(...orderBy).limit(input.limit + 1)
+    const rows = await withQuery((qc) => db().select().from(listings).where(and(...conds, ...qc)).orderBy(...orderBy).limit(input.limit + 1))
     return { rows, nextCursor: (last) => last.id }
   }
   const offset = input.cursor?.startsWith('o:') ? Math.max(0, parseInt(input.cursor.slice(2), 10) || 0) : 0
-  const rows = await db().select().from(listings).where(and(...conds)).orderBy(...orderBy).limit(input.limit + 1).offset(offset)
+  if (sort === 'relevance' && groups.length) {
+    // Rank a bounded candidate set in memory: query relevance first, then the usual quality order (stable sort keeps it).
+    const candidates = await withQuery((qc) => db().select().from(listings).where(and(...conds, ...qc)).orderBy(...orderBy).limit(RELEVANCE_CANDIDATES))
+    const scored = candidates.map((row, i) => ({ row, i, score: relevanceScore(input.q, { title: row.title, tags: row.tags, category: row.category, description: row.description }) }))
+    scored.sort((a, b) => b.score - a.score || a.i - b.i)
+    const rows = scored.slice(offset, offset + input.limit + 1).map((s) => s.row)
+    return { rows, nextCursor: (_last, index) => `o:${offset + index + 1}` }
+  }
+  const rows = await withQuery((qc) => db().select().from(listings).where(and(...conds, ...qc)).orderBy(...orderBy).limit(input.limit + 1).offset(offset))
   return { rows, nextCursor: (_last, index) => `o:${offset + index + 1}` }
 }
+
+/** How many query matches the relevance sort ranks in memory (page offsets index into this ranked set). */
+const RELEVANCE_CANDIDATES = 500
 
 export async function listMyListings(env: Env, sellerId: string, limit: number, cursor?: string, status?: string): Promise<Listing[]> {
   const conds: SQL[] = [eq(listings.env, env), eq(listings.sellerAgentId, sellerId)]

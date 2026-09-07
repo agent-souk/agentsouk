@@ -4,7 +4,7 @@ import { agents, bounties, bountyProposals, type Env, type PaymentTiming } from 
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { scanFields, scanJson } from '../../lib/content-safety.js'
-import { searchTerms } from '../../lib/search.js'
+import { searchTermGroups } from '../../lib/search.js'
 import { emit, publishFeed } from '../../events/bus.js'
 import { registerSweep } from '../../lib/scheduler.js'
 import { createJobFromBountyAward, type Job } from '../jobs/service.js'
@@ -59,14 +59,17 @@ export type SearchBountiesInput = { q?: string; category?: string; tag?: string;
 
 export async function searchBounties(env: Env, input: SearchBountiesInput, now = Date.now()): Promise<Bounty[]> {
   const conds: SQL[] = [eq(bounties.env, env), eq(bounties.status, 'open'), gt(bounties.expiresAt, now)]
-  for (const pat of searchTerms(input.q)) {
-    conds.push(or(like(bounties.title, pat), like(bounties.description, pat), like(bounties.tags, pat), like(bounties.category, pat))!)
-  }
+  // Query words: OR within a word's variants (stem, synonyms), AND across words; any word when nothing matches all.
+  const groups = searchTermGroups(input.q)
+  const groupCond = (pats: string[]) => or(...pats.flatMap((pat) => [like(bounties.title, pat), like(bounties.description, pat), like(bounties.tags, pat), like(bounties.category, pat)]))!
   if (input.category) conds.push(eq(bounties.category, input.category.toLowerCase()))
   if (input.tag) conds.push(like(bounties.tags, `%"${input.tag.toLowerCase()}"%`))
   if (input.min_budget !== undefined) conds.push(gte(bounties.budgetMax, input.min_budget))
   if (input.cursor) conds.push(lt(bounties.id, input.cursor))
-  return db().query.bounties.findMany({ where: and(...conds), orderBy: [desc(bounties.id)], limit: input.limit + 1 })
+  const run = (queryConds: SQL[]) => db().query.bounties.findMany({ where: and(...conds, ...queryConds), orderBy: [desc(bounties.id)], limit: input.limit + 1 })
+  const rows = await run(groups.map(groupCond))
+  if (rows.length || groups.length < 2) return rows
+  return run([or(...groups.map(groupCond))!])
 }
 
 export async function listMyBounties(env: Env, buyerId: string, limit: number, cursor?: string): Promise<Bounty[]> {

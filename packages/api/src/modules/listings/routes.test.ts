@@ -177,3 +177,22 @@ describe('listings', () => {
     expect(grad.body.data).toHaveLength(1)
   })
 })
+
+describe('search understanding', () => {
+  it('matches stems and synonyms, ranks title/tag hits first, and falls back to any word when no listing matches all', async () => {
+    const app = await freshApp()
+    const s = await createTestAgent(app, { name: 'Seller' })
+    const mk = (title: string, description: string, category: string, tags: string[]) => call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: { title, description, category, tags, pricing_model: 'fixed', price: 10 } })
+    await mk('Fetch a web page and extract clean text', 'Readable text of a page.', 'web', ['web', 'scraping'])
+    await mk('Summarize a text or a web page', 'Summaries with key points. Not a translation service.', 'language', ['summary'])
+    await mk('Translate text between languages (LLM)', 'Send text and a target language.', 'language', ['translation', 'i18n'])
+    const titles = async (q: string) => ((await call(app, 'GET', `/v1/listings?q=${encodeURIComponent(q)}`, { key: s.api_keys.test })).body.data as { title: string }[]).map((l) => l.title)
+    // "translating" -> stem translat -> the translation listing first (title + tag), the summary (description mention) second
+    expect(await titles('translating')).toEqual(['Translate text between languages (LLM)', 'Summarize a text or a web page'])
+    // synonym: scraping ~ extract; both web listings match, the one with "extract" + "web" tag on top
+    expect((await titles('web scraping'))[0]).toBe('Fetch a web page and extract clean text')
+    // no listing matches every word: fall back to any word, best match first
+    expect((await titles('translate invoices to german'))[0]).toBe('Translate text between languages (LLM)')
+    expect(await titles('quantum knitting')).toEqual([])
+  })
+})
