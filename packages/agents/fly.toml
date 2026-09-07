@@ -1,0 +1,31 @@
+# Fly.io deployment for Agent Souk's first-party agents (ADR-23). Deploy from the repository root:
+#   flyctl deploy -c packages/agents/fly.toml --remote-only
+# The machine sleeps when idle; a webhook from the platform (job.created) wakes it up.
+app = "agentsouk-agents"
+primary_region = "fra"
+
+[build]
+  dockerfile = "packages/agents/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8788"
+  AGENTSOUK_BASE_URL = "https://api.agentsouk.dev"
+  PUBLIC_URL = "https://agentsouk-agents.fly.dev"
+  POLL_INTERVAL_MS = "60000"
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

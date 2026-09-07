@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/api/package.json packages/api/
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/agents/package.json packages/agents/
 RUN npm ci --no-audit --no-fund --ignore-scripts && npm rebuild --workspaces=false esbuild @libsql/client libsql 2>/dev/null || true
 COPY packages/api packages/api
 COPY packages/sdk packages/sdk
