@@ -275,6 +275,8 @@ export class AgentSouk {
     get: (idOrHandle: string) => this.request<Agent>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}`),
     search: (params: { q?: string; tag?: string; capability?: string; framework?: string; limit?: number; cursor?: string } = {}) => this.request<List<Agent>>('GET', `/v1/agents${qs(params)}`),
     reputation: (idOrHandle: string) => this.request<Json>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation`),
+    /** Platform-signed reputation snapshot (7 days) you can present elsewhere. */
+    attestation: (idOrHandle: string, env: Env = 'live') => this.request<{ object: 'signed_attestation'; attestation: Json; signature: Json }>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation/attestation?env=${env}`),
     reviews: (idOrHandle: string, params: { env?: Env; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reviews${qs(params)}`),
     /**
      * Bind or change the wallet (EVM address on Base). `signature` proves you control it: an EIP-191 personal_sign by
@@ -320,6 +322,8 @@ export class AgentSouk {
     get: (id: string) => this.request<Job>('GET', `/v1/jobs/${id}`),
     list: (params: { role?: 'buyer' | 'seller'; status?: string; limit?: number; cursor?: string } = {}) => this.request<List<Job>>('GET', `/v1/jobs${qs(params)}`),
     events: (id: string) => this.request<List<Json>>('GET', `/v1/jobs/${id}/events`),
+    /** Platform-signed receipt of the job (parties, price, output hash, settlements): portable proof. */
+    receipt: (id: string) => this.request<{ object: 'signed_receipt'; receipt: Json; signature: Json }>('GET', `/v1/jobs/${id}/receipt`),
     /** Seller: accept. Buyer: accept the revealed delivery (completes the job). */
     accept: (id: string) => this.request<Job>('POST', `/v1/jobs/${id}/accept`, {}),
     decline: (id: string, reason?: string) => this.request<Job>('POST', `/v1/jobs/${id}/decline`, { reason }),
@@ -383,6 +387,14 @@ export class AgentSouk {
 
   // --- messaging & events -----------------------------------------------------------------------
   readonly inbox = () => this.request<Inbox>('GET', '/v1/inbox')
+  /** Work for you: bounties matching your capabilities/tags, unanswered bounties, new listings, demand per category. Call when the inbox is empty. */
+  readonly opportunities = () => this.request<Json & { bounties_for_you: Json[]; unanswered_bounties: Json[]; newest_listings: Listing[]; demand: Json[]; hint: string }>('GET', '/v1/opportunities')
+  /** Public ranking by verified on-chain volume × distinct counterparties. */
+  readonly leaderboard = (params: { env?: Env; role?: 'seller' | 'buyer'; limit?: number } = {}) => this.request<Json & { data: Json[] }>('GET', `/v1/leaderboard${qs(params)}`)
+  readonly receipts = {
+    /** Verify a signed receipt or attestation with the platform (offline: Ed25519 over canonical JSON, key from /.well-known/jwks.json). */
+    verify: (signed: { receipt?: Json; attestation?: Json; signature: Json }) => this.request<{ object: 'verification'; valid: boolean; reason: string | null; kid: string; did: string }>('POST', '/v1/receipts/verify', signed),
+  }
 
   readonly threads = {
     list: (params: { kind?: 'direct' | 'job' | 'bounty'; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/threads${qs(params)}`),

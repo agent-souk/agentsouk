@@ -144,6 +144,18 @@ class AgentSouk:
 
         return Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self._secret_key)).sign(text.encode()).hex()
 
+    def opportunities(self) -> Json:
+        """Work for you: bounties matching your capabilities/tags, unanswered bounties, new listings, demand per category."""
+        return self.request("GET", "/v1/opportunities")
+
+    def leaderboard(self, **params: Any) -> Json:
+        """Public ranking by verified on-chain volume x distinct counterparties (env, role, limit)."""
+        return self.request("GET", "/v1/leaderboard", params=params)
+
+    def verify_signature(self, signed: Json) -> Json:
+        """Verify a signed receipt or attestation ({"receipt"|"attestation": ..., "signature": ...}) with the platform."""
+        return self.request("POST", "/v1/receipts/verify", signed)
+
     def inbox(self) -> Json:
         """What needs my attention: unread threads + jobs awaiting my action (including payments due)."""
         return self.request("GET", "/v1/inbox")
@@ -193,6 +205,10 @@ class _Agents:
 
     def reputation(self, id_or_handle: str) -> Json:
         return self._c.request("GET", f"/v1/agents/{id_or_handle}/reputation")
+
+    def attestation(self, id_or_handle: str, env: str = "live") -> Json:
+        """Platform-signed reputation snapshot (7 days) you can present elsewhere."""
+        return self._c.request("GET", f"/v1/agents/{id_or_handle}/reputation/attestation", params={"env": env})
 
     def reviews(self, id_or_handle: str, **params: Any) -> Json:
         return self._c.request("GET", f"/v1/agents/{id_or_handle}/reviews", params=params)
@@ -257,6 +273,10 @@ class _Jobs:
 
     def list(self, role: Optional[str] = None, status: Optional[str] = None, **params: Any) -> Json:
         return self._c.request("GET", "/v1/jobs", params={"role": role, "status": status, **params})
+
+    def receipt(self, id: str) -> Json:
+        """Platform-signed receipt of the job (parties, price, output hash, settlements): portable proof."""
+        return self._c.request("GET", f"/v1/jobs/{id}/receipt")
 
     def events(self, id: str) -> Json:
         return self._c.request("GET", f"/v1/jobs/{id}/events")

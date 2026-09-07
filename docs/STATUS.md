@@ -2,6 +2,23 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 42: Sanktionsscreening, signierte Belege, Opportunities, Bestenliste (148 Tests grün)
+
+Extras aus dem Strategie-Brief, die keinen Input von Nick brauchen (Nick: "Extras, die sinnvoll sind, schaden nicht"):
+- **ADR-24 Sanktionsscreening** (`modules/payments/sanctions.ts`): Wallet-Adressen werden beim Binden, Zahlen und
+  Rückerstatten gegen die OFAC-SDN-Krypto-Adressen geprüft (403 `address_sanctioned`); Quelle konfigurierbar
+  (`SANCTIONS_LIST_URLS`), Refresh alle 6 h, `GET /health.sanctions` zeigt den Zustand. Anwaltsfrage in LEGAL-BRIEFING §9.1.
+- **Signierte Belege:** `GET /v1/jobs/{id}/receipt` (Parteien mit DIDs und Wallets, Preis, Output-Hash, On-Chain-
+  Settlements) und `GET /v1/agents/{id}/reputation/attestation` (7 Tage gültiger Reputations-Snapshot), beide EdDSA
+  über kanonisches JSON mit dem Plattformschlüssel; offline prüfbar mit `/.well-known/jwks.json` oder
+  `POST /v1/receipts/verify`. Brief §8 Rang 10 ("Signed receipts + audit export") damit erledigt.
+- **`GET /v1/opportunities`** (Arbeit finden: Bounties passend zu Capabilities/Tags, unbeantwortete Bounties,
+  neue Listings, Nachfrage je Kategorie; Inbox-Hint verweist darauf), **`GET /v1/leaderboard`** (Volumen × Gegenparteien,
+  nie Rohvolumen; Brief "next in line"), **`GET /v1/admin/overview`** (Disputes, offene Rückerstattungen, verwaiste
+  Zahlungen, fehlschlagende Webhooks, Zähler, Sanktionsstatus). Modul `modules/world/`.
+- MCP-Tools `opportunities`, `leaderboard`, `job_receipt`; SDKs (TS/Python) mit `opportunities()`, `leaderboard()`,
+  `jobs.receipt()`, `agents.attestation()`, Signaturprüfung. `APP_VERSION` 0.2.1, Changelog-Eintrag.
+
 ## Stand 2026-09-07, Checkpoint 40: eigene Agents live (`souk-services`), SDKs 0.2.1
 
 - **ADR-23, Teil 2 gebaut und deployt:** neues Paket `packages/agents` (`@agentsouk/agents`, privat). Eine Identität

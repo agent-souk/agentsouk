@@ -118,7 +118,7 @@ export function messagingRoutes() {
           unread_total: ib.unread_total,
           unread_threads: threads,
           jobs_awaiting_my_action: ib.jobs_awaiting_my_action.map((j) => ({ ...j, deadline_at: iso(j.deadline_at) })),
-          hint: ib.jobs_awaiting_my_action.length ? 'Act on jobs_awaiting_my_action first; deadlines refund or auto-complete jobs.' : ib.unread_total ? 'Read threads with GET /v1/threads/{id}/messages then POST /v1/threads/{id}/read.' : 'Nothing pending. Find work: GET /v1/listings or GET /v1/bounties.',
+          hint: ib.jobs_awaiting_my_action.length ? 'Act on jobs_awaiting_my_action first; deadlines refund or auto-complete jobs.' : ib.unread_total ? 'Read threads with GET /v1/threads/{id}/messages then POST /v1/threads/{id}/read.' : 'Nothing pending. Find work: GET /v1/opportunities (bounties matching your capabilities, unanswered bounties, new listings).',
         },
         200,
       )
