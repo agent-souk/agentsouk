@@ -14,20 +14,51 @@ import { APP_VERSION } from '../version.js'
  * - /agents/{id}/jwks.json and /agents/{id}/cimd.json (per-agent passport, ADR-8)
  * - /.well-known/oauth-protected-resource (RFC 9728) and /.well-known/oauth-authorization-server (RFC 8414) placeholders
  */
+/** The crawlers behind agent-facing search (OpenAI, Anthropic, Perplexity, Exa, Google, Bing, Brave, Apple, Meta, Common Crawl). Named explicitly so a crawler that looks for its own group finds an Allow. */
+export const CRAWLERS = ['OAI-SearchBot', 'GPTBot', 'ChatGPT-User', 'ClaudeBot', 'Claude-Code', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai', 'PerplexityBot', 'Perplexity-User', 'ExaSearchBot', 'Googlebot', 'Google-Extended', 'Google-Agent', 'Bingbot', 'Brave', 'Applebot', 'Applebot-Extended', 'meta-externalagent', 'CCBot', 'DuckDuckBot', 'YouBot', 'Amazonbot']
+
+/** Public, unauthenticated pages worth indexing, with a hint of how often they change. */
+export const SITEMAP_PATHS: [path: string, changefreq: 'hourly' | 'daily' | 'weekly'][] = [
+  ['/', 'weekly'],
+  ['/skill.md', 'weekly'],
+  ['/llms.txt', 'weekly'],
+  ['/llms-full.txt', 'weekly'],
+  ['/docs', 'weekly'],
+  ['/docs/quickstart', 'weekly'],
+  ['/docs/errors', 'weekly'],
+  ['/openapi.json', 'weekly'],
+  ['/.well-known/agent-card.json', 'weekly'],
+  ['/.well-known/jwks.json', 'weekly'],
+  ['/v1/changelog', 'weekly'],
+  ['/v1/payments', 'weekly'],
+  ['/v1/stats', 'hourly'],
+  ['/v1/listings', 'hourly'],
+  ['/v1/bounties', 'hourly'],
+  ['/v1/agents', 'hourly'],
+  ['/v1/leaderboard', 'daily'],
+  ['/v1/feed', 'hourly'],
+]
+
 export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unknown>>) {
   const r = new OpenAPIHono<AppEnv>()
   const base = () => config().PUBLIC_BASE_URL.replace(/\/$/, '')
+  /** Every documentation response points crawlers and agents at the two entry files (llms.txt convention). */
+  const discoveryHeaders = () => ({ 'X-Llms-Txt': `${base()}/llms.txt`, Link: `<${base()}/llms.txt>; rel="llms-txt", <${base()}/skill.md>; rel="agent-skill"` })
   const text = (c: { body: (b: string, status?: 200, headers?: Record<string, string>) => Response }, body: string, type = 'text/markdown; charset=utf-8') =>
-    c.body(body, 200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=300' })
+    c.body(body, 200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=300', ...discoveryHeaders() })
+  const docsMd = () => `# ${PLATFORM_NAME}\n\n${tagline()}\n\n- ${base()}/skill.md\n- ${base()}/llms.txt\n- ${base()}/llms-full.txt\n- ${base()}/docs/quickstart\n- ${base()}/docs/errors\n- ${base()}/openapi.json\n`
 
   r.get('/skill.md', (c) => text(c, skillMd(base())))
   r.get('/SKILL.md', (c) => text(c, skillMd(base())))
   r.get('/llms.txt', (c) => text(c, llmsTxt(base()), 'text/plain; charset=utf-8'))
   r.get('/docs/quickstart', (c) => text(c, quickstartMd(base())))
   r.get('/docs/errors', (c) => text(c, errorsMd(base())))
-  r.get('/docs', (c) => text(c, `# ${PLATFORM_NAME}\n\n${tagline()}\n\n- ${base()}/skill.md\n- ${base()}/llms.txt\n- ${base()}/llms-full.txt\n- ${base()}/docs/quickstart\n- ${base()}/docs/errors\n- ${base()}/openapi.json\n`))
-  r.get('/', (c) =>
-    c.json({
+  r.get('/docs', (c) => text(c, docsMd()))
+  r.get('/', (c) => {
+    // `Accept: text/markdown` (llms.txt convention) gets the documentation index instead of the JSON front door.
+    if ((c.req.header('accept') ?? '').includes('text/markdown')) return text(c, docsMd())
+    for (const [k, v] of Object.entries(discoveryHeaders())) c.header(k, v)
+    return c.json({
       object: 'platform',
       name: PLATFORM_NAME,
       description: tagline(),
@@ -35,8 +66,29 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       docs: { skill: `${base()}/skill.md`, llms: `${base()}/llms.txt`, llms_full: `${base()}/llms-full.txt`, quickstart: `${base()}/docs/quickstart`, openapi: `${base()}/openapi.json`, errors: `${base()}/docs/errors` },
       interfaces: { mcp: `${base()}/mcp`, a2a_card: `${base()}/.well-known/agent-card.json`, jwks: `${base()}/.well-known/jwks.json` },
       did: serverKey().did,
-    }),
+    })
+  })
+
+  // Crawler access (strategic brief §6 #6): every agent search index is welcome; the sitemap lists what is worth reading.
+  r.get('/robots.txt', (c) =>
+    text(
+      c,
+      [
+        `# ${PLATFORM_NAME}: an API-first marketplace for AI agents. Everything here is written to be read by agents.`,
+        `# Start with ${base()}/skill.md (how to use it) and ${base()}/llms.txt (documentation index).`,
+        ...CRAWLERS.map((ua) => `User-agent: ${ua}\nAllow: /`),
+        'User-agent: *',
+        'Allow: /',
+        `Sitemap: ${base()}/sitemap.xml`,
+        '',
+      ].join('\n'),
+      'text/plain; charset=utf-8',
+    ),
   )
+  r.get('/sitemap.xml', (c) => {
+    const urls = SITEMAP_PATHS.map(([path, freq]) => `  <url><loc>${base()}${path}</loc><changefreq>${freq}</changefreq></url>`)
+    return text(c, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`, 'application/xml; charset=utf-8')
+  })
 
   r.get('/llms-full.txt', async (c) => {
     const doc = await getOpenApiDoc()

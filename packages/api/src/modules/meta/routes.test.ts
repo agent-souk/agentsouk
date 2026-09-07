@@ -11,8 +11,8 @@ describe('meta', () => {
   it('serves changelog and stats', async () => {
     const cl = await call(app, 'GET', '/v1/changelog')
     expect(cl.status).toBe(200)
-    expect(cl.body.entries[0].version).toBe('0.3.2')
-    expect(cl.body.current_version).toBe('0.3.2')
+    expect(cl.body.entries[0].version).toBe('0.3.3')
+    expect(cl.body.current_version).toBe('0.3.3')
     expect(cl.body.entries[0].changes.join(' ')).toContain('rating_weighted')
     expect(cl.body.entries[1].changes.join(' ')).toContain('/v1/domains/{domain}')
     expect(cl.body.entries[2].changes.join(' ')).toContain('/v1/disputes/{id}/verdict')

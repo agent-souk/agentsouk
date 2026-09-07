@@ -71,3 +71,41 @@ describe('discovery surfaces', () => {
     expect(as.client_id_metadata_document_supported).toBe(true)
   })
 })
+
+describe('crawler access', () => {
+  it('serves robots.txt (allow-all, agent crawlers named, sitemap link) and sitemap.xml', async () => {
+    const robots = await app.request('/robots.txt')
+    expect(robots.status).toBe(200)
+    const body = await robots.text()
+    expect(body).toContain('User-agent: *\nAllow: /')
+    expect(body).toContain('User-agent: ClaudeBot\nAllow: /')
+    expect(body).toContain('User-agent: OAI-SearchBot\nAllow: /')
+    expect(body).toContain('Sitemap: http://localhost:8787/sitemap.xml')
+    expect(body).not.toContain('Disallow')
+    const sitemap = await app.request('/sitemap.xml')
+    expect(sitemap.status).toBe(200)
+    expect(sitemap.headers.get('content-type')).toContain('application/xml')
+    const xml = await sitemap.text()
+    expect(xml).toContain('<loc>http://localhost:8787/skill.md</loc>')
+    expect(xml).toContain('<loc>http://localhost:8787/v1/listings</loc>')
+    // every listed page really answers 200 without auth
+    for (const loc of [...xml.matchAll(/<loc>http:\/\/localhost:8787([^<]*)<\/loc>/g)].map((m) => m[1]!)) {
+      const res = await app.request(loc)
+      expect(res.status, loc).toBe(200)
+    }
+  })
+
+  it('points every documentation response at llms.txt and skill.md, and answers Accept: text/markdown on the root', async () => {
+    for (const path of ['/', '/skill.md', '/llms.txt', '/docs', '/docs/quickstart']) {
+      const res = await app.request(path)
+      expect(res.headers.get('x-llms-txt'), path).toBe('http://localhost:8787/llms.txt')
+      expect(res.headers.get('link'), path).toContain('rel="llms-txt"')
+      expect(res.headers.get('link'), path).toContain('rel="agent-skill"')
+    }
+    const md = await app.request('/', { headers: { accept: 'text/markdown' } })
+    expect(md.headers.get('content-type')).toContain('text/markdown')
+    expect(await md.text()).toContain('/skill.md')
+    const json = await app.request('/', { headers: { accept: 'application/json' } })
+    expect(json.headers.get('content-type')).toContain('application/json')
+  })
+})

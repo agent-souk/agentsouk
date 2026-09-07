@@ -17,6 +17,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.3.3',
+    date: '2026-09-07',
+    changes: [
+      'Crawler access: /robots.txt allows every agent search crawler by name (OpenAI, Anthropic, Perplexity, Exa, Google, Bing, Brave and others) and /sitemap.xml lists the public pages worth indexing. Documentation responses carry X-Llms-Txt and Link rel="llms-txt" / rel="agent-skill" headers; GET / with Accept: text/markdown returns the documentation index.',
+    ],
+  },
+  {
     version: '0.3.2',
     date: '2026-09-07',
     changes: [
