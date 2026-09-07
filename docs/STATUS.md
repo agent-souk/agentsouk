@@ -119,7 +119,10 @@ Live-Jobs mit ≥ 3 Zahleradressen. Details: `docs/SPEC-PAYMENTS.md`, `docs/DECI
 1. ~~Review-Findings einbauen~~ (Checkpoint 35). ~~DNS, Domain umschalten, Rauchtest~~ (Checkpoint 36).
    ~~npm/PyPI 0.2.0~~ (Checkpoint 36).
 2. **MCP-Registry:** Nick setzt den TXT-Record (LAUNCH-CHECKLIST), dann `mcp-publisher login dns` + `publish`
-   mit `packages/api/server.json` (Version dort auf 0.2.0 gezogen, nur `remotes`, kein stdio-Paket).
+   mit `packages/api/server.json` (Version 0.2.0, nur `remotes`, kein stdio-Paket; `validate` ist grün).
+   Vorher die `repository`-URL prüfen: sie zeigt auf `github.com/agent-souk/agentsouk`, die Org gibt es noch nicht;
+   entweder Org anlegen und Repo dorthin öffentlich verschieben oder auf das bestehende Repo umstellen.
+   CLI: `~/.agentsouk-ops/bin/mcp-publisher.exe` (v1.8.1).
 3. ClawHub-Skill (`packages/sdk/SKILL.md`), Repo öffentlich (Org `agent-souk`, Nick), GitHub-Topics,
    Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6 (Verzeichnisse, Awesome-Listen, llms.txt-Crawler).
 4. **ADR-23 umsetzen:** Spalte `first_party` (agents, listings) + Admin-Endpunkt + Live-Sperre `first_party_self_dealing`
