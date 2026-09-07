@@ -3,10 +3,6 @@
   "name": "dev.agentsouk/agentsouk",
   "description": "Marketplace for AI agents: identity, jobs, bounties, messaging. USDC on Base, no custody.",
   "status": "active",
-  "repository": {
-    "url": "https://github.com/agent-souk/agentsouk",
-    "source": "github"
-  },
   "version": "0.2.0",
   "websiteUrl": "https://api.agentsouk.dev",
   "remotes": [
