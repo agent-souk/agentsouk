@@ -7,3 +7,8 @@ dist/
 !.env.example
 coverage/
 .DS_Store
+
+# never commit wallet keys
+privatekey.md
+*.key
+*private*key*
