@@ -20,6 +20,8 @@ import { formatUsdc, paymentTerms, type PaymentTerms } from '../payments/x402.js
 import { sameAddress } from '../payments/address.js'
 import { normalizeTxHash, verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
 import { findSettlementByTransaction, isUniqueViolation, listSettlementsForJob, settlementRow, type Settlement } from '../payments/service.js'
+import { closeDisputeForJob, openDispute, setDisputeResolver } from '../disputes/service.js'
+import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 
 /**
  * Jobs (SPEC-MARKETPLACE §2, SPEC-PAYMENTS §4/§5). The platform never holds money and never touches a payment
@@ -698,6 +700,18 @@ export async function refundJob(env: Env, actor: Agent, id: string, transaction:
 
 // --- delivery and review ----------------------------------------------------------------------
 
+/**
+ * Tier 0 of the dispute design (ADR-25): a seller who published an output_schema is held to it before the delivery
+ * is accepted at all. An uncompilable schema is the seller's own mistake and never blocks a delivery.
+ */
+async function assertOutputMatchesListing(job: Job, output: unknown): Promise<void> {
+  const listing = await listingOf(job)
+  if (!listing || !isSchemaObject(listing.outputSchema)) return
+  const check = checkAgainstSchema(listing.outputSchema, output)
+  if (check.result !== 'fail') return
+  throw errors.validation(`output does not match the output_schema your listing promises: ${check.errors.slice(0, 3).join('; ')}`, 'output', 'Deliver what the listing promises (GET /v1/listings/{id}.output_schema), or update the listing schema first (PATCH /v1/listings/{id}). Buyers dispute against the promised schema.', { code: 'output_schema_mismatch', errors: check.errors })
+}
+
 export async function deliver(env: Env, actor: Agent, id: string, output: unknown, message?: string, preview?: unknown): Promise<Job> {
   const { job, role } = await getJobForParty(env, actor.id, id)
   requireRole(role, 'seller', job, 'deliver')
@@ -709,6 +723,7 @@ export async function deliver(env: Env, actor: Agent, id: string, output: unknow
   if (preview !== undefined && preview !== null && JSON.stringify(preview).length > 4096) throw errors.validation('preview must be at most 4 KB when serialised.', 'preview', 'The preview is a teaser the buyer sees before paying; keep it short.')
   const willSeal = job.payment === 'on_delivery' && needsPayment(job) && job.paidAt == null
   if (willSeal) assertWalletAddress(actor, 'deliver a paid job (the buyer pays to it)')
+  await assertOutputMatchesListing(job, output)
   const scan = scanJson(output)
   const now = Date.now()
   const set: Partial<typeof jobs.$inferInsert> = {
@@ -780,8 +795,9 @@ export async function dispute(env: Env, actor: Agent, id: string, reason: string
   if (job.status !== 'delivered' || isSealed(job)) invalid(job, role, 'dispute')
   const updated = await transition(job, role, 'dispute', ['delivered'], 'disputed', { disputeReason: reason.slice(0, 2000), reviewDeadlineAt: null })
   await logJobEvent(id, 'disputed', actor.id, { reason })
-  await note(updated, actor.id, reason, 'Buyer opened a dispute. An arbiter will record a verdict that counts towards both reputations; the platform holds no funds, so any refund is voluntary and settled wallet-to-wallet. Both sides: add evidence in this thread.', { job_id: id, status: 'disputed' })
-  await notify(updated, 'disputed', { reason })
+  await note(updated, actor.id, reason, 'Buyer opened a dispute. A panel of independent evaluator agents (or, failing that, the operator) records a verdict that counts towards both reputations; the platform holds no funds, so a refund verdict is an obligation settled wallet-to-wallet. Both sides: add evidence in this thread.', { job_id: id, status: 'disputed' })
+  const opened = await openDispute(updated, reason)
+  await notify(updated, 'disputed', { reason, dispute_id: opened.id, panel: opened.status === 'panel' ? { seats: opened.seats, required: opened.required, verdict_by: opened.verdictDeadlineAt ? new Date(opened.verdictDeadlineAt).toISOString() : null } : null, escalated: opened.status === 'escalated' })
   await finalize(updated)
   return updated
 }
@@ -851,16 +867,22 @@ export async function resolve(id: string, resolution: { outcome: JobResolution['
   if (!flipped) return reload(id)
   await logJobEvent(id, 'resolved', null, { ...res })
   const verdict = res.outcome === 'buyer' ? 'in favour of the buyer (counts as a failed job for the seller; a full refund is due)' : res.outcome === 'seller' ? 'in favour of the seller (counts as completed)' : 'split (counts as completed; half of the payment is due back)'
-  await note(flipped, null, undefined, `Dispute resolved by ${res.by} ${verdict}. Note: ${res.note.slice(0, 500)}`, { job_id: id, status: 'resolved', outcome: res.outcome })
-  await notify(flipped, 'resolved', { outcome: res.outcome })
+  const who = res.by === 'panel' ? 'the evaluator panel' : res.by === 'arbiter' ? 'the platform operator' : res.by
+  await note(flipped, null, undefined, `Dispute resolved by ${who} ${verdict}. Note: ${res.note.slice(0, 500)}`, { job_id: id, status: 'resolved', outcome: res.outcome, by: res.by })
+  await notify(flipped, 'resolved', { outcome: res.outcome, by: res.by })
+  // The panel closes its own case file before calling us; any other verdict (operator) closes it here.
+  if (res.by !== 'panel') await closeDisputeForJob(id, res.outcome, res.by)
   let final = flipped
   if (res.outcome !== 'seller' && flipped.paidAt != null) {
     const paid = await paidAmount(flipped)
-    final = await markRefundDue(flipped.id, null, `the arbiter ruled '${res.outcome}'.`, res.outcome === 'split' ? Math.ceil(paid / 2) : paid, { outcome: res.outcome })
+    final = await markRefundDue(flipped.id, null, `${who} ruled '${res.outcome}'.`, res.outcome === 'split' ? Math.ceil(paid / 2) : paid, { outcome: res.outcome })
   }
   await finalize(final, res.outcome === 'buyer' ? 'failed' : 'completed')
   return final
 }
+
+// The dispute module never imports this module; it gets the verdict function injected (no import cycle).
+setDisputeResolver((jobId, resolution) => resolve(jobId, resolution))
 
 // --- sweeps -----------------------------------------------------------------------------------
 

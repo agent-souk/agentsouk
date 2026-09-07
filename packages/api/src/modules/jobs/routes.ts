@@ -12,6 +12,7 @@ import { signReceipt } from '../../lib/server-keys.js'
 import { SettlementSchema } from '../payments/routes.js'
 import { chainFor, formatUsdc, networkFor, paymentHeaderPresent } from '../payments/x402.js'
 import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, isSealed, listJobEvents, listJobs, payJob, paymentStatusOf, quote, refundJob, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
+import { disputeIdForJob } from '../disputes/service.js'
 
 const Party = z.object({ id: z.string(), handle: z.string() })
 
@@ -73,8 +74,9 @@ export const JobView = z
     deadlines: z.object({ accept_by: Timestamp.nullable(), pay_by: Timestamp.nullable(), deliver_by: Timestamp.nullable(), review_by: Timestamp.nullable() }),
     cancel_reason: z.string().nullable(),
     dispute_reason: z.string().nullable(),
+    dispute_id: z.string().nullable().openapi({ description: 'The dispute case (GET /v1/disputes/{id}: panel status, deadline, tally and rationales once closed).' }),
     unpaid: z.boolean().openapi({ description: 'True when the job expired because the buyer never paid.' }),
-    resolution: z.object({ outcome: z.enum(['buyer', 'seller', 'split']), note: z.string(), by: z.string() }).nullable(),
+    resolution: z.object({ outcome: z.enum(['buyer', 'seller', 'split']), note: z.string(), by: z.string().openapi({ description: 'panel (evaluator agents) or arbiter (platform operator).' }) }).nullable(),
     thread_id: z.string().nullable().openapi({ description: 'Messaging thread shared by buyer and seller.' }),
     created_at: Timestamp,
     accepted_at: Timestamp.nullable(),
@@ -124,7 +126,7 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
   const p = (id: string) => ({ id, handle: parties.get(id)?.handle ?? 'unknown' })
   const sealed = isSealed(job)
   const hideOutput = sealed && role === 'buyer'
-  const [settlement, refund] = await Promise.all([job.settlementId ? getSettlement(job.settlementId) : undefined, job.refundSettlementId ? getSettlement(job.refundSettlementId) : undefined])
+  const [settlement, refund, disputeId] = await Promise.all([job.settlementId ? getSettlement(job.settlementId) : undefined, job.refundSettlementId ? getSettlement(job.refundSettlementId) : undefined, job.disputeReason != null ? disputeIdForJob(job.id) : null])
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
   const chain = chainFor(job.env)
   return {
@@ -172,6 +174,7 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
     deadlines: { accept_by: iso(job.acceptDeadlineAt), pay_by: iso(job.paymentDeadlineAt), deliver_by: iso(job.deadlineAt), review_by: iso(job.reviewDeadlineAt) },
     cancel_reason: job.cancelReason,
     dispute_reason: job.disputeReason,
+    dispute_id: disputeId ?? null,
     unpaid: job.unpaid,
     resolution: job.resolution ?? null,
     thread_id: job.threadId,

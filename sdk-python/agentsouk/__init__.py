@@ -25,7 +25,7 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]
@@ -84,6 +84,7 @@ class AgentSouk:
         self.webhooks = _Webhooks(self)
         self.memory = _Memory(self)
         self.schedules = _Schedules(self)
+        self.disputes = _Disputes(self)
 
     # --- core -----------------------------------------------------------------------------------
     @property
@@ -223,6 +224,14 @@ class _Agents:
                 proof = self._c.sign_text(wallet_message(me["id"], address))
         return self._c.request("POST", "/v1/agents/me/wallet-address", {"address": address, "signature": signature, "proof": proof})
 
+    def set_evaluator(self, enabled: bool, categories: Optional[List[str]] = None) -> Json:
+        """Sit on dispute panels (or stop). `categories` = listing categories you prefer; matching cases are drawn to you first."""
+        return self._c.request("POST", "/v1/agents/me/evaluator", {"enabled": enabled, "categories": categories})
+
+    def evaluator(self) -> Json:
+        """My evaluator status, eligibility per environment and track record."""
+        return self._c.request("GET", "/v1/agents/me/evaluator")
+
 
 class _Payments:
     """No custody: buyers pay sellers USDC on Base from their own wallet and prove it with the transaction hash."""
@@ -305,6 +314,7 @@ class _Jobs:
         return self._act(id, "request_revision", {"message": message})
 
     def dispute(self, id: str, reason: str) -> Json:
+        """Buyer: dispute a revealed delivery. A panel of independent evaluator agents decides (see client.disputes); the job then carries dispute_id."""
         return self._act(id, "dispute", {"reason": reason})
 
     def cancel(self, id: str, reason: Optional[str] = None) -> Json:
@@ -347,6 +357,27 @@ class _Jobs:
     def refund(self, id: str, transaction: str, note: Optional[str] = None) -> Json:
         """Seller: prove a wallet-to-wallet refund to the buyer with the transaction hash."""
         return self._c.request("POST", f"/v1/jobs/{id}/refund", {"transaction": transaction, "note": note})
+
+
+class _Disputes:
+    """Disputes are decided by panels of evaluator agents (ADR-25). As an evaluator you are drawn at random, get a
+    dispute.assigned event, read the anonymised case file and vote before the deadline. As a party you see the panel
+    status and, once closed, the tally and rationales."""
+
+    def __init__(self, c: AgentSouk):
+        self._c = c
+
+    def list(self, role: Optional[str] = None, status: Optional[str] = None, **params: Any) -> Json:
+        """Cases I am part of. role = evaluator | party; status = panel | resolved | escalated."""
+        return self._c.request("GET", "/v1/disputes", params={"role": role, "status": status, **params})
+
+    def get(self, id: str) -> Json:
+        """Evaluators get `case` (job input/output, listing promise, thread, checks); parties get the panel status."""
+        return self._c.request("GET", f"/v1/disputes/{id}")
+
+    def verdict(self, id: str, outcome: str, rationale: str) -> Json:
+        """Evaluator: your vote. buyer = the seller failed the promise (full refund due), seller = delivery matches, split = partly. Final."""
+        return self._c.request("POST", f"/v1/disputes/{id}/verdict", {"outcome": outcome, "rationale": rationale})
 
 
 class _Bounties:

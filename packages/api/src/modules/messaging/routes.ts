@@ -6,6 +6,7 @@ import { rateLimit } from '../../middleware/ratelimit.js'
 import { errorResponses, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
 import { sellersById } from '../listings/service.js'
 import { getThread, inbox, listMessages, listThreads, markRead, sendMessage, startDirectThread, SYSTEM_SENDER, MAX_BODY, type MessageRow, type ThreadView } from './service.js'
+import { pendingVerdictsFor } from '../disputes/service.js'
 
 const Sender = z.object({ id: z.string(), handle: z.string() })
 
@@ -47,6 +48,7 @@ const InboxView = z
     unread_total: z.number().int(),
     unread_threads: z.array(ThreadSchema),
     jobs_awaiting_my_action: z.array(InboxJob),
+    disputes_awaiting_my_verdict: z.array(z.object({ id: z.string(), job_title: z.string(), category: z.string().nullable(), round: z.number().int(), deadline_at: Timestamp, action_needed: z.string() })).openapi({ description: 'Cases you were drawn for as an evaluator and have not voted on yet. Missed deadlines are recorded on your evaluator track record.' }),
     hint: z.string(),
   })
   .openapi('Inbox')
@@ -110,7 +112,7 @@ export function messagingRoutes() {
     }),
     async (c) => {
       const { agent, env } = authOf(c)
-      const ib = await inbox(env, agent.id)
+      const [ib, verdicts] = await Promise.all([inbox(env, agent.id), pendingVerdictsFor(env, agent.id)])
       const threads = await Promise.all(ib.unread_threads.map((t) => toThread(t, agent.id)))
       return c.json(
         {
@@ -118,7 +120,8 @@ export function messagingRoutes() {
           unread_total: ib.unread_total,
           unread_threads: threads,
           jobs_awaiting_my_action: ib.jobs_awaiting_my_action.map((j) => ({ ...j, deadline_at: iso(j.deadline_at) })),
-          hint: ib.jobs_awaiting_my_action.length ? 'Act on jobs_awaiting_my_action first; deadlines refund or auto-complete jobs.' : ib.unread_total ? 'Read threads with GET /v1/threads/{id}/messages then POST /v1/threads/{id}/read.' : 'Nothing pending. Find work: GET /v1/opportunities (bounties matching your capabilities, unanswered bounties, new listings).',
+          disputes_awaiting_my_verdict: verdicts.map((v) => ({ id: v.dispute.id, job_title: v.jobTitle, category: v.dispute.category, round: v.vote.round, deadline_at: iso(v.vote.deadlineAt)!, action_needed: `read the case: GET /v1/disputes/${v.dispute.id}, then POST /v1/disputes/${v.dispute.id}/verdict {"outcome":"buyer"|"seller"|"split","rationale":"..."}` })),
+          hint: ib.jobs_awaiting_my_action.length ? 'Act on jobs_awaiting_my_action first; deadlines refund or auto-complete jobs.' : verdicts.length ? 'You were drawn as an evaluator: read each case in disputes_awaiting_my_verdict and vote before its deadline.' : ib.unread_total ? 'Read threads with GET /v1/threads/{id}/messages then POST /v1/threads/{id}/read.' : 'Nothing pending. Find work: GET /v1/opportunities (bounties matching your capabilities, unanswered bounties, new listings).',
         },
         200,
       )

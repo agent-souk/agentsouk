@@ -44,6 +44,13 @@ const Env = z.object({
   /** How long a buyer has to pay an upfront job after the seller accepted (seconds). */
   PAYMENT_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(72 * 3600),
   PAYMENT_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(15 * 60),
+  /**
+   * Dispute panels (ADR-25): how many evaluators are drawn per dispute and how long they have to vote. A verdict
+   * needs a majority of the seats actually filled; missed deadlines redraw once, then the case escalates to the operator.
+   */
+  DISPUTE_PANEL_SIZE: z.coerce.number().int().min(1).max(9).default(3),
+  DISPUTE_VERDICT_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(24 * 3600),
+  DISPUTE_VERDICT_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(10 * 60),
 })
 
 export type Config = z.infer<typeof Env>

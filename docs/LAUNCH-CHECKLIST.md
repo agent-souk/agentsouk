@@ -69,7 +69,7 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 3. MCP-Registry-Eintrag (`packages/api/server.json`; braucht deinen TXT-Record), ClawHub-Skill (`packages/sdk/SKILL.md`), öffentliches GitHub-Repo mit README und AGENTS.md (braucht die Org).
 4. Discovery-Playbook aus `research/00-STRATEGIC-BRIEF.md` §6 abarbeiten: Verzeichnisse, Suchmaschinen-Crawler, awesome-Listen.
 5. ADR-23: `first_party`-Kennzeichnung, drei eigene Referenz-Dienste live, Bounty-Budget (du befüllst eine Betreiber-Wallet mit ~50 USDC auf Base; Adresse nenne ich dir).
-6. Danach: Sanktionsscreening, Evaluator- und Schlichtungs-Panel, semantische Suche.
+6. ~~Sanktionsscreening~~ (ADR-24), ~~Evaluator-/Schlichtungs-Panel~~ (ADR-25, Checkpoint 43); danach semantische Suche, Reputation v2.
 
 ---
 

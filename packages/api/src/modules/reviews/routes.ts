@@ -8,6 +8,7 @@ import { config } from '../../config.js'
 import { signReceipt } from '../../lib/server-keys.js'
 import { sellersById } from '../listings/service.js'
 import { createReview, emptySide, getReputation, listReviewsForAgent, resolveAgent, type ReputationRow, type ReviewRow } from './service.js'
+import { evaluatorStats, type EvaluatorStats } from '../disputes/service.js'
 
 const ReviewView = z
   .object({
@@ -45,7 +46,19 @@ const Side = z
   })
   .openapi('ReputationSide')
 
-const Snapshot = z.object({ score: z.number().int().min(0).max(100), as_seller: Side, as_buyer: Side, updated_at: Timestamp.nullable() })
+const EvaluatorSide = z
+  .object({
+    enabled: z.boolean().openapi({ description: 'Opted in to sit on dispute panels.' }),
+    categories: z.array(z.string()),
+    eligible_live: z.boolean().openapi({ description: 'Drawable for live panels right now (opted in, active, trust tier 1 or platform-run).' }),
+    verdicts: z.number().int().openapi({ description: 'Votes submitted.' }),
+    missed: z.number().int().openapi({ description: 'Seats where the deadline passed without a vote.' }),
+    pending: z.number().int(),
+    agreement_rate: z.number().nullable().openapi({ description: 'Share of verdicts that matched the final outcome of the case (null until a case this agent voted on was decided).' }),
+  })
+  .openapi('ReputationEvaluator')
+
+const Snapshot = z.object({ score: z.number().int().min(0).max(100), as_seller: Side, as_buyer: Side, as_evaluator: EvaluatorSide, updated_at: Timestamp.nullable() })
 
 const ReputationView = z
   .object({
@@ -59,8 +72,8 @@ const ReputationView = z
   })
   .openapi('Reputation')
 
-function snapshot(r: ReputationRow | null): z.infer<typeof Snapshot> {
-  return { score: r?.score ?? 0, as_seller: { ...emptySide(), ...(r?.asSeller ?? {}) }, as_buyer: { ...emptySide(), ...(r?.asBuyer ?? {}) }, updated_at: iso(r?.updatedAt) }
+function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
+  return { score: r?.score ?? 0, as_seller: { ...emptySide(), ...(r?.asSeller ?? {}) }, as_buyer: { ...emptySide(), ...(r?.asBuyer ?? {}) }, as_evaluator: ev, updated_at: iso(r?.updatedAt) }
 }
 
 async function toReview(r: ReviewRow, handles: Map<string, { handle: string }>): Promise<z.infer<typeof ReviewView>> {
@@ -138,16 +151,16 @@ export function reviewsRoutes() {
     async (c) => {
       const a = await resolveAgent(c.req.valid('param').id)
       if (!a || a.status === 'deleted') throw errors.notFound('Agent', c.req.valid('param').id)
-      const rep = await getReputation(a.id)
+      const [rep, evLive, evTest] = await Promise.all([getReputation(a.id), evaluatorStats(a, 'live'), evaluatorStats(a, 'test')])
       return c.json(
         {
           object: 'reputation' as const,
           agent_id: a.id,
           handle: a.handle,
           trust_tier: a.trustTier,
-          live: snapshot(rep.live),
-          test: snapshot(rep.test),
-          explain: 'score = 40% rating + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not.',
+          live: snapshot(rep.live, evLive),
+          test: snapshot(rep.test, evTest),
+          explain: 'score = 40% rating + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not. as_evaluator is the track record on dispute panels (not part of the score).',
         },
         200,
       )
@@ -181,7 +194,7 @@ export function reviewsRoutes() {
         issued_at: new Date(now).toISOString(),
         expires_at: new Date(now + 7 * 86_400_000).toISOString(),
         agent: { id: a.id, handle: a.handle, did: a.did, public_key: a.publicKey, wallet_address: a.walletAddress, trust_tier: a.trustTier, first_party: a.firstParty, status: a.status, created_at: iso(a.createdAt) },
-        reputation: snapshot(env === 'live' ? rep.live : rep.test),
+        reputation: snapshot(env === 'live' ? rep.live : rep.test, await evaluatorStats(a, env)),
         method: `${base}/v1/agents/${a.id}/reputation`,
         verify: { jwks: `${base}/.well-known/jwks.json`, endpoint: `${base}/v1/receipts/verify`, alg: 'EdDSA', canonical: 'json-sorted-keys' },
       }

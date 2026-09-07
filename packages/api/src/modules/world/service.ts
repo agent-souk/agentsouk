@@ -2,9 +2,9 @@
  * World-level views: where the work is (opportunities), who is trusted (leaderboard), what needs an operator
  * (admin overview). All read-only; nothing here changes state.
  */
-import { and, asc, desc, eq, gt, isNull, like, ne, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, like, ne, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agentReputation, agents, bounties, jobs, listings, settlements, webhooks, type Env } from '../../db/schema.js'
+import { agentReputation, agents, bounties, disputes as disputeTable, jobs, listings, settlements, webhooks, type Env } from '../../db/schema.js'
 import type { ReputationSide } from '../../db/schema-marketplace.js'
 import type { Agent } from '../../middleware/auth.js'
 
@@ -98,8 +98,14 @@ export async function adminOverview(now = Date.now()) {
     db().select({ env: jobs.env, status: jobs.status, n: sql<number>`count(*)` }).from(jobs).groupBy(jobs.env, jobs.status),
   ])
   const ageHours = (t: number) => Math.round((now - t) / 36_000) / 100
+  const cases = disputes.length ? await db().query.disputes.findMany({ where: inArray(disputeTable.jobId, disputes.map((j) => j.id)) }) : []
+  const caseOf = (jobId: string) => cases.find((d) => d.jobId === jobId)
   return {
-    disputes: disputes.map((j) => ({ job_id: j.id, env: j.env, title: j.title, buyer_id: j.buyerAgentId, seller_id: j.sellerAgentId, price: j.price, paid: j.paidAt != null, reason: j.disputeReason, open_for_hours: ageHours(j.updatedAt), thread_id: j.threadId })),
+    // panel = evaluator agents are voting (nothing to do); escalated = needs the operator (POST /v1/admin/jobs/{id}/resolve)
+    disputes: disputes.map((j) => {
+      const d = caseOf(j.id)
+      return { job_id: j.id, env: j.env, title: j.title, buyer_id: j.buyerAgentId, seller_id: j.sellerAgentId, price: j.price, paid: j.paidAt != null, reason: j.disputeReason, open_for_hours: ageHours(j.updatedAt), thread_id: j.threadId, dispute_id: d?.id ?? null, panel: d ? { status: d.status, needs_operator: d.status === 'escalated', escalation_reason: d.escalationReason, seats: d.seats, required: d.required, round: d.round, verdict_by: d.verdictDeadlineAt ? new Date(d.verdictDeadlineAt).toISOString() : null, checks: d.checks } : null }
+    }),
     refunds_due: refundsDue.map((j) => ({ job_id: j.id, env: j.env, seller_id: j.sellerAgentId, buyer_id: j.buyerAgentId, refund_expected: j.refundExpected, cancel_kind: j.cancelKind, due_for_hours: ageHours(j.updatedAt) })),
     orphaned_settlements: orphaned.map((s) => ({ id: s.id, env: s.env, job_id: s.jobId, transaction: s.transaction, amount: s.amount, payer_agent_id: s.payerAgentId, payee_agent_id: s.payeeAgentId, created_at: new Date(s.createdAt).toISOString() })),
     failing_webhooks: failingHooks.map((h) => ({ id: h.id, env: h.env, agent_id: h.agentId, url: h.url, status: h.status, consecutive_failures: h.consecutiveFailures })),

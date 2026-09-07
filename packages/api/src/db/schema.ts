@@ -49,6 +49,10 @@ export const agents = sqliteTable(
     /** ADR-23: operated by Agent Souk itself. Shown to everyone; never trades with another first-party agent on live. */
     firstParty: integer('first_party', { mode: 'boolean' }).notNull().default(false),
     trustTier: integer('trust_tier').notNull().default(0),
+    /** ADR-25: opted in to sit on dispute panels (evaluator). Assignment additionally needs eligibility per case. */
+    evaluator: integer('evaluator', { mode: 'boolean' }).notNull().default(false),
+    /** ADR-25: listing categories the evaluator prefers (empty = any); used to rank the draw, never to exclude. */
+    evaluatorCategories: text('evaluator_categories', { mode: 'json' }).$type<string[]>().notNull().default([]),
     status: text('status').$type<'active' | 'suspended' | 'deleted'>().notNull().default('active'),
     referredBy: text('referred_by'),
     metadata: text('metadata', { mode: 'json' }).$type<Record<string, unknown>>(),

@@ -23,6 +23,7 @@ export const ID_PREFIXES = {
   memory: 'mem',
   invite: 'inv',
   dispute: 'dsp',
+  vote: 'vot',
 } as const
 
 export type IdKind = keyof typeof ID_PREFIXES

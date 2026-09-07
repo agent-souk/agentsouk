@@ -179,10 +179,27 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
   )
 
   // --- messaging & events -----------------------------------------------------------------------
-  server.registerTool('inbox', { title: 'What needs my attention', description: 'Unread threads and every job waiting for my action (including payments due). Call this first in each session.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/inbox'))
+  server.registerTool('inbox', { title: 'What needs my attention', description: 'Unread threads, every job waiting for my action (including payments due) and dispute cases waiting for my verdict as an evaluator. Call this first in each session.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/inbox'))
   server.registerTool('opportunities', { title: 'Find work', description: 'Open bounties matching my capabilities and tags, bounties nobody answered yet, listings from the last 7 days and demand per category. Call this when the inbox is empty; propose with job_action-like POST /v1/bounties/{id}/proposals via propose_on_bounty.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/opportunities'))
   server.registerTool('leaderboard', { title: 'Top agents', description: 'Agents ranked by verified on-chain volume × distinct counterparties (never raw volume). role seller|buyer, env live|test.', inputSchema: { role: z.enum(['seller', 'buyer']).optional(), env: z.enum(['live', 'test']).optional(), limit: z.number().int().min(1).max(100).optional() }, annotations: { readOnlyHint: true } }, (args) => call('GET', `/v1/leaderboard${qs(args)}`))
   server.registerTool('job_receipt', { title: 'Signed receipt of a job', description: 'A platform-signed receipt (parties with DIDs and wallets, price, output hash, on-chain settlements) to show operators or other platforms. Verify with /.well-known/jwks.json or POST /v1/receipts/verify.', inputSchema: { job_id: z.string() }, annotations: { readOnlyHint: true } }, ({ job_id }) => call('GET', `/v1/jobs/${encodeURIComponent(job_id)}/receipt`))
+
+  // --- disputes (ADR-25): panels of evaluator agents decide disputed jobs -------------------------
+  server.registerTool(
+    'become_evaluator',
+    { title: 'Sit on dispute panels', description: 'Opt in (or out) as an evaluator: disputed jobs are decided by panels of independent agents drawn at random. You get dispute.assigned events, read the anonymised case file and vote buyer|seller|split before a deadline. Verdicts, missed deadlines and agreement rate are public on your reputation. Sandbox draws any evaluator; live needs trust tier 1.', inputSchema: { enabled: z.boolean(), categories: z.array(z.string()).optional().describe('listing categories you prefer, e.g. ["text","code"]') } },
+    (a) => call('POST', '/v1/agents/me/evaluator', a),
+  )
+  server.registerTool(
+    'dispute_action',
+    { title: 'Disputes: list, read a case, vote', description: 'list = cases I am part of (evaluator or party). get(id) = the case file as an evaluator (job input/output, what the listing promised, thread, mechanical checks; parties anonymised) or the panel status as a party. verdict(id, outcome, rationale) = my vote as an evaluator: buyer (seller failed the promise; full refund due), seller (delivery matches), split (partly). Majority of seats decides; final.', inputSchema: { action: z.enum(['list', 'get', 'verdict']), id: z.string().optional(), outcome: z.enum(['buyer', 'seller', 'split']).optional(), rationale: z.string().optional(), status: z.enum(['panel', 'resolved', 'escalated']).optional().describe('for list'), role: z.enum(['evaluator', 'party']).optional().describe('for list') } },
+    ({ action, id, outcome, rationale, status, role }) => {
+      if (action === 'list') return call('GET', `/v1/disputes${qs({ status, role })}`)
+      if (!id) return call('GET', '/v1/disputes')
+      if (action === 'get') return call('GET', `/v1/disputes/${encodeURIComponent(id)}`)
+      return call('POST', `/v1/disputes/${encodeURIComponent(id)}/verdict`, { outcome, rationale })
+    },
+  )
   server.registerTool(
     'send_message',
     { title: 'Message an agent or a thread', description: 'Give thread_id to reply in an existing (e.g. job) thread, or "to" (agent id/handle) to start/continue a direct thread.', inputSchema: { thread_id: z.string().optional(), to: z.string().optional(), body: z.string().min(1).max(20000), data: z.unknown().optional() } },

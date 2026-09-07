@@ -2,6 +2,32 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 43: Schlichtung ohne Mensch (ADR-25), Evaluator-Panels, Output-Schema-Prüfung (157 Tests grün)
+
+Nick war nicht erreichbar (Anthropic-Key, Betreiber-Wallet, GitHub-Org offen); gebaut wurde der erste Kandidat ohne Input:
+- **ADR-25 Evaluator-Panels** (`modules/disputes/`): Agents melden sich per `POST /v1/agents/me/evaluator` als Schlichter
+  (Flag `evaluator` im Profil, Kategorien als Präferenz). Bei `dispute` zieht die Plattform zufällig 3 unabhängige
+  Evaluatoren (nie Partei, nie gleiche Wallet, live nur Trust-Tier ≥ 1 oder `first_party`, nie `first_party` gegen
+  `first_party`). Fallakte `GET /v1/disputes/{id}` (Input, Output, Listing-Versprechen, Thread, mechanische Checks) mit
+  **anonymisierten Parteien**; Urteil `POST /v1/disputes/{id}/verdict {outcome, rationale}`; Mehrheit der Sitze entscheidet
+  sofort und schreibt das Urteil als `resolution.by = "panel"` auf den Job (Refund-Pflicht wie beim Operator-Urteil).
+  Fristen (`DISPUTE_VERDICT_WINDOW_SECONDS_LIVE` 24 h / `_TEST` 10 min): versäumte Sitze werden einmal nachgezogen, dann
+  entscheidet eine strikte Pluralität, sonst `escalated` an den Operator (`GET /v1/admin/overview` zeigt `needs_operator`).
+  Kein ziehbarer Evaluator → sofort `escalated`. Evaluator-Track-Record `as_evaluator {verdicts, missed, agreement_rate}`
+  in der Reputation und der Attestation; Inbox `disputes_awaiting_my_verdict`; Events `dispute.assigned|panel|decided|escalated`;
+  `dispute_id` am Job. Unbezahlt in dieser Version (kein Custody → keine Bonds); dokumentiert in ADR-25.
+- **Tier 0:** `POST /v1/jobs/{id}/deliver` prüft die Lieferung gegen das `output_schema` des Listings (ajv; 400
+  `output_schema_mismatch` mit Fehlerliste); `lib/json-schema.ts`. Checks (Schema, pünktlich, Revisionen, bezahlt) liegen jeder Fallakte bei.
+- Migration `0003_disputes` (Tabellen `disputes`, `dispute_votes`; Spalten `agents.evaluator`, `evaluator_categories`);
+  ajv + ajv-formats als API-Abhängigkeit (Lockfile aktualisiert). `APP_VERSION` 0.3.0, Changelog 0.3.0, skill.md 0.3.0.
+- MCP-Tools `become_evaluator`, `dispute_action` (39 Tools, Grenze 40 im Test). SDKs 0.3.0 (TS: `disputes.list/get/verdict`,
+  `agents.setEvaluator/evaluator`, Typen `Dispute`, `dispute_id`; Python: `client.disputes`, `agents.set_evaluator`).
+- Tests: `modules/disputes/routes.test.ts` (9 Tests: Opt-in, Eligibility, Schema-Prüfung, Panel mit Ausschlüssen,
+  Mehrheit, Nachziehen + Gleichstand → Eskalation → Operator, Pluralität nach Runde 2, keine Stimmen / keine Evaluatoren, Kategorie-Präferenz, Checks bei Verspätung).
+- Deploy/Publish: siehe nächster Eintrag (falls vorhanden); sonst noch nicht deployt.
+- Nächste Kandidaten ohne Nick: Reputation v2 (Wertgewichtung, Karten je Kategorie), T2-Namensraum-Nachweis
+  (Domain per DNS-TXT/.well-known), gasfreier `receiveWithAuthorization`-Pfad in den Docs; mit Nick: LLM-Dienste, Bounty-Budget, Repo öffentlich, LLM-Panel (Stufe 2).
+
 ## Stand 2026-09-07, Checkpoint 42: Sanktionsscreening, signierte Belege, Opportunities, Bestenliste (148 Tests grün)
 
 Extras aus dem Strategie-Brief, die keinen Input von Nick brauchen (Nick: "Extras, die sinnvoll sind, schaden nicht"):

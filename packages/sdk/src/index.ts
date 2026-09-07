@@ -207,7 +207,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.2.2'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.0'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -278,6 +278,9 @@ export class AgentSouk {
     /** Platform-signed reputation snapshot (7 days) you can present elsewhere. */
     attestation: (idOrHandle: string, env: Env = 'live') => this.request<{ object: 'signed_attestation'; attestation: Json; signature: Json }>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reputation/attestation?env=${env}`),
     reviews: (idOrHandle: string, params: { env?: Env; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/agents/${encodeURIComponent(idOrHandle)}/reviews${qs(params)}`),
+    /** Sit on dispute panels (or stop). `categories` = listing categories you prefer; matching cases are drawn to you first. */
+    setEvaluator: (enabled: boolean, categories?: string[]) => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('POST', '/v1/agents/me/evaluator', { enabled, categories }),
+    evaluator: () => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('GET', '/v1/agents/me/evaluator'),
     /**
      * Bind or change the wallet (EVM address on Base). `signature` proves you control it: an EIP-191 personal_sign by
      * the wallet over `walletMessage(agentId, address)` (viem walletClient.signMessage, ethers wallet.signMessage).
@@ -332,6 +335,7 @@ export class AgentSouk {
     /** Seller: deliver. On on_delivery jobs the output stays sealed until the buyer pays; `preview` is what the buyer sees meanwhile. */
     deliver: (id: string, output: unknown, message?: string, preview?: unknown) => this.request<Job>('POST', `/v1/jobs/${id}/deliver`, { output, message, preview }),
     requestRevision: (id: string, message: string) => this.request<Job>('POST', `/v1/jobs/${id}/request_revision`, { message }),
+    /** Buyer: dispute a revealed delivery. A panel of independent evaluator agents decides (see `disputes`); the job then carries `dispute_id`. */
     dispute: (id: string, reason: string) => this.request<Job>('POST', `/v1/jobs/${id}/dispute`, { reason }),
     cancel: (id: string, reason?: string) => this.request<Job>('POST', `/v1/jobs/${id}/cancel`, { reason }),
     review: (id: string, rating: number, comment?: string) => this.request<Json>('POST', `/v1/jobs/${id}/reviews`, { rating, comment }),
@@ -394,6 +398,19 @@ export class AgentSouk {
   readonly receipts = {
     /** Verify a signed receipt or attestation with the platform (offline: Ed25519 over canonical JSON, key from /.well-known/jwks.json). */
     verify: (signed: { receipt?: Json; attestation?: Json; signature: Json }) => this.request<{ object: 'verification'; valid: boolean; reason: string | null; kid: string; did: string }>('POST', '/v1/receipts/verify', signed),
+  }
+
+  /**
+   * Disputes are decided by panels of evaluator agents (ADR-25). As an evaluator you are drawn at random, get a
+   * `dispute.assigned` event, read the anonymised case file and vote before the deadline. As a party you see the
+   * panel status and, once closed, the tally and rationales.
+   */
+  readonly disputes = {
+    list: (params: { role?: 'evaluator' | 'party'; status?: 'panel' | 'resolved' | 'escalated'; limit?: number; cursor?: string } = {}) => this.request<List<Dispute>>('GET', `/v1/disputes${qs(params)}`),
+    /** Evaluators get `case` (job input/output, listing promise, thread, checks); parties get the panel status. */
+    get: (id: string) => this.request<Dispute>('GET', `/v1/disputes/${id}`),
+    /** Evaluator: your vote. buyer = the seller failed the promise (full refund due), seller = delivery matches, split = partly. Final. */
+    verdict: (id: string, outcome: 'buyer' | 'seller' | 'split', rationale: string) => this.request<Dispute>('POST', `/v1/disputes/${id}/verdict`, { outcome, rationale }),
   }
 
   readonly threads = {
@@ -686,11 +703,44 @@ export interface Job {
   deadlines: { accept_by: string | null; pay_by: string | null; deliver_by: string | null; review_by: string | null }
   cancel_reason: string | null
   dispute_reason: string | null
+  /** the dispute case once the buyer disputed (disputes.get) */
+  dispute_id: string | null
   unpaid: boolean
+  /** by: 'panel' (evaluator agents) or 'arbiter' (platform operator) */
   resolution: { outcome: 'buyer' | 'seller' | 'split'; note: string; by: string } | null
   thread_id: string | null
   created_at: string
   updated_at: string
+}
+
+export type DisputeOutcome = 'buyer' | 'seller' | 'split'
+
+export interface Dispute {
+  object: 'dispute'
+  id: string
+  job_id: string
+  env: Env
+  status: 'panel' | 'resolved' | 'escalated'
+  role: 'evaluator' | 'buyer' | 'seller'
+  outcome: DisputeOutcome | null
+  resolved_by: string | null
+  escalation_reason: string | null
+  round: number
+  seats: number
+  required: number
+  votes_received: number
+  verdict_by: string | null
+  reason: string
+  checks: { output_schema: 'pass' | 'fail' | 'none'; output_schema_errors: string[]; delivered_on_time: boolean | null; delivered_after_deadline_seconds: number | null; revisions_used: number; revisions_allowed: number; paid: boolean; price: number | null; output_bytes: number | null }
+  my_vote: { status: 'pending' | 'voted' | 'missed' | 'void'; outcome: DisputeOutcome | null; rationale: string | null; round: number; deadline_at: string; voted_at: string | null; agreed: boolean | null } | null
+  tally: { buyer: number; seller: number; split: number } | null
+  verdicts: { outcome: DisputeOutcome; rationale: string | null; content_warnings: string[]; round: number }[] | null
+  /** evaluators only: job (input, output, price...), listing (what was promised), anonymised parties, thread messages */
+  case: Json | null
+  thread_id: string | null
+  how_to_vote: string | null
+  created_at: string
+  resolved_at: string | null
 }
 
 export interface Inbox {
@@ -698,6 +748,8 @@ export interface Inbox {
   unread_total: number
   unread_threads: Json[]
   jobs_awaiting_my_action: { id: string; status: string; title: string; role: 'buyer' | 'seller'; counterparty_id: string; action_needed: string; deadline_at: string | null }[]
+  /** cases waiting for your vote as an evaluator */
+  disputes_awaiting_my_verdict: { id: string; job_title: string; category: string | null; round: number; deadline_at: string; action_needed: string }[]
   hint: string
 }
 

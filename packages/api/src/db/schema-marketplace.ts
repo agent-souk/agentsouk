@@ -150,6 +150,85 @@ export const jobs = sqliteTable(
   ],
 )
 
+// --- disputes (ADR-25): evaluator panels decide disputed jobs without a human ---------------------
+
+/** panel = evaluators are voting; resolved = verdict recorded on the job; escalated = no panel decision, operator queue */
+export const DISPUTE_STATUSES = ['panel', 'resolved', 'escalated'] as const
+export type DisputeStatus = (typeof DISPUTE_STATUSES)[number]
+export type DisputeOutcome = 'buyer' | 'seller' | 'split'
+/** Deterministic evidence computed when the dispute opens (SPEC-MARKETPLACE Nachtrag ADR-25). */
+export type DisputeChecks = {
+  /** listing output_schema vs the delivered output: pass | fail | none (no schema) */
+  output_schema: 'pass' | 'fail' | 'none'
+  output_schema_errors: string[]
+  delivered_on_time: boolean | null
+  delivered_after_deadline_seconds: number | null
+  revisions_used: number
+  revisions_allowed: number
+  paid: boolean
+  price: number | null
+  output_bytes: number | null
+}
+
+export const disputes = sqliteTable(
+  'disputes',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    buyerAgentId: text('buyer_agent_id').notNull(),
+    sellerAgentId: text('seller_agent_id').notNull(),
+    category: text('category'),
+    reason: text('reason').notNull(),
+    status: text('status').$type<DisputeStatus>().notNull().default('panel'),
+    /** evaluators drawn for the current round */
+    seats: integer('seats').notNull().default(0),
+    /** votes for one outcome needed to decide: majority of the seats */
+    required: integer('required').notNull().default(0),
+    round: integer('round').notNull().default(1),
+    verdictDeadlineAt: integer('verdict_deadline_at'),
+    checks: text('checks', { mode: 'json' }).$type<DisputeChecks>().notNull(),
+    outcome: text('outcome').$type<DisputeOutcome>(),
+    /** panel | arbiter */
+    resolvedBy: text('resolved_by'),
+    escalationReason: text('escalation_reason'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (t) => [uniqueIndex('disputes_job').on(t.jobId), index('disputes_status_deadline').on(t.status, t.verdictDeadlineAt), index('disputes_parties').on(t.buyerAgentId, t.sellerAgentId)],
+)
+
+export const VOTE_STATUSES = ['pending', 'voted', 'missed', 'void'] as const
+export type VoteStatus = (typeof VOTE_STATUSES)[number]
+
+export const disputeVotes = sqliteTable(
+  'dispute_votes',
+  {
+    id: text('id').primaryKey(),
+    disputeId: text('dispute_id')
+      .notNull()
+      .references(() => disputes.id),
+    env: text('env').$type<Env>().notNull(),
+    evaluatorAgentId: text('evaluator_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    round: integer('round').notNull().default(1),
+    status: text('status').$type<VoteStatus>().notNull().default('pending'),
+    outcome: text('outcome').$type<DisputeOutcome>(),
+    rationale: text('rationale'),
+    contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    /** set when the dispute is decided: did this vote match the final outcome (null when not voted) */
+    agreed: integer('agreed', { mode: 'boolean' }),
+    assignedAt: integer('assigned_at').notNull(),
+    deadlineAt: integer('deadline_at').notNull(),
+    votedAt: integer('voted_at'),
+  },
+  (t) => [uniqueIndex('dispute_votes_unique').on(t.disputeId, t.evaluatorAgentId), index('dispute_votes_evaluator').on(t.evaluatorAgentId, t.status)],
+)
+
 // --- settlements (ADR-21/22): the only money record. One row per on-chain transfer the platform verified. ---
 
 export const SETTLEMENT_KINDS = ['payment', 'refund'] as const
