@@ -129,11 +129,29 @@ export type WalletOptions = {
   fetchImpl?: RpcFetch
   /** USDC minor units; a single transfer above this is refused (default 25 USDC) */
   maxPerTransfer?: bigint
+  /** wei; refuse to sign above these (Base normally runs far below: ~0.001 gwei tip, ~0.01 gwei base fee) */
+  maxPriorityFeePerGas?: bigint
+  maxFeePerGas?: bigint
   sleep?: (ms: number) => Promise<void>
   log?: (msg: string, extra?: Record<string, unknown>) => void
 }
 
 export type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint }
+export type Sent = { hash: string; nonce: number; explorer: string; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+
+/**
+ * A transfer that did not happen (broadcast: false, nothing left the wallet, safe to retry) or one whose fate is
+ * unknown (broadcast: true, the node may have accepted it: never retry blindly).
+ */
+export class TransferError extends Error {
+  constructor(
+    message: string,
+    readonly broadcast: boolean,
+  ) {
+    super(message)
+    this.name = 'TransferError'
+  }
+}
 
 export class UsdcWallet {
   readonly address: string
@@ -172,55 +190,99 @@ export class UsdcWallet {
   }
 
   /** Sends `amount` USDC minor units to `to`. Resolves once the node accepted the transaction (not yet mined). */
-  async transfer(to: string, amount: bigint): Promise<{ hash: string; nonce: number; explorer: string }> {
-    if (!isAddress(to)) throw new Error(`refusing to pay: recipient is not a plain address (${String(to).slice(0, 60)})`)
-    if (sameAddress(to, this.address)) throw new Error('refusing to pay: recipient is the operator wallet itself')
-    if (amount <= 0n) throw new Error('refusing to pay: amount must be positive')
-    if (amount > this.maxPerTransfer) throw new Error(`refusing to pay: ${formatUsdc(amount)} exceeds the per-transfer cap of ${formatUsdc(this.maxPerTransfer)}`)
-    const [usdc, eth] = await Promise.all([this.usdcBalance(), this.ethBalance()])
-    if (usdc < amount) throw new Error(`insufficient USDC: wallet holds ${formatUsdc(usdc)}, payment needs ${formatUsdc(amount)}`)
-    if (eth === 0n) throw new Error('no ETH for gas on the operator wallet')
+  async transfer(to: string, amount: bigint): Promise<Sent> {
+    if (!isAddress(to)) throw new TransferError(`refusing to pay: recipient is not a plain address (${String(to).slice(0, 60)})`, false)
+    if (sameAddress(to, this.address)) throw new TransferError('refusing to pay: recipient is the operator wallet itself', false)
+    if (amount <= 0n) throw new TransferError('refusing to pay: amount must be positive', false)
+    if (amount > this.maxPerTransfer) throw new TransferError(`refusing to pay: ${formatUsdc(amount)} exceeds the per-transfer cap of ${formatUsdc(this.maxPerTransfer)}`, false)
+    const [usdc, eth] = await this.pre(() => Promise.all([this.usdcBalance(), this.ethBalance()]))
+    if (usdc < amount) throw new TransferError(`insufficient USDC: wallet holds ${formatUsdc(usdc)}, payment needs ${formatUsdc(amount)}`, false)
+    if (eth === 0n) throw new TransferError('no ETH for gas on the operator wallet', false)
     const r = await this.send(this.chain.usdc, 0n, encodeTransfer(to, amount), 60_000n, eth)
     this.opts.log?.('usdc transfer sent', { to, amount: amount.toString(), hash: r.hash, nonce: r.nonce, chain_id: this.chain.chainId })
     return r
   }
 
+  /**
+   * Re-broadcasts a USDC transfer that is stuck in the mempool: same nonce, fees at least 25% above the previous
+   * ones (nodes drop replacements that bump less than ~10%). The old hash can no longer mine once this one is accepted.
+   */
+  async replaceTransfer(to: string, amount: bigint, prev: { nonce: number; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }): Promise<Sent> {
+    if (!isAddress(to) || sameAddress(to, this.address) || amount <= 0n || amount > this.maxPerTransfer) throw new TransferError('refusing to replace: the original transfer parameters are not acceptable', false)
+    const eth = await this.pre(() => this.ethBalance())
+    const bump = (v: bigint) => (v * 125n) / 100n + 1n
+    const r = await this.send(this.chain.usdc, 0n, encodeTransfer(to, amount), 60_000n, eth, { nonce: prev.nonce, minPriority: bump(prev.maxPriorityFeePerGas), minMaxFee: bump(prev.maxFeePerGas) })
+    this.opts.log?.('usdc transfer replaced', { to, amount: amount.toString(), hash: r.hash, nonce: r.nonce, chain_id: this.chain.chainId })
+    return r
+  }
+
   /** Sends native ETH (wei) to `to`: only used to move gas money between the operator's own wallets. */
-  async sendEth(to: string, amountWei: bigint): Promise<{ hash: string; nonce: number; explorer: string }> {
-    if (!isAddress(to)) throw new Error(`refusing to send: recipient is not a plain address (${String(to).slice(0, 60)})`)
-    if (sameAddress(to, this.address)) throw new Error('refusing to send: recipient is the wallet itself')
-    if (amountWei <= 0n) throw new Error('refusing to send: amount must be positive')
-    const eth = await this.ethBalance()
-    if (eth <= amountWei) throw new Error(`insufficient ETH: wallet holds ${eth} wei, sending ${amountWei} plus gas`)
+  async sendEth(to: string, amountWei: bigint): Promise<Sent> {
+    if (!isAddress(to)) throw new TransferError(`refusing to send: recipient is not a plain address (${String(to).slice(0, 60)})`, false)
+    if (sameAddress(to, this.address)) throw new TransferError('refusing to send: recipient is the wallet itself', false)
+    if (amountWei <= 0n) throw new TransferError('refusing to send: amount must be positive', false)
+    const eth = await this.pre(() => this.ethBalance())
+    if (eth <= amountWei) throw new TransferError(`insufficient ETH: wallet holds ${eth} wei, sending ${amountWei} plus gas`, false)
     const r = await this.send(to, amountWei, new Uint8Array(0), 21_000n, eth)
     this.opts.log?.('eth transfer sent', { to, amount_wei: amountWei.toString(), hash: r.hash, nonce: r.nonce, chain_id: this.chain.chainId })
     return r
   }
 
-  /** Nonce, EIP-1559 fees, gas estimate with a 30% margin, sign, broadcast, and insist on the expected hash. */
-  private async send(to: string, value: bigint, data: Uint8Array, minGas: bigint, ethBalance: bigint): Promise<{ hash: string; nonce: number; explorer: string }> {
-    const nonce = Number(hexToBigInt(await this.rpc('eth_getTransactionCount', [this.address, 'pending']), 'nonce'))
-    const block = (await this.rpc<{ baseFeePerGas?: string } | null>('eth_getBlockByNumber', ['latest', false])) ?? {}
-    const baseFee = hexToBigInt(block.baseFeePerGas ?? '0x0', 'baseFeePerGas')
-    let priority = 1_000_000n // 0.001 gwei, the usual tip on Base
+  get maxPriorityFeePerGas(): bigint {
+    return this.opts.maxPriorityFeePerGas ?? 500_000_000n // 0.5 gwei (Base tips are ~0.001 gwei)
+  }
+
+  get maxFeePerGas(): bigint {
+    return this.opts.maxFeePerGas ?? 5_000_000_000n // 5 gwei (Base base fees are ~0.01 gwei; 60k gas at 5 gwei is 0.0003 ETH)
+  }
+
+  /** Reads before the broadcast: any failure is a pre-broadcast failure (nothing left the wallet). */
+  private async pre<T>(f: () => Promise<T>): Promise<T> {
     try {
-      priority = hexToBigInt(await this.rpc('eth_maxPriorityFeePerGas', []), 'priority fee')
-      if (priority < 1_000_000n) priority = 1_000_000n
-    } catch {
-      /* not every node implements it */
+      return await f()
+    } catch (e) {
+      throw e instanceof TransferError ? e : new TransferError(String((e as Error).message ?? e), false)
     }
-    const maxFeePerGas = baseFee * 2n + priority
-    const callObj: Record<string, string> = { from: this.address, to }
-    if (data.length) callObj.data = hex(data)
-    if (value > 0n) callObj.value = quantity(value)
-    const estimated = hexToBigInt(await this.rpc('eth_estimateGas', [callObj]), 'gas estimate')
-    const gasLimit = (estimated * 130n) / 100n < minGas ? minGas : (estimated * 130n) / 100n
-    if (ethBalance < value + gasLimit * maxFeePerGas) throw new Error(`insufficient ETH for gas: need up to ${value + gasLimit * maxFeePerGas} wei, wallet holds ${ethBalance}`)
-    const tx: UnsignedTx = { chainId: this.chain.chainId, nonce, maxPriorityFeePerGas: priority, maxFeePerGas, gasLimit, to, value, data }
-    const { raw, hash } = signEip1559(tx, this.privateKey)
-    const sent = await this.rpc<string>('eth_sendRawTransaction', [raw])
-    if (typeof sent !== 'string' || !sameAddress(sent, hash)) throw new Error(`node returned an unexpected hash ${String(sent)} for ${hash}`)
-    return { hash, nonce, explorer: this.chain.explorerTx + hash }
+  }
+
+  /**
+   * Nonce, EIP-1559 fees (capped), gas estimate with a 30% margin, sign, broadcast, and insist on the expected
+   * hash. Everything up to the broadcast throws TransferError(broadcast: false); the broadcast itself and the hash
+   * check throw TransferError(broadcast: true), because the node may have accepted the transaction.
+   */
+  private async send(to: string, value: bigint, data: Uint8Array, minGas: bigint, ethBalance: bigint, opts: { nonce?: number; minPriority?: bigint; minMaxFee?: bigint } = {}): Promise<Sent> {
+    const prep = await this.pre(async () => {
+      const nonce = opts.nonce ?? Number(hexToBigInt(await this.rpc('eth_getTransactionCount', [this.address, 'pending']), 'nonce'))
+      const block = (await this.rpc<{ baseFeePerGas?: string } | null>('eth_getBlockByNumber', ['latest', false])) ?? {}
+      const baseFee = hexToBigInt(block.baseFeePerGas ?? '0x0', 'baseFeePerGas')
+      let priority = 1_000_000n // 0.001 gwei, the usual tip on Base
+      try {
+        priority = hexToBigInt(await this.rpc('eth_maxPriorityFeePerGas', []), 'priority fee')
+        if (priority < 1_000_000n) priority = 1_000_000n
+      } catch {
+        /* not every node implements it */
+      }
+      if (opts.minPriority && priority < opts.minPriority) priority = opts.minPriority
+      let maxFeePerGas = baseFee * 2n + priority
+      if (opts.minMaxFee && maxFeePerGas < opts.minMaxFee) maxFeePerGas = opts.minMaxFee
+      if (priority > this.maxPriorityFeePerGas || maxFeePerGas > this.maxFeePerGas) throw new TransferError(`gas price above the cap (priority ${priority} wei, max fee ${maxFeePerGas} wei); retry later`, false)
+      const callObj: Record<string, string> = { from: this.address, to }
+      if (data.length) callObj.data = hex(data)
+      if (value > 0n) callObj.value = quantity(value)
+      const estimated = hexToBigInt(await this.rpc('eth_estimateGas', [callObj]), 'gas estimate')
+      const gasLimit = (estimated * 130n) / 100n < minGas ? minGas : (estimated * 130n) / 100n
+      if (ethBalance < value + gasLimit * maxFeePerGas) throw new TransferError(`insufficient ETH for gas: need up to ${value + gasLimit * maxFeePerGas} wei, wallet holds ${ethBalance}`, false)
+      const tx: UnsignedTx = { chainId: this.chain.chainId, nonce, maxPriorityFeePerGas: priority, maxFeePerGas, gasLimit, to, value, data }
+      return { tx, ...signEip1559(tx, this.privateKey) }
+    })
+    let sent: unknown
+    try {
+      sent = await this.rpc<string>('eth_sendRawTransaction', [prep.raw])
+    } catch (e) {
+      throw new TransferError(`broadcast failed: ${String((e as Error).message ?? e)}`, true)
+    }
+    if (typeof sent !== 'string' || !sameAddress(sent, prep.hash)) throw new TransferError(`node returned an unexpected hash ${String(sent)} for ${prep.hash}`, true)
+    return { hash: prep.hash, nonce: prep.tx.nonce, explorer: this.chain.explorerTx + prep.hash, maxFeePerGas: prep.tx.maxFeePerGas, maxPriorityFeePerGas: prep.tx.maxPriorityFeePerGas }
   }
 
   /** Waits until the transaction is mined; throws on timeout (the transfer may still land later: keep the hash). */

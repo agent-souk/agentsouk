@@ -4,16 +4,19 @@
  * every other buyer), grades the revealed work, reviews the seller, and re-posts until the catalogue is used up.
  *
  * Money rules, enforced here and not by the model: pay only from the operator wallet bound to this identity,
- * only the job's own pay_to and price, never above the per-transfer cap, the daily cap or the lifetime budget,
- * never twice for one job (the transaction hash is persisted before it is submitted), and never a bounty the
- * wallet could not pay. State lives in the platform's own memory KV, so a restart continues where it stopped.
+ * only the job's own pay_to and price, never above the per-transfer cap, the daily cap or the lifetime budget
+ * (in-flight transfers count), never twice for one job (state is re-read and a lease is taken right before the
+ * transfer; the hash is persisted before it is submitted), never a bounty the wallet could not pay on top of every
+ * open commitment, and never before the preview passed the mechanical checks (schema, receipt, repository,
+ * duplicates). A transfer that provably did not leave the wallet is retried; one whose fate is unknown stops the
+ * job for a human. State lives in the platform's own memory KV, so a restart continues where it stopped.
  */
 import { AgentSouk, type Job } from 'agentsouk'
 import { validateDocuments } from '../services/validate-json.js'
 import { safeFetch } from '../ssrf.js'
-import { bountyTag, pathValue, type BountySpec } from './catalog.js'
+import { bountyTag, pathValue, summaryOf, type BountySpec } from './catalog.js'
 import { Judge, type CheckResult, type ProposalScore, type Triage, type Verdict } from './judge.js'
-import { formatUsdc, isAddress, sameAddress, UsdcWallet } from './usdc.js'
+import { formatUsdc, isAddress, sameAddress, TransferError, UsdcWallet } from './usdc.js'
 
 export type Env = 'live' | 'test'
 export type Logger = (msg: string, extra?: Record<string, unknown>) => void
@@ -25,30 +28,45 @@ export type OperatorConfig = {
   dailyCap: bigint
   /** award the best acceptable proposal once the bounty is this old ... */
   considerationHours: number
-  /** ... or once this many proposals are in */
+  /** ... or once this many eligible proposals from distinct sellers are in */
   minProposals: number
   /** minimum judge score to award at all */
   awardScore: number
-  /** a proposal at or above this is awarded immediately */
+  /** a proposal at or above this is awarded immediately (sellers with a track record, or after half the consideration window) */
   instantScore: number
   /** walk away from a sealed delivery this close to the payment deadline when it is still not payable */
   walkAwayBeforeDeadlineMs: number
+  /** how many times the desk looks at one sealed delivery (initial triage plus re-looks after seller messages) */
+  maxTriages: number
+  /** a broadcast transfer not mined after this long is re-broadcast with higher fees */
+  replaceAfterMs: number
 }
 
-export const DEFAULT_CONFIG: OperatorConfig = { totalBudget: 50_000_000n, dailyCap: 20_000_000n, considerationHours: 12, minProposals: 3, awardScore: 60, instantScore: 85, walkAwayBeforeDeadlineMs: 60 * 60_000 }
+export const DEFAULT_CONFIG: OperatorConfig = { totalBudget: 50_000_000n, dailyCap: 20_000_000n, considerationHours: 12, minProposals: 3, awardScore: 60, instantScore: 85, walkAwayBeforeDeadlineMs: 60 * 60_000, maxTriages: 3, replaceAfterMs: 10 * 60_000 }
 
 export type BountyState = {
   bounty_id: string | null
   job_id: string | null
   awards_paid: number
   paid_distinct: string[]
+  paid_summaries: string[]
+  /** sellers that were paid or that failed to deliver on this bounty: not awarded again */
   awarded_to: string[]
+  /** proposals the platform refused to award (e.g. seller without wallet) */
+  skipped_proposals: string[]
+  used_receipts: string[]
   /** set before the transfer is signed; a restart with pay_attempt but no pay_hash needs a human look, never a second transfer */
   pay_attempt: { at: string; job_id: string } | null
   pay_hash: string | null
-  triage: (Triage & { output_hash: string | null; seller_messages?: number; at: string }) | null
+  pay_nonce: number | null
+  pay_fees: { maxFeePerGas: string; maxPriorityFeePerGas: string } | null
+  pay_sent_at: string | null
+  pay_replacements: number
+  triage: (Triage & { output_hash: string | null; seller_messages: number; at: string; count: number }) | null
+  triage_history: { decision: string; message: string; at: string }[]
   asked_at: string | null
-  verdict: (Verdict & { output_hash: string | null; at: string }) | null
+  verdict: (Verdict & { output_hash: string | null; at: string; acted: boolean }) | null
+  revealed: { distinct: string | null; summary: string; receipt_job: string | null } | null
   reviewed: boolean
   needs_operator: string | null
   last_error: string | null
@@ -56,19 +74,50 @@ export type BountyState = {
 }
 
 /** SDK errors by shape, not by class: the runtime and its tests may load two copies of the SDK module. */
-const isStatus = (e: unknown, status: number) => typeof e === 'object' && e != null && (e as { status?: unknown }).status === status
+const statusOf = (e: unknown): number | null => (typeof e === 'object' && e != null && typeof (e as { status?: unknown }).status === 'number' ? (e as { status: number }).status : null)
 const errorCode = (e: unknown): string | null => (typeof e === 'object' && e != null && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : null)
+const msg = (e: unknown) => String((e as Error)?.message ?? e)
 
-const freshState = (): BountyState => ({ bounty_id: null, job_id: null, awards_paid: 0, paid_distinct: [], awarded_to: [], pay_attempt: null, pay_hash: null, triage: null, asked_at: null, verdict: null, reviewed: false, needs_operator: null, last_error: null, history: [] })
+const freshState = (): BountyState => ({
+  bounty_id: null,
+  job_id: null,
+  awards_paid: 0,
+  paid_distinct: [],
+  paid_summaries: [],
+  awarded_to: [],
+  skipped_proposals: [],
+  used_receipts: [],
+  pay_attempt: null,
+  pay_hash: null,
+  pay_nonce: null,
+  pay_fees: null,
+  pay_sent_at: null,
+  pay_replacements: 0,
+  triage: null,
+  triage_history: [],
+  asked_at: null,
+  verdict: null,
+  revealed: null,
+  reviewed: false,
+  needs_operator: null,
+  last_error: null,
+  history: [],
+})
 
 type Proposal = { id: string; seller: { id: string; handle: string; trust_tier: number }; price: number; payment: string; message: string | null; status: string; created_at: string }
 type BountyView = { id: string; status: string; awarded_job_id: string | null; created_at: string; proposal_count: number }
+type Ledger = { sent: { job_id: string; amount: string; hash: string; at: string; replaced?: boolean }[] }
 
 export const OPERATOR_EVENTS = ['schedule.fired', 'bounty.proposal_received', 'job.delivered', 'job.completed', 'job.cancelled', 'job.expired', 'job.declined', 'job.disputed', 'job.resolved', 'job.paid']
+
+/** Pages the desk must never accept as "the integration": our own code, packages and docs. */
+const OWN_HOSTS = [/(^|\.)agentsouk\.dev$/i, /^github\.com$/i, /^(www\.)?npmjs\.com$/i, /^pypi\.org$/i]
+const OWN_PATHS = [/^\/agent-souk\//i, /^\/package\/agentsouk/i, /^\/project\/agentsouk/i]
 
 export class OperatorRuntime {
   me: { id: string; handle: string; wallet_address: string | null } | null = null
   paymentsEnabled = false
+  private ready = false
   private readonly states = new Map<string, BountyState>()
   private readonly proposalScores = new Map<string, ProposalScore>()
   private ticking = false
@@ -91,6 +140,10 @@ export class OperatorRuntime {
     return this.deps.now?.() ?? Date.now()
   }
 
+  private iso(): string {
+    return new Date(this.now()).toISOString()
+  }
+
   // --- lifecycle --------------------------------------------------------------------------------------------
 
   async init(): Promise<void> {
@@ -102,6 +155,7 @@ export class OperatorRuntime {
       else this.log('payments disabled: the operator wallet does not match the wallet bound to this identity', { env: this.env, bound: me.wallet_address, wallet: this.wallet.address })
     } else this.log('payments disabled: no operator wallet key; bounties are not posted', { env: this.env })
     for (const spec of this.catalog) this.states.set(spec.key, await this.load(spec.key))
+    this.ready = true
   }
 
   /** Signed webhook for the events that move a bounty, plus a recurring wake-up so a sleeping host still ticks. */
@@ -119,9 +173,9 @@ export class OperatorRuntime {
     }
   }
 
-  /** A webhook event; returns true when it triggered a tick. */
+  /** A webhook event; returns true when it triggered a tick. Events before init() finished are ignored (the init tick covers them). */
   async handleEvent(event: { type: string; data?: Record<string, unknown> }): Promise<boolean> {
-    if (!OPERATOR_EVENTS.includes(event.type)) return false
+    if (!this.ready || !OPERATOR_EVENTS.includes(event.type)) return false
     if (this.me && event.data && 'buyer_id' in event.data && event.data.buyer_id !== this.me.id) return false
     await this.tick()
     return true
@@ -129,6 +183,7 @@ export class OperatorRuntime {
 
   /** One pass over the catalogue. Re-entrant: a tick requested while one runs is folded into a second pass. */
   async tick(): Promise<void> {
+    if (!this.ready) return
     if (this.ticking) {
       this.dirty = true
       return
@@ -145,7 +200,7 @@ export class OperatorRuntime {
           if (state.job_id) await this.driveJob(spec, state)
           else if (state.bounty_id) await this.considerProposals(spec, state)
         } catch (e) {
-          state.last_error = `${new Date(this.now()).toISOString()} ${String((e as Error).message ?? e)}`.slice(0, 500)
+          state.last_error = `${this.iso()} ${msg(e)}`.slice(0, 500)
           this.log('bounty pass failed', { env: this.env, key: spec.key, error: state.last_error })
           await this.save(spec.key, state).catch(() => undefined)
         }
@@ -169,7 +224,7 @@ export class OperatorRuntime {
       spend: this.spend ? { total: formatUsdc(this.spend.total), today: formatUsdc(this.spend.today), total_budget: formatUsdc(this.config.totalBudget), daily_cap: formatUsdc(this.config.dailyCap) } : null,
       bounties: this.catalog.map((spec) => {
         const s = this.states.get(spec.key) ?? freshState()
-        return { key: spec.key, bounty_id: s.bounty_id, job_id: s.job_id, awards_paid: s.awards_paid, max_awards: spec.max_awards, needs_operator: s.needs_operator, last_error: s.last_error }
+        return { key: spec.key, bounty_id: s.bounty_id, job_id: s.job_id, awards_paid: s.awards_paid, max_awards: spec.max_awards, paid_distinct: s.paid_distinct, pay_hash: s.pay_hash, needs_operator: s.needs_operator, last_error: s.last_error }
       }),
     }
   }
@@ -178,7 +233,7 @@ export class OperatorRuntime {
 
   private async ensureBounty(spec: BountySpec, state: BountyState): Promise<void> {
     if (state.bounty_id) {
-      const b = (await this.client.bounties.get(state.bounty_id).catch(() => null)) as BountyView | null
+      const b = (await this.client.bounties.get(state.bounty_id).catch((e: unknown) => (statusOf(e) === 404 ? null : Promise.reject(e)))) as BountyView | null
       if (!b) state.bounty_id = null
       else if (b.status === 'awarded') {
         if (!state.job_id && b.awarded_job_id) state.job_id = b.awarded_job_id
@@ -189,7 +244,13 @@ export class OperatorRuntime {
       if (state.bounty_id) return
       await this.save(spec.key, state)
     }
-    if (state.job_id || state.awards_paid >= spec.max_awards || state.needs_operator) return
+    if (state.job_id || state.awards_paid >= spec.max_awards) return
+    if (state.pay_attempt) {
+      // a transfer of unknown fate on a job we no longer track: a human must look at the wallet history first
+      state.needs_operator = `unresolved transfer attempt for job ${state.pay_attempt.job_id} at ${state.pay_attempt.at}; check the wallet history, then clear pay_attempt in memory ${this.memKey(spec.key)}`
+      await this.save(spec.key, state)
+      return
+    }
     const why = await this.unpayableReason(spec)
     if (why) {
       this.log('bounty not posted', { env: this.env, key: spec.key, reason: why })
@@ -203,27 +264,40 @@ export class OperatorRuntime {
       category: spec.category,
       tags: [...spec.tags, 'first-party', bountyTag(spec.key)],
       expires_in_seconds: spec.expires_days * 86400,
-      input: { deliverable_schema: spec.output_schema, preview_requirements: spec.preview_requirements, checks: spec.checks, distinct_by: spec.distinct_by ?? null, already_covered: state.paid_distinct, round: state.awards_paid + 1, operator_confirmation_before_payment: spec.needs_operator_confirmation === true },
+      input: {
+        deliverable_schema: spec.output_schema,
+        preview_schema: spec.preview_schema,
+        preview_requirements: spec.preview_requirements,
+        checks: spec.checks,
+        distinct_by: spec.distinct_by ?? null,
+        already_covered: state.paid_distinct,
+        round: state.awards_paid + 1,
+        operator_confirmation_before_payment: spec.needs_operator_confirmation === true,
+      },
     })) as { id: string }
     state.bounty_id = b.id
     await this.save(spec.key, state)
     this.log('bounty posted', { env: this.env, key: spec.key, bounty_id: b.id, budget: formatUsdc(spec.budget_max), round: state.awards_paid + 1 })
   }
 
-  /** Why this bounty must not be posted right now, or null. Commitments of open bounties and awarded jobs are reserved. */
+  /**
+   * Why this bounty must not be posted or awarded right now, or null. Every other open bounty and every awarded,
+   * unpaid job is a commitment that stays reserved; this bounty's own budget is added once.
+   */
   private async unpayableReason(spec: BountySpec): Promise<string | null> {
     if (!this.paymentsEnabled || !this.wallet) return 'payments disabled'
     const bal = await this.refreshBalances()
     if (bal.eth === 0n) return 'no ETH for gas on the operator wallet'
     let committed = 0n
     for (const s of this.catalog) {
+      if (s.key === spec.key) continue
       const st = this.states.get(s.key)
       if (st && (st.bounty_id || st.job_id) && !st.pay_hash) committed += BigInt(s.budget_max)
     }
     const need = committed + BigInt(spec.budget_max)
     if (bal.usdc < need) return `wallet holds ${formatUsdc(bal.usdc)}, ${formatUsdc(need)} needed with open commitments`
     const spend = await this.refreshSpend()
-    if (spend.total + need > this.config.totalBudget) return `lifetime budget ${formatUsdc(this.config.totalBudget)} would be exceeded (${formatUsdc(spend.total)} spent, ${formatUsdc(committed)} committed)`
+    if (spend.total + need > this.config.totalBudget) return `lifetime budget ${formatUsdc(this.config.totalBudget)} would be exceeded (${formatUsdc(spend.total)} spent, ${formatUsdc(committed)} committed elsewhere)`
     return null
   }
 
@@ -235,24 +309,37 @@ export class OperatorRuntime {
     return this.balances
   }
 
-  /** What this desk has verifiably paid (settled payments from the operator wallet), lifetime and today. */
+  /**
+   * What this desk has paid, lifetime and today: the platform's settled payments from the operator wallet, or the
+   * desk's own ledger of broadcast transfers, whichever is higher (a transfer counts the moment it is sent).
+   */
   private async refreshSpend(): Promise<{ total: bigint; today: bigint }> {
     if (this.spend && this.now() - this.spend.at < 60_000) return this.spend
+    const day = this.iso().slice(0, 10)
     let total = 0n
     let today = 0n
-    const day = new Date(this.now()).toISOString().slice(0, 10)
-    let cursor: string | undefined
-    for (let page = 0; page < 20; page++) {
-      const res = await this.client.payments.settlements({ limit: 100, cursor })
-      for (const s of res.data) {
-        if (s.kind !== 'payment' || s.status !== 'settled' || !this.wallet || !sameAddress(s.payer_address, this.wallet.address)) continue
-        total += BigInt(s.amount)
-        if ((s.settled_at ?? s.created_at).slice(0, 10) === day) today += BigInt(s.amount)
+    if (this.wallet) {
+      let cursor: string | undefined
+      for (let page = 0; page < 20; page++) {
+        const res = await this.client.payments.settlements({ limit: 100, cursor })
+        for (const s of res.data) {
+          if (s.kind !== 'payment' || s.status !== 'settled' || !sameAddress(s.payer_address, this.wallet.address)) continue
+          total += BigInt(s.amount)
+          if ((s.settled_at ?? s.created_at).slice(0, 10) === day) today += BigInt(s.amount)
+        }
+        cursor = (res as { next_cursor?: string | null }).next_cursor ?? undefined
+        if (!cursor) break
       }
-      cursor = (res as { next_cursor?: string | null }).next_cursor ?? undefined
-      if (!cursor) break
     }
-    this.spend = { total, today, at: this.now() }
+    const ledger = await this.loadLedger()
+    let ledgerTotal = 0n
+    let ledgerToday = 0n
+    for (const e of ledger.sent) {
+      if (e.replaced) continue
+      ledgerTotal += BigInt(e.amount)
+      if (e.at.slice(0, 10) === day) ledgerToday += BigInt(e.amount)
+    }
+    this.spend = { total: total > ledgerTotal ? total : ledgerTotal, today: today > ledgerToday ? today : ledgerToday, at: this.now() }
     return this.spend
   }
 
@@ -262,22 +349,22 @@ export class OperatorRuntime {
     if (!state.bounty_id) return
     const bounty = (await this.client.bounties.get(state.bounty_id)) as BountyView
     const all = (await this.client.bounties.proposals(state.bounty_id)).data as unknown as Proposal[]
-    const pending = all.filter((p) => p.status === 'pending')
-    const candidates = pending.filter((p) => p.price <= spec.budget_max && p.payment === 'on_delivery' && !state.awarded_to.includes(p.seller.id))
+    const candidates = all.filter((p) => p.status === 'pending' && p.price <= spec.budget_max && p.payment === 'on_delivery' && !state.awarded_to.includes(p.seller.id) && !state.skipped_proposals.includes(p.id))
     if (!candidates.length) return
     const scored: { p: Proposal; s: ProposalScore }[] = []
     for (const p of candidates) scored.push({ p, s: await this.scoreProposal(spec, p) })
     scored.sort((a, b) => b.s.score - a.s.score || a.p.price - b.p.price)
     const best = scored[0]!
+    const distinctSellers = new Set(candidates.map((p) => p.seller.id)).size
     const ageHours = (this.now() - Date.parse(bounty.created_at)) / 3_600_000
-    const ready = best.s.score >= this.config.instantScore || (best.s.score >= this.config.awardScore && (pending.length >= this.config.minProposals || ageHours >= this.config.considerationHours))
+    const instant = best.s.score >= this.config.instantScore && (best.p.seller.trust_tier >= 1 || ageHours >= this.config.considerationHours / 2)
+    const ready = instant || (best.s.score >= this.config.awardScore && (distinctSellers >= this.config.minProposals || ageHours >= this.config.considerationHours))
     if (!ready) {
-      this.log('proposals considered, waiting', { env: this.env, key: spec.key, best_score: best.s.score, pending: pending.length, age_hours: Math.round(ageHours * 10) / 10 })
+      this.log('proposals considered, waiting', { env: this.env, key: spec.key, best_score: best.s.score, sellers: distinctSellers, age_hours: Math.round(ageHours * 10) / 10 })
       return
     }
     const why = await this.unpayableReason(spec)
-    if (why && !why.includes('committed')) {
-      // The bounty itself is already committed; only a wallet that lost its funds or gas blocks the award.
+    if (why) {
       this.log('award postponed', { env: this.env, key: spec.key, reason: why })
       return
     }
@@ -285,23 +372,18 @@ export class OperatorRuntime {
     try {
       job = (await this.client.bounties.award(state.bounty_id, best.p.id, spec.turnaround_seconds)).job
     } catch (e) {
-      // e.g. the seller has no wallet: remember it and let the next tick pick the runner-up
-      state.awarded_to.push(best.p.seller.id)
+      const status = statusOf(e)
+      if (status == null || status >= 500) throw e // transient: the next tick retries the same proposal
+      state.skipped_proposals.push(best.p.id) // e.g. the seller has no wallet; the runner-up gets its turn next tick
       await this.save(spec.key, state)
-      this.log('award failed, seller skipped', { env: this.env, key: spec.key, seller: best.p.seller.handle, error: String((e as Error).message ?? e) })
+      this.log('award refused by the platform, proposal skipped', { env: this.env, key: spec.key, seller: best.p.seller.handle, error: msg(e) })
       return
     }
     state.job_id = job.id
-    state.awarded_to.push(best.p.seller.id)
-    state.triage = null
-    state.asked_at = null
-    state.verdict = null
-    state.reviewed = false
-    state.pay_hash = null
-    state.pay_attempt = null
+    this.resetJobFields(state)
     await this.save(spec.key, state)
     this.log('bounty awarded', { env: this.env, key: spec.key, job_id: job.id, seller: best.p.seller.handle, price: formatUsdc(best.p.price), score: best.s.score })
-    await this.message(job, `Awarded. Deliver the JSON described in the bounty as the job output. The delivery preview must state: ${spec.preview_requirements}. We pay the sealed delivery from the preview${spec.needs_operator_confirmation ? ' after a human operator confirmed it' : ''}, then review the full output against the rubric and rate you.`)
+    await this.message(job, `Awarded. Deliver the JSON described in the bounty as the job output. The delivery preview must carry: ${spec.preview_requirements}. A sealed delivery cannot be re-delivered, so get the preview right; the desk checks it mechanically, then reviews it${spec.needs_operator_confirmation ? ', then a human operator confirms' : ''}, then pays, then grades the full output against the rubric and rates you. Questions are answered in this thread.`)
   }
 
   private async scoreProposal(spec: BountySpec, p: Proposal): Promise<ProposalScore> {
@@ -325,7 +407,7 @@ export class OperatorRuntime {
 
   private async driveJob(spec: BountySpec, state: BountyState): Promise<void> {
     if (!state.job_id) return
-    const job = await this.client.jobs.get(state.job_id).catch((e: unknown) => (isStatus(e, 404) ? null : Promise.reject(e)))
+    const job = await this.client.jobs.get(state.job_id).catch((e: unknown) => (statusOf(e) === 404 ? null : Promise.reject(e)))
     if (!job) {
       await this.finishJob(spec, state, null, 'vanished')
       return
@@ -342,12 +424,20 @@ export class OperatorRuntime {
       case 'cancelled':
       case 'declined':
       case 'expired':
-        if (state.pay_hash) this.log('ATTENTION: job ended after we paid; the platform records the transfer as orphaned with refund_due', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash, status: job.status })
-        await this.finishJob(spec, state, job, job.status)
+        await this.handleEnded(spec, state, job)
         return
       case 'in_progress':
-        if (job.available_actions.includes('cancel') && job.deadlines.deliver_by && this.now() > Date.parse(job.deadlines.deliver_by)) {
+        if (job.deadlines.deliver_by && this.now() > Date.parse(job.deadlines.deliver_by) && job.available_actions.includes('cancel')) {
+          if (state.pay_hash) {
+            // paid, revision requested, seller went silent: the money is gone, the platform's refund rules apply; count it, never cancel a paid job
+            this.log('ATTENTION: paid job not re-delivered after a revision; counted as a paid award, job left to the platform', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash })
+            await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')
+            await this.finishJob(spec, state, job, 'paid_no_redelivery', state.verdict?.rating ?? null)
+            return
+          }
           await this.client.jobs.cancel(job.id, 'The delivery deadline passed without a delivery; the bounty is re-opened.')
+          state.awarded_to.push(job.seller.id)
+          await this.finishJob(spec, state, job, 'no_delivery')
           this.log('job cancelled: deadline passed', { env: this.env, key: spec.key, job_id: job.id })
         }
         return
@@ -365,22 +455,30 @@ export class OperatorRuntime {
       return
     }
     if (state.pay_attempt && state.pay_attempt.job_id === job.id) {
-      state.needs_operator = `a transfer for job ${job.id} was attempted at ${state.pay_attempt.at} but its hash was not recorded; check the wallet history before paying again`
+      state.needs_operator = `a transfer for job ${job.id} was attempted at ${state.pay_attempt.at} and its fate is unknown; check the wallet history (nonce, recent transfers) before paying again, then clear pay_attempt in memory ${this.memKey(spec.key)}`
       await this.save(spec.key, state)
       this.log('ATTENTION: unresolved payment attempt', { env: this.env, key: spec.key, job_id: job.id })
       return
     }
-    // A sealed delivery cannot be re-delivered; what the seller can still add are thread messages, so they are
-    // part of the triage and a new seller message triggers a fresh look.
     const notes = await this.sellerNotes(job)
-    if (!state.triage || state.triage.output_hash !== job.output_hash || (state.triage.seller_messages ?? 0) < notes.count) {
-      const t = await this.judge.triagePreview(spec, { preview: job.output_preview, message: notes.text, seller_handle: job.seller.handle, paid_distinct: state.paid_distinct })
-      const firstSeen = state.triage && state.triage.output_hash === job.output_hash ? state.triage.at : new Date(this.now()).toISOString()
-      state.triage = { ...t, output_hash: job.output_hash, seller_messages: notes.count, at: firstSeen }
-      if (t.decision !== 'ask') state.asked_at = null
-      await this.save(spec.key, state)
-      this.log('preview triaged', { env: this.env, key: spec.key, job_id: job.id, decision: t.decision, duplicate_of: t.duplicate_of, seller_messages: notes.count })
+    const fresh = !state.triage || state.triage.output_hash !== job.output_hash
+    const newMessages = !fresh && state.triage!.seller_messages < notes.count
+    if (fresh || newMessages) {
+      const count = fresh ? 1 : state.triage!.count + 1
+      if (count > this.config.maxTriages) {
+        this.log('preview looked at enough times, waiting for the deadline', { env: this.env, key: spec.key, job_id: job.id })
+      } else {
+        const t = await this.triage(spec, state, job, notes.text)
+        const firstSeen = fresh ? this.iso() : state.triage!.at
+        state.triage = { ...t, output_hash: job.output_hash, seller_messages: notes.count, at: firstSeen, count }
+        state.triage_history = [...(fresh ? [] : state.triage_history), { decision: t.decision, message: t.message, at: this.iso() }].slice(-6)
+        if (t.decision !== 'ask') state.asked_at = null
+        else if (!fresh) state.asked_at = null // a new seller message earned a fresh answer
+        await this.save(spec.key, state)
+        this.log('preview triaged', { env: this.env, key: spec.key, job_id: job.id, decision: t.decision, duplicate_of: t.duplicate_of, look: count, seller_messages: notes.count })
+      }
     }
+    if (!state.triage) return
     const deadlineClose = this.deadlineClose(job, state)
     if (state.triage.decision === 'walk_away') {
       await this.walkAway(spec, state, job, state.triage.message || 'This delivery does not match the bounty; walking away without a mark against you.')
@@ -388,23 +486,50 @@ export class OperatorRuntime {
     }
     if (state.triage.decision === 'ask') {
       if (!state.asked_at) {
-        await this.message(job, `${state.triage.message} Reply in this thread with the missing facts and the desk will look again before the payment deadline (${job.payment.pay_by ?? 'see the job'}).`)
-        state.asked_at = new Date(this.now()).toISOString()
+        await this.message(job, `${state.triage.message} Answer in this thread (a sealed delivery cannot be re-delivered); the desk looks again before the payment deadline (${job.payment.pay_by ?? 'see the job'}).`)
+        state.asked_at = this.iso()
         await this.save(spec.key, state)
-      } else if (deadlineClose) await this.walkAway(spec, state, job, 'The preview still misses what the bounty asks for; walking away before the payment deadline. Feel free to propose again.')
+      } else if (deadlineClose) await this.walkAway(spec, state, job, 'The preview still misses what the bounty asks for; walking away before the payment deadline. You may propose again on the next round.')
       return
     }
     if (spec.needs_operator_confirmation && !(await this.confirmed(job.id))) {
       if (!state.asked_at) {
-        await this.message(job, 'Preview accepted by the desk; a human operator confirms security findings before payment, usually within a day.')
-        state.asked_at = new Date(this.now()).toISOString()
-        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}: PUT memory operator/confirm/${job.id} = true`
+        await this.message(job, 'Preview accepted by the desk; a human operator reproduces security findings before payment, usually within a day.')
+        state.asked_at = this.iso()
+        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}: PUT memory operator/confirm/${job.id} = true. Preview: ${JSON.stringify(job.output_preview).slice(0, 2500)}`
         await this.save(spec.key, state)
         this.log('ATTENTION: operator confirmation needed', { env: this.env, key: spec.key, job_id: job.id, pay_by: job.payment.pay_by })
       } else if (deadlineClose) await this.walkAway(spec, state, job, 'No operator confirmation arrived before the payment deadline; walking away without a mark against you. The desk will reach out if the finding is confirmed later.')
       return
     }
     await this.pay(spec, state, job)
+  }
+
+  /** Mechanical preview checks first (no model involved); the judge only sees previews that passed. */
+  private async triage(spec: BountySpec, state: BountyState, job: Job, sellerText: string | null): Promise<Triage> {
+    const preview = job.output_preview
+    const mechanical = await this.previewChecks(spec, state, preview, job.seller.id)
+    const dup = mechanical.find((c) => c.check === 'duplicate' && !c.ok)
+    if (dup) return { decision: 'walk_away', message: `This item was already paid for (${dup.detail}); the bounty pays each one once.`, duplicate_of: dup.detail }
+    const failed = mechanical.filter((c) => !c.ok)
+    if (failed.length) return { decision: 'ask', message: `The preview does not pass the mechanical checks yet: ${failed.map((c) => `${c.check}: ${c.detail}`).join('; ')}.`, duplicate_of: null }
+    return this.judge.triagePreview(spec, { preview, message: sellerText, seller_handle: job.seller.handle, paid_distinct: state.paid_distinct, paid_summaries: state.paid_summaries, previous: state.triage_history })
+  }
+
+  private async previewChecks(spec: BountySpec, state: BountyState, preview: unknown, sellerId: string): Promise<CheckResult[]> {
+    const results: CheckResult[] = []
+    if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return [{ check: 'schema', ok: false, detail: 'the preview must be a JSON object with the fields listed in the bounty' }]
+    const schema = validateDocuments(spec.preview_schema, [preview])
+    const errs = schema.results[0]?.errors ?? []
+    results.push({ check: 'schema', ok: !schema.schema_error && errs.length === 0, detail: schema.schema_error ?? (errs.length ? errs.slice(0, 8).map((e) => `${e.path} ${e.message}`).join('; ') : 'valid') })
+    if (spec.preview_distinct_field) {
+      const v = pathValue(preview, spec.preview_distinct_field)
+      if (typeof v === 'string' && state.paid_distinct.includes(v)) results.push({ check: 'duplicate', ok: false, detail: v })
+      else results.push({ check: 'duplicate', ok: true, detail: 'not paid before' })
+    }
+    const obj = preview as Record<string, unknown>
+    for (const check of spec.checks) results.push(await this.runCheck(check, obj, spec, state, null, sellerId))
+    return results
   }
 
   private async pay(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
@@ -415,97 +540,235 @@ export class OperatorRuntime {
     const amount = BigInt(job.price)
     const spend = await this.refreshSpend()
     if (spend.total + amount > this.config.totalBudget || spend.today + amount > this.config.dailyCap) {
-      const deadlineClose = this.deadlineClose(job, state)
       this.log('payment held by spending cap', { env: this.env, key: spec.key, job_id: job.id, total: formatUsdc(spend.total), today: formatUsdc(spend.today) })
-      if (deadlineClose) await this.walkAway(spec, state, job, 'The desk hit its spending cap for today and cannot pay before the deadline; walking away without a mark against you. Please propose again.')
+      if (this.deadlineClose(job, state)) await this.walkAway(spec, state, job, 'The desk hit its spending cap for today and cannot pay before the deadline; walking away without a mark against you. Please propose again.')
       return
     }
-    state.pay_attempt = { at: new Date(this.now()).toISOString(), job_id: job.id }
+    // Another process may have got here first: re-read the persisted state and take a short lease on the job.
+    const persisted = await this.load(spec.key)
+    if (persisted.pay_hash || persisted.pay_attempt) {
+      Object.assign(state, { pay_hash: persisted.pay_hash, pay_attempt: persisted.pay_attempt, pay_nonce: persisted.pay_nonce, pay_fees: persisted.pay_fees, pay_sent_at: persisted.pay_sent_at })
+      this.log('payment already in progress elsewhere; adopted the persisted state', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash })
+      return
+    }
+    const leaseKey = `operator/${this.env}/lease/${job.id}`
+    const lease = await this.client.memory.get<{ at: string }>(leaseKey).catch(() => null)
+    if (lease?.value) {
+      this.log('payment lease held elsewhere; waiting', { env: this.env, key: spec.key, job_id: job.id })
+      return
+    }
+    await this.client.memory.set(leaseKey, { at: this.iso() }, 600)
+    state.pay_attempt = { at: this.iso(), job_id: job.id }
     await this.save(spec.key, state)
-    const sent = await this.wallet.transfer(job.payment.pay_to, amount)
-    state.pay_hash = sent.hash
-    await this.save(spec.key, state)
-    this.log('payment sent', { env: this.env, key: spec.key, job_id: job.id, hash: sent.hash, amount: formatUsdc(amount), explorer: sent.explorer })
-    const receipt = await this.wallet.waitForReceipt(sent.hash).catch((e: unknown) => {
-      this.log('receipt not seen yet, will retry submission', { env: this.env, job_id: job.id, hash: sent.hash, error: String((e as Error).message ?? e) })
-      return null
-    })
-    if (receipt?.status === 'reverted') {
-      this.log('ATTENTION: transfer reverted', { env: this.env, key: spec.key, job_id: job.id, hash: sent.hash })
-      state.pay_hash = null
-      state.pay_attempt = null
-      state.last_error = `transfer ${sent.hash} reverted`
+    let sent
+    try {
+      sent = await this.wallet.transfer(job.payment.pay_to, amount)
+    } catch (e) {
+      if (e instanceof TransferError && !e.broadcast) {
+        // nothing left the wallet: retry on a later tick
+        state.pay_attempt = null
+        state.last_error = `${this.iso()} transfer not sent: ${e.message}`.slice(0, 500)
+        await this.save(spec.key, state)
+        await this.client.memory.delete(leaseKey).catch(() => undefined)
+        this.log('transfer not sent, will retry', { env: this.env, key: spec.key, job_id: job.id, error: e.message })
+        return
+      }
+      state.needs_operator = `transfer for job ${job.id} may have been broadcast (${msg(e)}); check the wallet history before paying again, then clear pay_attempt in memory ${this.memKey(spec.key)}`
       await this.save(spec.key, state)
+      this.log('ATTENTION: transfer fate unknown', { env: this.env, key: spec.key, job_id: job.id, error: msg(e) })
       return
     }
+    state.pay_hash = sent.hash
+    state.pay_nonce = sent.nonce
+    state.pay_fees = { maxFeePerGas: sent.maxFeePerGas.toString(), maxPriorityFeePerGas: sent.maxPriorityFeePerGas.toString() }
+    state.pay_sent_at = this.iso()
+    state.pay_replacements = 0
+    state.needs_operator = null
+    await this.save(spec.key, state)
+    await this.appendLedger({ job_id: job.id, amount: amount.toString(), hash: sent.hash, at: this.iso() })
+    this.log('payment sent', { env: this.env, key: spec.key, job_id: job.id, hash: sent.hash, amount: formatUsdc(amount), explorer: sent.explorer })
     this.spend = null
     this.balances = null
+    const receipt = await this.wallet.waitForReceipt(sent.hash, { timeoutMs: 90_000 }).catch(() => null)
+    if (receipt?.status === 'reverted') {
+      await this.transferReverted(spec, state, sent.hash)
+      return
+    }
     await this.submitPayment(spec, state, job)
   }
 
+  private async transferReverted(spec: BountySpec, state: BountyState, hash: string): Promise<void> {
+    this.log('ATTENTION: transfer reverted', { env: this.env, key: spec.key, hash })
+    await this.markLedgerReplaced(hash)
+    state.pay_hash = null
+    state.pay_attempt = null
+    state.pay_nonce = null
+    state.pay_fees = null
+    state.pay_sent_at = null
+    state.last_error = `transfer ${hash} reverted`
+    await this.save(spec.key, state)
+  }
+
+  /** Submits the hash to the platform; a transfer that is not mined for too long is re-broadcast with higher fees. */
   private async submitPayment(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
     if (!state.pay_hash) return
     try {
       const paid = await this.client.jobs.pay(job.id, state.pay_hash)
       state.pay_attempt = null
+      state.needs_operator = null
       state.last_error = null
       await this.save(spec.key, state)
+      await this.client.memory.delete(`operator/${this.env}/lease/${job.id}`).catch(() => undefined)
       this.log('payment verified by the platform', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash, status: paid.status })
+      return
     } catch (e) {
       const code = errorCode(e)
-      if (code === 'transaction_pending' || code === 'transaction_not_found' || code === 'chain_unavailable') {
+      if (code === 'transaction_pending' || code === 'chain_unavailable') {
         this.log('payment submitted, platform still waiting for confirmations', { env: this.env, job_id: job.id, hash: state.pay_hash, code })
         return
       }
-      state.needs_operator = `payment ${state.pay_hash} for job ${job.id} was rejected by the platform: ${String((e as Error).message ?? e)}`.slice(0, 500)
+      if (code === 'transaction_not_found') {
+        await this.maybeReplace(spec, state, job)
+        return
+      }
+      state.needs_operator = `payment ${state.pay_hash} for job ${job.id} was rejected by the platform: ${msg(e)}`.slice(0, 500)
       await this.save(spec.key, state)
-      this.log('ATTENTION: payment rejected', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash, error: String((e as Error).message ?? e) })
+      this.log('ATTENTION: payment rejected', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash, error: msg(e) })
     }
+  }
+
+  private async maybeReplace(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
+    if (!this.wallet || !state.pay_hash || !state.pay_sent_at || state.pay_nonce == null || !state.pay_fees) return
+    const receipt = await this.wallet.rpc<{ status?: string; blockNumber?: string } | null>('eth_getTransactionReceipt', [state.pay_hash]).catch(() => null)
+    if (receipt?.blockNumber) {
+      if (receipt.status === '0x0') await this.transferReverted(spec, state, state.pay_hash)
+      else this.log('transfer mined, platform not caught up yet', { env: this.env, job_id: job.id, hash: state.pay_hash })
+      return
+    }
+    if (this.now() - Date.parse(state.pay_sent_at) < this.config.replaceAfterMs) return
+    if (state.pay_replacements >= 3) {
+      state.needs_operator = `transfer ${state.pay_hash} (nonce ${state.pay_nonce}) for job ${job.id} is stuck after 3 fee bumps; check the wallet`
+      await this.save(spec.key, state)
+      return
+    }
+    const amount = BigInt(job.price ?? 0)
+    const prevHash = state.pay_hash
+    let sent
+    try {
+      sent = await this.wallet.replaceTransfer(job.payment.pay_to!, amount, { nonce: state.pay_nonce, maxFeePerGas: BigInt(state.pay_fees.maxFeePerGas), maxPriorityFeePerGas: BigInt(state.pay_fees.maxPriorityFeePerGas) })
+    } catch (e) {
+      this.log('replacement not sent', { env: this.env, job_id: job.id, error: msg(e) })
+      return
+    }
+    state.pay_hash = sent.hash
+    state.pay_fees = { maxFeePerGas: sent.maxFeePerGas.toString(), maxPriorityFeePerGas: sent.maxPriorityFeePerGas.toString() }
+    state.pay_sent_at = this.iso()
+    state.pay_replacements += 1
+    await this.save(spec.key, state)
+    await this.markLedgerReplaced(prevHash)
+    await this.appendLedger({ job_id: job.id, amount: amount.toString(), hash: sent.hash, at: this.iso() })
+    this.log('stuck transfer replaced with higher fees', { env: this.env, key: spec.key, job_id: job.id, old_hash: prevHash, hash: sent.hash, nonce: sent.nonce })
   }
 
   private async handleRevealed(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
-    if (state.verdict && state.verdict.output_hash === job.output_hash) return
-    const checks = await this.runChecks(spec, job)
+    if (state.verdict && state.verdict.output_hash === job.output_hash) {
+      if (!state.verdict.acted) await this.act(spec, state, job)
+      return
+    }
+    const checks = await this.runChecks(spec, state, job)
+    const failed = checks.filter((c) => !c.ok)
     const revisionsLeft = job.available_actions.includes('request_revision') ? Math.max(0, job.max_revisions - job.revision_count) : 0
-    const v = await this.judge.evaluateDelivery(spec, { output: job.output, message: null, seller_handle: job.seller.handle, checks, revisions_left: revisionsLeft })
-    state.verdict = { ...v, output_hash: job.output_hash, at: new Date(this.now()).toISOString() }
+    let v: Verdict
+    if (failed.length) {
+      // mechanical failures bind the verdict; the model is not asked
+      const detail = failed.map((c) => `${c.check}: ${c.detail}`).join('; ')
+      v = revisionsLeft > 0 ? { decision: 'revise', rating: 2, message: `The delivery fails mechanical checks: ${detail}. Please fix exactly these and re-deliver.`, rubric_scores: [] } : { decision: 'dispute', rating: 1, message: `The delivery fails mechanical checks that the bounty requires: ${detail}.`, rubric_scores: [] }
+    } else v = await this.judge.evaluateDelivery(spec, { output: job.output, message: (await this.sellerNotes(job)).text, seller_handle: job.seller.handle, checks, revisions_left: revisionsLeft })
+    const distinct = spec.distinct_by ? pathValue(job.output, spec.distinct_by) : undefined
+    const receiptJob = ((job.output as Record<string, unknown> | null)?.receipt as { receipt?: { job?: { id?: string } } } | undefined)?.receipt?.job?.id ?? null
+    state.revealed = { distinct: typeof distinct === 'string' ? distinct : null, summary: summaryOf(spec, job.output), receipt_job: receiptJob }
+    state.verdict = { ...v, output_hash: job.output_hash, at: this.iso(), acted: false }
     await this.save(spec.key, state)
-    this.log('delivery graded', { env: this.env, key: spec.key, job_id: job.id, decision: v.decision, rating: v.rating, failed_checks: checks.filter((c) => !c.ok).map((c) => c.check) })
-    if (v.decision === 'revise' && revisionsLeft > 0) await this.client.jobs.requestRevision(job.id, v.message || 'Please address the gaps listed by the desk.')
-    else if (v.decision === 'dispute') await this.client.jobs.dispute(job.id, v.message || 'The delivery does not do what the bounty asked.')
-    else await this.client.jobs.accept(job.id)
+    this.log('delivery graded', { env: this.env, key: spec.key, job_id: job.id, decision: v.decision, rating: v.rating, failed_checks: failed.map((c) => c.check) })
+    await this.act(spec, state, job)
+  }
+
+  /** Performs the verdict's platform action; retried on later ticks until it succeeded (never re-judged). */
+  private async act(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
+    const v = state.verdict!
+    const actions = job.available_actions
+    if (v.decision === 'revise' && actions.includes('request_revision')) await this.client.jobs.requestRevision(job.id, v.message || 'Please address the gaps listed by the desk.')
+    else if (v.decision === 'dispute' && actions.includes('dispute')) await this.client.jobs.dispute(job.id, v.message || 'The delivery does not do what the bounty asked.')
+    else if (actions.includes('accept')) await this.client.jobs.accept(job.id)
+    else {
+      this.log('verdict cannot be acted on in this job state, will retry', { env: this.env, key: spec.key, job_id: job.id, status: job.status, actions })
+      return
+    }
+    state.verdict = { ...v, acted: true }
+    await this.save(spec.key, state)
   }
 
   private async handleCompleted(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
-    const rating = state.verdict?.rating ?? 4
+    const upheld = job.status === 'completed' || job.resolution?.outcome !== 'buyer'
+    const paid = state.pay_hash != null || job.payment.status === 'paid'
+    const rating = upheld ? (state.verdict?.rating ?? 4) : 1
     if (!state.reviewed) {
-      await this.client.jobs.review(job.id, rating, state.verdict?.message?.slice(0, 1000) || 'Delivered as asked.').catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: String((e as Error).message ?? e) }))
+      await this.client.jobs.review(job.id, rating, upheld ? state.verdict?.message?.slice(0, 1000) || 'Delivered as asked.' : 'The dispute panel found the delivery did not do what the bounty asked.').catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: msg(e) }))
       state.reviewed = true
     }
-    const paid = state.pay_hash != null || job.payment.status === 'paid'
-    if (paid) {
-      state.awards_paid += 1
-      const distinct = spec.distinct_by ? pathValue(job.output, spec.distinct_by) : undefined
-      if (typeof distinct === 'string' && distinct && !state.paid_distinct.includes(distinct)) state.paid_distinct.push(distinct)
+    if (paid && upheld) await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')
+    else if (paid) state.awarded_to.push(job.seller.id) // paid, then lost the dispute: refund_due on their side, no award
+    await this.finishJob(spec, state, job, paid ? (upheld ? 'paid' : 'paid_refund_due') : job.status, rating)
+    this.log('award completed', { env: this.env, key: spec.key, job_id: job.id, paid, upheld, rating, awards_paid: state.awards_paid })
+  }
+
+  private async handleEnded(spec: BountySpec, state: BountyState, job: Job): Promise<void> {
+    if (state.pay_hash) {
+      // the platform records our transfer as orphaned with refund_due; the money is gone, so the award counts
+      this.log('ATTENTION: job ended after we paid; the transfer is orphaned with refund_due', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash, status: job.status })
+      await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')
+      await this.finishJob(spec, state, job, `paid_then_${job.status}`, state.verdict?.rating ?? null)
+      return
     }
-    await this.finishJob(spec, state, job, paid ? 'paid' : job.status, rating)
-    this.log('award completed', { env: this.env, key: spec.key, job_id: job.id, paid, rating, awards_paid: state.awards_paid })
+    if (job.status !== 'declined' && !job.cancel_reason?.startsWith('buyer:')) state.awarded_to.push(job.seller.id) // the seller let it expire or cancelled: no second chance on this bounty
+    await this.finishJob(spec, state, job, job.status)
+  }
+
+  private async countAward(spec: BountySpec, state: BountyState, job: Job, distinct: string | null, summary: string): Promise<void> {
+    state.awards_paid += 1
+    if (distinct && !state.paid_distinct.includes(distinct)) state.paid_distinct.push(distinct)
+    if (summary) state.paid_summaries = [...state.paid_summaries, summary].slice(-20)
+    if (state.revealed?.receipt_job && !state.used_receipts.includes(state.revealed.receipt_job)) state.used_receipts.push(state.revealed.receipt_job)
+    if (!state.awarded_to.includes(job.seller.id)) state.awarded_to.push(job.seller.id)
+  }
+
+  private resetJobFields(state: BountyState): void {
+    state.pay_attempt = null
+    state.pay_hash = null
+    state.pay_nonce = null
+    state.pay_fees = null
+    state.pay_sent_at = null
+    state.pay_replacements = 0
+    state.triage = null
+    state.triage_history = []
+    state.asked_at = null
+    state.verdict = null
+    state.revealed = null
+    state.reviewed = false
+    state.needs_operator = null
   }
 
   private async finishJob(spec: BountySpec, state: BountyState, job: Job | null, outcome: string, rating: number | null = null): Promise<void> {
-    if (job) state.history = [...state.history, { job_id: job.id, seller: job.seller.handle, price: job.price ?? 0, hash: state.pay_hash, rating, outcome, at: new Date(this.now()).toISOString() }].slice(-20)
+    if (job) state.history = [...state.history, { job_id: job.id, seller: job.seller.handle, price: job.price ?? 0, hash: state.pay_hash, rating, outcome, at: this.iso() }].slice(-20)
+    if (job) await this.client.memory.delete(`operator/${this.env}/lease/${job.id}`).catch(() => undefined)
     state.job_id = null
     state.bounty_id = null
-    state.pay_hash = null
-    state.pay_attempt = null
-    state.triage = null
-    state.asked_at = null
-    state.verdict = null
-    state.reviewed = false
+    this.resetJobFields(state)
     await this.save(spec.key, state)
   }
 
   private async walkAway(spec: BountySpec, state: BountyState, job: Job, message: string): Promise<void> {
+    if (state.pay_hash || state.pay_attempt) throw new Error('refusing to walk away from a job with a transfer in flight')
     await this.client.jobs.cancel(job.id, message.slice(0, 500))
     this.log('walked away from a sealed delivery', { env: this.env, key: spec.key, job_id: job.id })
     await this.finishJob(spec, state, job, 'walked_away')
@@ -513,40 +776,65 @@ export class OperatorRuntime {
 
   // --- mechanical checks --------------------------------------------------------------------------------------
 
-  async runChecks(spec: BountySpec, job: Job): Promise<CheckResult[]> {
+  async runChecks(spec: BountySpec, state: BountyState, job: Job): Promise<CheckResult[]> {
     const out = job.output as Record<string, unknown> | null
     const results: CheckResult[] = []
     const schema = validateDocuments(spec.output_schema, [out ?? null])
     const errs = schema.results[0]?.errors ?? []
     results.push({ check: 'schema', ok: !schema.schema_error && errs.length === 0, detail: schema.schema_error ?? (errs.length ? errs.slice(0, 8).map((e) => `${e.path} ${e.message}`).join('; ') : 'valid') })
-    for (const check of spec.checks) {
-      try {
-        if (check === 'receipt') results.push(await this.checkReceipt(out?.receipt, job.seller.id))
-        else if (check === 'repo_url') results.push(await this.checkRepoUrl(out?.repo_url))
-      } catch (e) {
-        results.push({ check, ok: false, detail: String((e as Error).message ?? e).slice(0, 300) })
-      }
+    if (spec.distinct_by) {
+      const v = pathValue(out, spec.distinct_by)
+      const previewV = spec.preview_distinct_field ? pathValue(job.output_preview, spec.preview_distinct_field) : undefined
+      if (typeof v === 'string' && state.paid_distinct.includes(v)) results.push({ check: 'duplicate', ok: false, detail: `${v} was already paid for` })
+      else if (previewV !== undefined && v !== previewV) results.push({ check: 'duplicate', ok: false, detail: `the output says ${String(v)} but the preview said ${String(previewV)}` })
+      else results.push({ check: 'duplicate', ok: true, detail: 'not paid before, matches the preview' })
     }
+    for (const check of spec.checks) results.push(await this.runCheck(check, out ?? {}, spec, state, job.output_preview, job.seller.id))
     return results
   }
 
-  private async checkReceipt(receipt: unknown, sellerId: string): Promise<CheckResult> {
-    const r = receipt as { receipt?: Record<string, unknown>; signature?: Record<string, unknown> } | undefined
-    if (!r || !r.receipt || !r.signature) return { check: 'receipt', ok: false, detail: 'no signed receipt in the delivery' }
-    const v = await this.client.receipts.verify({ receipt: r.receipt, signature: r.signature })
-    if (!v.valid) return { check: 'receipt', ok: false, detail: `receipt signature invalid: ${v.reason ?? 'unknown'}` }
-    const parties = [(r.receipt.buyer as { id?: string } | undefined)?.id, (r.receipt.seller as { id?: string } | undefined)?.id]
-    if (!parties.includes(sellerId)) return { check: 'receipt', ok: false, detail: 'the receipt is valid but the delivering agent is not a party of that job' }
-    const jobEnv = (r.receipt.job as { env?: string } | undefined)?.env
-    return { check: 'receipt', ok: true, detail: `valid platform receipt for job ${(r.receipt.job as { id?: string } | undefined)?.id ?? '?'}${jobEnv ? ` (${jobEnv})` : ''}, agent is a party` }
+  private async runCheck(check: 'receipt' | 'repo_url', obj: Record<string, unknown>, spec: BountySpec, state: BountyState, preview: unknown, sellerId: string): Promise<CheckResult> {
+    try {
+      if (check === 'receipt') return await this.checkReceipt(obj.receipt, state, preview, sellerId)
+      return await this.checkRepoUrl(obj.repo_url, String(obj.framework ?? (preview as Record<string, unknown> | null)?.framework ?? ''))
+    } catch (e) {
+      return { check, ok: false, detail: msg(e).slice(0, 300) }
+    }
   }
 
-  private async checkRepoUrl(url: unknown): Promise<CheckResult> {
+  private async checkReceipt(receipt: unknown, state: BountyState, preview: unknown, sellerId: string): Promise<CheckResult> {
+    const r = receipt as { receipt?: Record<string, unknown>; signature?: Record<string, unknown> } | undefined
+    if (!r || !r.receipt || !r.signature) return { check: 'receipt', ok: false, detail: 'no signed receipt' }
+    const v = await this.client.receipts.verify({ receipt: r.receipt, signature: r.signature })
+    if (!v.valid) return { check: 'receipt', ok: false, detail: `receipt signature invalid: ${v.reason ?? 'unknown'}` }
+    const rj = r.receipt.job as { id?: string; env?: string; status?: string } | undefined
+    const parties = [(r.receipt.buyer as { id?: string } | undefined)?.id, (r.receipt.seller as { id?: string } | undefined)?.id]
+    if (!parties.includes(sellerId)) return { check: 'receipt', ok: false, detail: 'the receipt is valid but the delivering agent is not a party of that job' }
+    if (rj?.env && rj.env !== 'test') return { check: 'receipt', ok: false, detail: `the receipt is for a ${rj.env} job; a sandbox (test) job is required` }
+    if (rj?.status && !['completed', 'delivered', 'resolved'].includes(rj.status)) return { check: 'receipt', ok: false, detail: `the receipt's job is ${rj.status}; it must have been delivered or completed` }
+    const used = new Set<string>([...state.used_receipts, ...[...this.states.values()].flatMap((s) => s.used_receipts)])
+    if (rj?.id && used.has(rj.id)) return { check: 'receipt', ok: false, detail: `receipt of job ${rj.id} was already used for a paid award` }
+    const previewReceiptJob = ((preview as Record<string, unknown> | null)?.receipt as { receipt?: { job?: { id?: string } } } | undefined)?.receipt?.job?.id
+    if (preview && previewReceiptJob && rj?.id && previewReceiptJob !== rj.id) return { check: 'receipt', ok: false, detail: 'the output receipt is not the receipt shown in the preview' }
+    return { check: 'receipt', ok: true, detail: `valid platform receipt for job ${rj?.id ?? '?'} (${rj?.env ?? 'env unknown'}, ${rj?.status ?? 'status unknown'}), agent is a party` }
+  }
+
+  private async checkRepoUrl(url: unknown, framework: string): Promise<CheckResult> {
     if (typeof url !== 'string' || !/^https:\/\//.test(url)) return { check: 'repo_url', ok: false, detail: 'repo_url is not an https URL' }
+    let u: URL
+    try {
+      u = new URL(url)
+    } catch {
+      return { check: 'repo_url', ok: false, detail: 'repo_url is not a valid URL' }
+    }
+    if (OWN_HOSTS.some((h) => h.test(u.hostname)) && (u.hostname.endsWith('agentsouk.dev') || OWN_PATHS.some((p) => p.test(u.pathname)))) return { check: 'repo_url', ok: false, detail: "repo_url points at Agent Souk's own code or packages, not at an integration" }
     const page = await safeFetch(url, { fetchImpl: this.deps.fetchImpl, timeoutMs: 15_000 })
     if (page.status !== 200) return { check: 'repo_url', ok: false, detail: `repository page answered HTTP ${page.status}` }
-    if (!/agent\s?souk/i.test(page.body)) return { check: 'repo_url', ok: false, detail: 'the repository page does not mention Agent Souk' }
-    return { check: 'repo_url', ok: true, detail: `public page reachable (${page.body.length} bytes), mentions Agent Souk` }
+    const body = page.body.toLowerCase()
+    if (!/agent\s?souk/.test(body)) return { check: 'repo_url', ok: false, detail: 'the repository page does not mention Agent Souk' }
+    const fw = framework.trim().toLowerCase()
+    if (fw.length >= 3 && !body.includes(fw.split(/[\s/]+/)[0]!)) return { check: 'repo_url', ok: false, detail: `the repository page does not mention the framework "${framework}"` }
+    return { check: 'repo_url', ok: true, detail: `public page reachable (${page.body.length} bytes), mentions Agent Souk and the framework` }
   }
 
   // --- plumbing -----------------------------------------------------------------------------------------------
@@ -556,12 +844,33 @@ export class OperatorRuntime {
   }
 
   private async load(key: string): Promise<BountyState> {
-    const r = await this.client.memory.get<Partial<BountyState>>(this.memKey(key)).catch((e: unknown) => (isStatus(e, 404) ? null : Promise.reject(e)))
+    const r = await this.client.memory.get<Partial<BountyState>>(this.memKey(key)).catch((e: unknown) => (statusOf(e) === 404 ? null : Promise.reject(e)))
     return { ...freshState(), ...(r?.value ?? {}) }
   }
 
   private async save(key: string, state: BountyState): Promise<void> {
     await this.client.memory.set(this.memKey(key), state)
+  }
+
+  private ledgerKey() {
+    return `operator/${this.env}/ledger`
+  }
+
+  private async loadLedger(): Promise<Ledger> {
+    const r = await this.client.memory.get<Ledger>(this.ledgerKey()).catch(() => null)
+    return r?.value && Array.isArray(r.value.sent) ? r.value : { sent: [] }
+  }
+
+  private async appendLedger(entry: Ledger['sent'][number]): Promise<void> {
+    const l = await this.loadLedger()
+    l.sent = [...l.sent, entry].slice(-200)
+    await this.client.memory.set(this.ledgerKey(), l)
+  }
+
+  private async markLedgerReplaced(hash: string): Promise<void> {
+    const l = await this.loadLedger()
+    for (const e of l.sent) if (e.hash === hash) e.replaced = true
+    await this.client.memory.set(this.ledgerKey(), l)
   }
 
   private async confirmed(jobId: string): Promise<boolean> {
@@ -581,7 +890,7 @@ export class OperatorRuntime {
     return payBy - this.now() < margin
   }
 
-  /** What the seller wrote in the job thread (oldest first), for triage; platform notices and our own messages are skipped. */
+  /** What the seller wrote in the job thread (oldest first); platform notices and our own messages are skipped. */
   private async sellerNotes(job: Job): Promise<{ count: number; text: string | null }> {
     if (!job.thread_id) return { count: 0, text: null }
     const res = await this.client.threads.messages(job.thread_id, { order: 'asc', limit: 100 }).catch(() => null)
@@ -592,7 +901,7 @@ export class OperatorRuntime {
 
   private async message(job: Job, body: string): Promise<void> {
     if (!job.thread_id) return
-    await this.client.threads.send(job.thread_id, body.slice(0, 4000)).catch((e: unknown) => this.log('message failed', { env: this.env, job_id: job.id, error: String((e as Error).message ?? e) }))
+    await this.client.threads.send(job.thread_id, body.slice(0, 4000)).catch((e: unknown) => this.log('message failed', { env: this.env, job_id: job.id, error: msg(e) }))
   }
 
   /** Test/ops helper: the in-memory state of one catalogue entry. */
