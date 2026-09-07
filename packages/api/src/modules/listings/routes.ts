@@ -7,6 +7,7 @@ import { errors } from '../../lib/errors.js'
 import { PAYMENT_TIMINGS, PRICING_MODELS, type Env } from '../../db/schema.js'
 import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, type Listing } from './service.js'
+import { reputationsById, type ReputationRow } from '../reviews/service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -34,7 +35,27 @@ const ListingBody = z
 
 const UpdateListingBody = ListingBody.partial().extend({ status: z.enum(['active', 'paused']).optional() }).openapi('UpdateListingRequest')
 
-const Seller = z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int(), first_party: z.boolean() }).openapi('SellerSummary')
+const SellerReputation = z
+  .object({
+    score: z.number().int(),
+    jobs_completed: z.number().int(),
+    rating: z.number().nullable().openapi({ description: 'Value-weighted Bayesian rating as seller (see /v1/agents/{id}/reputation rating_weighted).' }),
+    distinct_counterparties: z.number().int(),
+    in_category: z.object({ jobs_completed: z.number().int(), jobs_failed: z.number().int(), rating: z.number().nullable(), on_time_rate: z.number().nullable() }).nullable().openapi({ description: 'The seller in THIS listing category; null when it has no finished job there yet.' }),
+  })
+  .openapi('SellerReputationSummary')
+
+const Seller = z
+  .object({
+    id: z.string(),
+    handle: z.string(),
+    name: z.string(),
+    trust_tier: z.number().int(),
+    first_party: z.boolean(),
+    verified_domain: z.string().nullable().openapi({ description: 'Domain the seller proved control of (ADR-26), or null.' }),
+    reputation: SellerReputation.nullable().openapi({ description: 'Reputation in the environment of this listing; null until the seller finished a job there.' }),
+  })
+  .openapi('SellerSummary')
 
 const Stats = z
   .object({
@@ -90,7 +111,20 @@ export function priceDisplay(l: Pick<Listing, 'pricingModel' | 'price' | 'unitNa
   return `${formatUsdc(l.price)} per job`
 }
 
-export function toListingView(l: Listing, seller: Agent | undefined, opts: { truncate?: boolean } = {}): z.infer<typeof ListingView> {
+function sellerReputation(rep: ReputationRow | undefined, category: string): z.infer<typeof SellerReputation> | null {
+  if (!rep) return null
+  const s = rep.asSeller
+  const card = (s.categories ?? []).find((c) => c.category === category.toLowerCase())
+  return {
+    score: rep.score,
+    jobs_completed: s.jobs_completed ?? 0,
+    rating: s.rating_weighted ?? s.rating_avg ?? null,
+    distinct_counterparties: s.distinct_counterparties ?? 0,
+    in_category: card ? { jobs_completed: card.jobs_completed, jobs_failed: card.jobs_failed, rating: card.rating_avg, on_time_rate: card.on_time_rate } : null,
+  }
+}
+
+export function toListingView(l: Listing, seller: Agent | undefined, opts: { truncate?: boolean; reputation?: ReputationRow } = {}): z.infer<typeof ListingView> {
   const description = opts.truncate && l.description.length > 500 ? l.description.slice(0, 497) + '...' : l.description
   const bodyExample: Record<string, unknown> = { listing_id: l.id, input: l.exampleInput ?? {} }
   if (l.pricingModel === 'per_unit') bodyExample.units = 1
@@ -115,7 +149,9 @@ export function toListingView(l: Listing, seller: Agent | undefined, opts: { tru
     stats: l.stats,
     content_warnings: l.contentWarnings,
     first_party: seller?.firstParty ?? false,
-    seller: seller ? { id: seller.id, handle: seller.handle, name: seller.name, trust_tier: seller.trustTier, first_party: seller.firstParty } : { id: l.sellerAgentId, handle: 'unknown', name: 'unknown', trust_tier: 0, first_party: false },
+    seller: seller
+      ? { id: seller.id, handle: seller.handle, name: seller.name, trust_tier: seller.trustTier, first_party: seller.firstParty, verified_domain: seller.verifiedDomain ?? null, reputation: sellerReputation(opts.reputation, l.category) }
+      : { id: l.sellerAgentId, handle: 'unknown', name: 'unknown', trust_tier: 0, first_party: false, verified_domain: null, reputation: null },
     how_to_order: { method: 'POST', path: '/v1/jobs', body_example: bodyExample },
     created_at: iso(l.createdAt)!,
     updated_at: iso(l.updatedAt)!,
@@ -181,12 +217,12 @@ export function listingsRoutes() {
       const { rows, nextCursor } = await searchListings(env, { ...q, graduated: q.graduated === 'true' ? true : undefined })
       const hasMore = rows.length > q.limit
       const page = hasMore ? rows.slice(0, q.limit) : rows
-      const sellers = await sellersById(page.map((l) => l.sellerAgentId))
+      const [sellers, reps] = await Promise.all([sellersById(page.map((l) => l.sellerAgentId)), reputationsById(page.map((l) => l.sellerAgentId), env)])
       const last = page[page.length - 1]
       return c.json(
         {
           object: 'list' as const,
-          data: page.map((l) => toListingView(l, sellers.get(l.sellerAgentId), { truncate: true })),
+          data: page.map((l) => toListingView(l, sellers.get(l.sellerAgentId), { truncate: true, reputation: reps.get(l.sellerAgentId) })),
           has_more: hasMore,
           next_cursor: hasMore && last ? nextCursor(last, page.length - 1) : null,
         },
@@ -232,8 +268,8 @@ export function listingsRoutes() {
       const l = await getListing(env, id)
       const me = c.get('agent')
       if (!l || (l.status === 'archived' && l.sellerAgentId !== me?.id)) throw errors.notFound('Listing', id, 'Search with GET /v1/listings?q=. If you used a test key, the listing may be in the live environment (add ?env=live).')
-      const sellers = await sellersById([l.sellerAgentId])
-      return c.json(toListingView(l, sellers.get(l.sellerAgentId)), 200)
+      const [sellers, reps] = await Promise.all([sellersById([l.sellerAgentId]), reputationsById([l.sellerAgentId], l.env)])
+      return c.json(toListingView(l, sellers.get(l.sellerAgentId), { reputation: reps.get(l.sellerAgentId) }), 200)
     },
   )
 

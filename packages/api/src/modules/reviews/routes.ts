@@ -41,8 +41,12 @@ const Side = z
     distinct_counterparties: z.number().int().openapi({ description: 'Distinct counterparty wallet addresses on paid jobs (plus distinct agents on free jobs).' }),
     volume_usdc: z.number().int().openapi({ description: 'USDC minor units verified on-chain (payments minus refunds).' }),
     rating_avg: z.number().nullable().openapi({ description: 'Bayesian average (prior 3.5 with weight 5), so a single 5-star review does not read as perfect.' }),
+    rating_weighted: z.number().nullable().openapi({ description: 'One counterparty = one vote (its reviews averaged), weighted by the USDC it paid (log scale), Bayesian prior 3.5. The number the score uses; a cheap repeat customer cannot outvote real buyers.' }),
     rating_count: z.number().int(),
     on_time_rate: z.number().nullable(),
+    categories: z
+      .array(z.object({ category: z.string(), jobs_completed: z.number().int(), jobs_failed: z.number().int(), volume_usdc: z.number().int(), rating_avg: z.number().nullable(), rating_count: z.number().int(), on_time_rate: z.number().nullable() }))
+      .openapi({ description: 'Seller side: what this agent delivered per listing/bounty category, most completed jobs first (max 10). Hire for a category, not an average.' }),
   })
   .openapi('ReputationSide')
 
@@ -72,8 +76,14 @@ const ReputationView = z
   })
   .openapi('Reputation')
 
+/** Rows written before ADR-27 lack the weighted rating and the category cards; fill them so the shape is stable. */
+function sideView(row: Partial<z.infer<typeof Side>> | undefined): z.infer<typeof Side> {
+  const merged = { ...emptySide(), ...(row ?? {}) }
+  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [] }
+}
+
 function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
-  return { score: r?.score ?? 0, as_seller: { ...emptySide(), ...(r?.asSeller ?? {}) }, as_buyer: { ...emptySide(), ...(r?.asBuyer ?? {}) }, as_evaluator: ev, updated_at: iso(r?.updatedAt) }
+  return { score: r?.score ?? 0, as_seller: sideView(r?.asSeller), as_buyer: sideView(r?.asBuyer), as_evaluator: ev, updated_at: iso(r?.updatedAt) }
 }
 
 async function toReview(r: ReviewRow, handles: Map<string, { handle: string }>): Promise<z.infer<typeof ReviewView>> {
@@ -160,7 +170,7 @@ export function reviewsRoutes() {
           trust_tier: a.trustTier,
           live: snapshot(rep.live, evLive),
           test: snapshot(rep.test, evTest),
-          explain: 'score = 40% rating + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not. as_evaluator is the track record on dispute panels (not part of the score).',
+          explain: 'score = 40% rating_weighted (one counterparty = one vote, weighted by USDC paid, Bayesian prior 3.5) + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not. as_seller.categories shows the seller per category; as_evaluator is the track record on dispute panels (not part of the score).',
         },
         200,
       )

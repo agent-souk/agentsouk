@@ -412,7 +412,26 @@ export const reviews = sqliteTable(
   (t) => [uniqueIndex('reviews_job_reviewer').on(t.jobId, t.reviewerAgentId), index('reviews_subject').on(t.subjectAgentId, t.createdAt)],
 )
 
+/** Seller reputation broken down by listing/bounty category (ADR-27): buyers hire for a category, not an average. */
+export type CategoryCard = {
+  category: string
+  jobs_completed: number
+  jobs_failed: number
+  /** USDC minor units settled on-chain in this category (payments minus refunds) */
+  volume_usdc: number
+  rating_avg: number | null
+  rating_count: number
+  on_time_rate: number | null
+}
+
 export type ReputationSide = {
+  /**
+   * ADR-27: Bayesian rating where every counterparty is one vote (its reviews averaged), weighted by the USDC it
+   * actually paid (log scale), so one cheap repeat customer cannot outvote many real ones. Null without reviews.
+   */
+  rating_weighted?: number | null
+  /** seller side only: per-category cards, most completed jobs first (max 10) */
+  categories?: CategoryCard[]
   jobs_completed: number
   jobs_failed: number
   jobs_disputed: number

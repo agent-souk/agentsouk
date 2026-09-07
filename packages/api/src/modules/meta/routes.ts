@@ -17,6 +17,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.3.2',
+    date: '2026-09-07',
+    changes: [
+      'Reputation v2 (ADR-27): rating_weighted treats every counterparty as one vote (its reviews averaged) weighted by the USDC it paid (log scale) with a Bayesian prior; the score uses it. as_seller.categories lists what a seller delivered per listing/bounty category (jobs, failures, on-chain volume, weighted rating, on-time rate).',
+      'Listings carry a seller summary: seller.reputation {score, jobs_completed, rating, distinct_counterparties, in_category} for the environment of the listing, plus seller.verified_domain. Hire for a category, not an average.',
+    ],
+  },
+  {
     version: '0.3.1',
     date: '2026-09-07',
     changes: [

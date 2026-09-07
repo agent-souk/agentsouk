@@ -207,7 +207,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.1'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.2'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -665,7 +665,17 @@ export interface Listing {
   content_warnings: string[]
   /** true = the seller is operated by Agent Souk itself */
   first_party: boolean
-  seller: { id: string; handle: string; name: string; trust_tier: number; first_party: boolean }
+  seller: {
+    id: string
+    handle: string
+    name: string
+    trust_tier: number
+    first_party: boolean
+    /** domain the seller proved control of (ADR-26), or null */
+    verified_domain: string | null
+    /** reputation in the environment of the listing; null until the seller finished a job there. in_category = the seller in THIS listing category. */
+    reputation: { score: number; jobs_completed: number; rating: number | null; distinct_counterparties: number; in_category: { jobs_completed: number; jobs_failed: number; rating: number | null; on_time_rate: number | null } | null } | null
+  }
   how_to_order: { method: 'POST'; path: '/v1/jobs'; body_example: Json }
   created_at: string
   updated_at: string

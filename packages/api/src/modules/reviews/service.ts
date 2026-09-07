@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agentReputation, agents, jobs, reviews, settlements, type Env, type ReputationSide } from '../../db/schema.js'
+import { agentReputation, agents, bounties, jobs, listings, reviews, settlements, type CategoryCard, type Env, type ReputationSide } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { scanText } from '../../lib/content-safety.js'
@@ -27,6 +27,8 @@ const PRIOR_WEIGHT = 5
 export const TRUST_T1 = { minCompleted: 5, minCounterparties: 3, minPayingAddresses: 3, minVolumeUsdc: 10_000_000 }
 
 export const emptySide = (): ReputationSide => ({
+  rating_weighted: null,
+  categories: [],
   jobs_completed: 0,
   jobs_failed: 0,
   jobs_disputed: 0,
@@ -46,6 +48,88 @@ export const emptySide = (): ReputationSide => ({
 export function bayesianRating(sum: number, n: number): number | null {
   if (n === 0) return null
   return Math.round(((sum + PRIOR_MEAN * PRIOR_WEIGHT) / (n + PRIOR_WEIGHT)) * 100) / 100
+}
+
+/**
+ * ADR-27: one counterparty = one vote. Reviews from the same reviewer are averaged first, then each reviewer's vote is
+ * weighted by the USDC it actually paid on the reviewed jobs (log scale: dust and free jobs weigh 1, 1 USDC about 3,
+ * 100 USDC about 5), then the Bayesian prior applies. A cheap repeat customer cannot outvote real buyers.
+ */
+export function reviewWeight(valueMinorUnits: number): number {
+  return Math.round((1 + Math.log10(1 + Math.max(0, valueMinorUnits) / 10_000)) * 100) / 100
+}
+
+export function weightedRating(rows: Pick<ReviewRow, 'reviewerAgentId' | 'rating' | 'jobPrice'>[]): number | null {
+  if (!rows.length) return null
+  const byReviewer = new Map<string, { sum: number; n: number; value: number }>()
+  for (const r of rows) {
+    const g = byReviewer.get(r.reviewerAgentId) ?? { sum: 0, n: 0, value: 0 }
+    g.sum += r.rating
+    g.n += 1
+    g.value += r.jobPrice
+    byReviewer.set(r.reviewerAgentId, g)
+  }
+  let weighted = 0
+  let weights = 0
+  for (const g of byReviewer.values()) {
+    const w = reviewWeight(g.value)
+    weighted += (g.sum / g.n) * w
+    weights += w
+  }
+  return Math.round(((weighted + PRIOR_MEAN * PRIOR_WEIGHT) / (weights + PRIOR_WEIGHT)) * 100) / 100
+}
+
+const MAX_CATEGORY_CARDS = 10
+
+/** Seller reputation per category (ADR-27): what the seller has actually delivered in the category a buyer hires for. */
+export function categoryCards(sellerJobs: JobRow[], categoryOf: Map<string, string>, ratings: ReviewRow[], stl: Map<string, SettlementRow[]>): CategoryCard[] {
+  const groups = new Map<string, JobRow[]>()
+  for (const j of sellerJobs) {
+    const cat = categoryOf.get(j.id)
+    if (!cat) continue
+    groups.set(cat, [...(groups.get(cat) ?? []), j])
+  }
+  const cards: CategoryCard[] = []
+  for (const [category, list] of groups) {
+    const ids = new Set(list.map((j) => j.id))
+    const completed = list.filter(isCompletedJob)
+    let volume = 0
+    for (const j of completed) {
+      const rows = stl.get(j.id) ?? []
+      volume += rows.filter((s) => s.kind === 'payment' && s.status === 'settled').reduce((s, p) => s + p.amount, 0) - rows.filter((s) => s.kind === 'refund').reduce((s, p) => s + p.amount, 0)
+    }
+    const revs = ratings.filter((r) => ids.has(r.jobId))
+    const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null)
+    const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
+    cards.push({
+      category,
+      jobs_completed: completed.length,
+      jobs_failed: list.filter(isSellerFailure).length,
+      volume_usdc: Math.max(0, volume),
+      rating_avg: weightedRating(revs),
+      rating_count: revs.length,
+      on_time_rate: delivered.length ? Math.round((onTime.length / delivered.length) * 100) / 100 : null,
+    })
+  }
+  return cards.sort((a, b) => b.jobs_completed - a.jobs_completed || b.volume_usdc - a.volume_usdc || a.category.localeCompare(b.category)).slice(0, MAX_CATEGORY_CARDS)
+}
+
+/** Listing or bounty category per job id. */
+async function categoriesOf(list: JobRow[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const listingIds = [...new Set(list.map((j) => j.listingId).filter((x): x is string => !!x))]
+  const bountyIds = [...new Set(list.map((j) => j.bountyId).filter((x): x is string => !!x))]
+  const [ls, bs] = await Promise.all([
+    listingIds.length ? db().query.listings.findMany({ where: inArray(listings.id, listingIds), columns: { id: true, category: true } }) : [],
+    bountyIds.length ? db().query.bounties.findMany({ where: inArray(bounties.id, bountyIds), columns: { id: true, category: true } }) : [],
+  ])
+  const lcat = new Map(ls.map((l) => [l.id, l.category]))
+  const bcat = new Map(bs.map((b) => [b.id, b.category]))
+  for (const j of list) {
+    const cat = (j.listingId && lcat.get(j.listingId)) || (j.bountyId && bcat.get(j.bountyId)) || null
+    if (cat) out.set(j.id, cat.toLowerCase())
+  }
+  return out
 }
 
 type SideResult = { side: ReputationSide; payingAddresses: number }
@@ -91,13 +175,14 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
       ratings.length,
     ),
     rating_count: ratings.length,
+    rating_weighted: weightedRating(ratings),
     on_time_rate: side === 'seller' && delivered.length ? Math.round((onTime.length / delivered.length) * 100) / 100 : null,
   }
   return { side: sideStats, payingAddresses: addresses.size }
 }
 
 export function scoreOf(asSeller: ReputationSide, asBuyer: ReputationSide): number {
-  const rating = asSeller.rating_avg ?? asBuyer.rating_avg
+  const rating = asSeller.rating_weighted ?? asSeller.rating_avg ?? asBuyer.rating_weighted ?? asBuyer.rating_avg
   const ratingNorm = rating == null ? 0.5 : (rating - 1) / 4
   const volume = asSeller.volume_usdc + asBuyer.volume_usdc
   // log10 over USDC (not minor units): 1 USDC -> ~0.05, 100 USDC -> 0.33, 1M USDC -> 1
@@ -118,8 +203,9 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
   for (const s of stlRows) stl.set(s.jobId, [...(stl.get(s.jobId) ?? []), s])
   const seller = sideFromJobs(all.filter((j) => j.sellerAgentId === agentId), 'seller', revs.filter((r) => r.role === 'buyer'), stl)
   const buyer = sideFromJobs(all.filter((j) => j.buyerAgentId === agentId), 'buyer', revs.filter((r) => r.role === 'seller'), stl)
-  const asSeller = seller.side
-  const asBuyer = buyer.side
+  const sellerJobs = all.filter((j) => j.sellerAgentId === agentId)
+  const asSeller: ReputationSide = { ...seller.side, categories: categoryCards(sellerJobs, await categoriesOf(sellerJobs), revs.filter((r) => r.role === 'buyer'), stl) }
+  const asBuyer: ReputationSide = { ...buyer.side, categories: [] }
   const score = scoreOf(asSeller, asBuyer)
   const now = Date.now()
   await db()
@@ -192,6 +278,14 @@ export async function listReviewsForAgent(agentId: string, env: Env | undefined,
   if (role) conds.push(eq(reviews.role, role))
   if (cursor) conds.push(lt(reviews.id, cursor))
   return db().query.reviews.findMany({ where: and(...conds), orderBy: [desc(reviews.id)], limit: limit + 1 })
+}
+
+/** Reputation rows for many agents in one environment (listing search, seller summaries). */
+export async function reputationsById(ids: string[], env: Env): Promise<Map<string, ReputationRow>> {
+  const unique = [...new Set(ids)]
+  if (!unique.length) return new Map()
+  const rows = await db().query.agentReputation.findMany({ where: and(eq(agentReputation.env, env), inArray(agentReputation.agentId, unique)) })
+  return new Map(rows.map((r) => [r.agentId, r]))
 }
 
 export async function getReputation(agentId: string): Promise<{ live: ReputationRow | null; test: ReputationRow | null }> {

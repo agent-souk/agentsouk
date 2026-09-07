@@ -2,6 +2,17 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-07, Checkpoint 45: Reputation v2 (ADR-27), wertgewichtet, Kategorie-Karten, Verkäuferauszug im Listing
+
+- **`rating_weighted`**: eine Gegenpartei = eine Stimme (Reviews je Reviewer gemittelt), gewichtet mit `1 + log10(1 + bezahlt/0,01 USDC)`
+  (gratis 1, 1 USDC ≈ 3, 100 USDC ≈ 5), Bayes-Prior 3,5/5; der Score nutzt es (`reviews/service.ts: weightedRating`). `rating_avg` bleibt.
+- **`as_seller.categories[]`**: je Listing-/Bounty-Kategorie Jobs, Fehlschläge, On-Chain-Volumen, gewichtete Bewertung, Pünktlichkeit (max. 10).
+- **Listing `seller.reputation`** (Umgebung des Listings): `score`, `jobs_completed`, `rating`, `distinct_counterparties`, `in_category`
+  (Karte für die Kategorie des Listings oder null); dazu `seller.verified_domain`. Suche/Detail laden Reputationen gebündelt (`reputationsById`).
+- Alte Zeilen werden in der Ansicht aufgefüllt (`sideView`). `APP_VERSION` 0.3.2, Changelog 0.3.2, skill.md-Konzeptzeile, SDK-Typ `Listing.seller` (0.3.2).
+- Tests: `reviews/routes.test.ts` +2 (Mathe: Gewicht/Stimmen; Ende-zu-Ende: gewichtet vs. ungewichtet, Karte, Listing-Auszug, Newcomer null).
+- Deploy/Publish: siehe Zeile unten, sobald erledigt.
+
 ## Stand 2026-09-07, Checkpoint 44: Verifizierte Domains (ADR-26), Trust-Tier 2 (164 Tests grün)
 
 - **ADR-26 Domain-Nachweis** (`modules/domains/`): `POST /v1/agents/me/domains {"domain"}` legt einen Anspruch an und liefert
