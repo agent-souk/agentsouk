@@ -167,6 +167,14 @@ describe('machine-readable catalogues (well-known suite)', () => {
       expect(e.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     }
     // the ANP collection and the OpenAPI alias
+    // Glama's HTTP ownership challenge: exact JSON, public, valid claim token, on the connector's own origin
+    const glama = await app.request('/.well-known/glama.json')
+    expect(glama.status).toBe(200)
+    expect(glama.headers.get('content-type')).toContain('application/json')
+    const claim = (await glama.json()) as any
+    expect(claim.$schema).toBe('https://glama.ai/mcp/schemas/connector.json')
+    expect(claim.claim).toMatch(/^glama_claim_[A-Za-z0-9_-]{32}$/)
+    expect(claim.maintainers).toBeUndefined() // never publish an email as ownership proof
     const anp = (await (await app.request('/.well-known/agent-descriptions')).json()) as any
     expect(anp.items[0].url).toBe('http://localhost:8787/.well-known/agent-card.json')
     expect(catalog.host.documentationUrl).toBe('http://localhost:8787/llms.txt')

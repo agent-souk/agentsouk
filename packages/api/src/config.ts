@@ -17,6 +17,8 @@ const Env = z.object({
   ADMIN_TOKEN: z.string().min(16).optional(),
   /** IndexNow key (Bing, Yandex, Naver, Seznam): served at /<key>.txt so search engines can verify URL submissions. */
   INDEXNOW_KEY: z.string().regex(/^[A-Za-z0-9-]{8,128}$/).optional(),
+  /** Overrides the Glama connector claim token served at /.well-known/glama.json (default in discovery/wellknown.ts). */
+  GLAMA_CLAIM: z.string().regex(/^glama_claim_[A-Za-z0-9_-]{32}$/).optional(),
   /** Trust X-Forwarded-For / X-Real-IP (only when behind a reverse proxy you control). */
   TRUST_PROXY: z
     .enum(['true', 'false'])

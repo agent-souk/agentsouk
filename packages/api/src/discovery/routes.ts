@@ -5,7 +5,7 @@ import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
 import { getAgentByIdOrHandle } from '../modules/agents/service.js'
 import { errors } from '../lib/errors.js'
 import { agentCard, errorsMd, llmsTxt, quickstartMd, skillMd, PLATFORM_NAME, tagline } from './text.js'
-import { agentDescriptions, aiCatalog, ardManifest, mcpServerCard, mcpWellKnown } from './wellknown.js'
+import { agentDescriptions, aiCatalog, ardManifest, glamaConnector, mcpServerCard, mcpWellKnown, GLAMA_CLAIM } from './wellknown.js'
 import { APP_VERSION } from '../version.js'
 
 /**
@@ -85,6 +85,8 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
   r.get('/.well-known/ard.json', (c) => catalog(c, ardManifest(base())))
   r.get('/.well-known/ai-catalog.json', (c) => catalog(c, aiCatalog(base(), serverKey().did), 'application/ai-catalog+json; charset=utf-8'))
   r.get('/.well-known/agent-descriptions', (c) => catalog(c, agentDescriptions(base()), 'application/ld+json; charset=utf-8'))
+  // Glama's HTTP ownership challenge for the connector listing; must stay published to keep the listing verified.
+  r.get('/.well-known/glama.json', (c) => catalog(c, glamaConnector(config().GLAMA_CLAIM ?? GLAMA_CLAIM)))
   r.get('/.well-known/openapi.json', (c) => c.redirect('/openapi.json', 301))
 
   // IndexNow key file (Bing, Yandex, Naver, Seznam verify URL submissions against it). Only when a key is configured.

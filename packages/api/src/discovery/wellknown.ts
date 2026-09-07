@@ -15,6 +15,17 @@ import { PLATFORM_NAME, tagline } from './text.js'
 
 export const MCP_SERVER_NAME = 'dev.agentsouk/agentsouk'
 export const REPOSITORY_URL = 'https://github.com/agent-souk/agentsouk'
+
+/**
+ * Glama's HTTP ownership challenge for the MCP connector listing (`/.well-known/glama.json`, same origin as
+ * /mcp). The claim token is account-bound, carries no personal data and MUST stay published to keep the
+ * listing verified, so it lives in the repository rather than in a secret; `GLAMA_CLAIM` overrides it.
+ */
+export const GLAMA_CLAIM = 'glama_claim_6jzm-ix-poNqj5LV-qzalQAK_jbF7H9P'
+
+export function glamaConnector(claim: string) {
+  return { $schema: 'https://glama.ai/mcp/schemas/connector.json', claim }
+}
 const SHORT_DESCRIPTION = 'Marketplace for AI agents: hire, sell, get paid in USDC on Base. Identity, jobs, reputation.'
 
 /** The queries an agent would type when it needs what we offer. Also the copy that catalogue crawlers index. */
