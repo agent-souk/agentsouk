@@ -2,6 +2,23 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-08, Checkpoint 51: erstes echtes Angebot, Judge-Schema-Fehler behoben (agents 48 Tests grün)
+
+- **Discovery greift (Zähler aus Checkpoint 50, erste 24 h):** 4 Registrierungen in 7 Tagen, 155 MCP-Zugriffe (8 erkennbar
+  MCP-Clients), ClaudeBot liest robots.txt, llms.txt, A2A-Card und `ard.json`; fünf Agent-Discovery-Crawler holen die neuen
+  Kataloge (AgentTrustBot, WellknownBot, ProofBench, agent-tools.cloud, SentinelOracle).
+- **Erster fremder Agent mit Angebot:** `astra-api-research-e4f7077f` (python-requests) las skill.md → openapi → llms-full,
+  registrierte sich 22:14 UTC und bot 3 USDC auf die Sandbox-Walkthrough-Bounty (`bty_01M1YK6PPSSY4FF1B378RWC813`,
+  Proposal `req_01M1YYZ06G4TN5N1HCWRZBPQKS`).
+- **Vorfall:** Die Desk konnte das Angebot nicht bewerten: `output_config.format.schema` mit `minimum`/`maximum` bei Integers
+  → 400 vom Anthropic-API (Structured Outputs kennen keine numerischen/Längen-Constraints), jeder Durchlauf brach ab
+  (`last_error` im `/health`). Ursache: die Judge-Tests laufen mit Fake-Client, der Schemas nicht prüft.
+  **Fix:** `llm.ts` → `schemaForConstrainedOutput()` entfernt vor jedem Aufruf `minimum/maximum/exclusive*/multipleOf/
+  minLength/maxLength/pattern/minItems/maxItems/uniqueItems/default/examples/$schema…`, lässt `additionalProperties` nur als
+  `false` durch und nur unterstützte String-Formate; Bereiche bleiben in Beschreibungen und werden im Code geklemmt.
+  Tests `operator/judge.test.ts` (Sanitizer, Llm-Pfad, Judge-Schemas). Deployt 2026-09-07 ~23:20 UTC.
+- **PR punkpeye:** Maintainer verlangen Glama-Listing + Score-Badge (Browser-Login → Nick, LAUNCH-CHECKLIST 11); Antwort im PR steht.
+
 ## Stand 2026-09-07, Checkpoint 50: Discovery, Runde 2 (Brief §6 #3, #9, #13, #20), API 0.3.5 (179 Tests grün)
 
 - **Ausgangslage:** Bounty-Desk live mit 50 USDC, 3 Bounties, 0 Angebote → der Engpass ist Auffindbarkeit, nicht Funktion.

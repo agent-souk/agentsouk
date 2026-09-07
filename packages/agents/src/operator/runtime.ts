@@ -11,6 +11,7 @@
  * duplicates). A transfer that provably did not leave the wallet is retried; one whose fate is unknown stops the
  * job for a human. State lives in the platform's own memory KV, so a restart continues where it stopped.
  */
+import { createHash } from 'node:crypto'
 import { AgentSouk, type Job } from 'agentsouk'
 import { validateDocuments } from '../services/validate-json.js'
 import { safeFetch } from '../ssrf.js'
@@ -34,6 +35,8 @@ export type OperatorConfig = {
   awardScore: number
   /** a proposal at or above this is awarded immediately (sellers with a track record, or after half the consideration window) */
   instantScore: number
+  /** a proposal scoring at least this but below awardScore gets one concrete question from the desk (direct thread) and is re-scored with the answer */
+  clarifyScore: number
   /** walk away from a sealed delivery this close to the payment deadline when it is still not payable */
   walkAwayBeforeDeadlineMs: number
   /** how many times the desk looks at one sealed delivery (initial triage plus re-looks after seller messages) */
@@ -42,7 +45,18 @@ export type OperatorConfig = {
   replaceAfterMs: number
 }
 
-export const DEFAULT_CONFIG: OperatorConfig = { totalBudget: 50_000_000n, dailyCap: 20_000_000n, considerationHours: 12, minProposals: 3, awardScore: 60, instantScore: 85, walkAwayBeforeDeadlineMs: 60 * 60_000, maxTriages: 3, replaceAfterMs: 10 * 60_000 }
+export const DEFAULT_CONFIG: OperatorConfig = { totalBudget: 50_000_000n, dailyCap: 20_000_000n, considerationHours: 12, minProposals: 3, awardScore: 60, instantScore: 85, clarifyScore: 40, walkAwayBeforeDeadlineMs: 60 * 60_000, maxTriages: 3, replaceAfterMs: 10 * 60_000 }
+
+/** What the desk remembers about one proposal: the judge's score plus the clarification round, keyed by the proposal id in platform memory. */
+type ProposalRecord = ProposalScore & {
+  /** hash of price, payment and message at scoring time; a changed proposal is scored again */
+  fingerprint: string
+  /** when the desk asked its question in a direct thread (null thread = the question could not be delivered) */
+  asked_at?: string
+  thread_id?: string | null
+  /** the one re-score with the seller's answer has happened */
+  rescored_at?: string
+}
 
 export type BountyState = {
   bounty_id: string | null
@@ -119,7 +133,7 @@ export class OperatorRuntime {
   paymentsEnabled = false
   private ready = false
   private readonly states = new Map<string, BountyState>()
-  private readonly proposalScores = new Map<string, ProposalScore>()
+  private readonly proposalScores = new Map<string, ProposalRecord>()
   private ticking = false
   private dirty = false
   private balances: { usdc: bigint; eth: bigint; at: number } | null = null
@@ -352,7 +366,7 @@ export class OperatorRuntime {
     const candidates = all.filter((p) => p.status === 'pending' && p.price <= spec.budget_max && p.payment === 'on_delivery' && !state.awarded_to.includes(p.seller.id) && !state.skipped_proposals.includes(p.id))
     if (!candidates.length) return
     const scored: { p: Proposal; s: ProposalScore }[] = []
-    for (const p of candidates) scored.push({ p, s: await this.scoreProposal(spec, p) })
+    for (const p of candidates) scored.push({ p, s: await this.scoreProposal(spec, p, state.bounty_id) })
     scored.sort((a, b) => b.s.score - a.s.score || a.p.price - b.p.price)
     const best = scored[0]!
     const distinctSellers = new Set(candidates.map((p) => p.seller.id)).size
@@ -386,21 +400,71 @@ export class OperatorRuntime {
     await this.message(job, `Awarded. Deliver the JSON described in the bounty as the job output. The delivery preview must carry: ${spec.preview_requirements}. A sealed delivery cannot be re-delivered, so get the preview right; the desk checks it mechanically, then reviews it${spec.needs_operator_confirmation ? ', then a human operator confirms' : ''}, then pays, then grades the full output against the rubric and rates you. Questions are answered in this thread.`)
   }
 
-  private async scoreProposal(spec: BountySpec, p: Proposal): Promise<ProposalScore> {
-    const cached = this.proposalScores.get(p.id)
-    if (cached) return cached
+  /**
+   * The judge's score for a proposal, remembered per proposal id. A proposal that the seller changed (price,
+   * payment or message) is scored again. A middling score (clarifyScore..awardScore) earns one concrete question
+   * in a direct thread; the answer (or an updated proposal) triggers exactly one re-score.
+   */
+  private async scoreProposal(spec: BountySpec, p: Proposal, bountyId: string | null): Promise<ProposalScore> {
+    const fp = createHash('sha256').update(`${p.price}|${p.payment}|${p.message ?? ''}`).digest('hex').slice(0, 32)
     const key = `operator/${this.env}/proposal/${p.id}`
-    const stored = await this.client.memory.get<ProposalScore>(key).catch(() => null)
-    if (stored?.value && typeof stored.value.score === 'number') {
-      this.proposalScores.set(p.id, stored.value)
-      return stored.value
+    let rec: ProposalRecord | undefined = this.proposalScores.get(p.id)
+    if (!rec) {
+      const stored = await this.client.memory.get<ProposalRecord>(key).catch(() => null)
+      if (stored?.value && typeof stored.value.score === 'number') rec = stored.value
     }
-    const reputation = await this.client.agents.reputation(p.seller.handle).catch(() => undefined)
-    const s = await this.judge.scoreProposal(spec, { price: p.price, payment: p.payment, message: p.message, seller: { handle: p.seller.handle, trust_tier: p.seller.trust_tier, reputation } })
-    this.proposalScores.set(p.id, s)
-    await this.client.memory.set(key, s, 90 * 86400).catch(() => undefined)
-    this.log('proposal scored', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, score: s.score, red_flags: s.red_flags })
-    return s
+    const facts = async (clarification?: string) => ({ price: p.price, payment: p.payment, message: p.message, seller: { handle: p.seller.handle, trust_tier: p.seller.trust_tier, reputation: await this.client.agents.reputation(p.seller.handle).catch(() => undefined) }, clarification })
+    const remember = async (r: ProposalRecord) => {
+      this.proposalScores.set(p.id, r)
+      await this.client.memory.set(key, r, 90 * 86400).catch(() => undefined)
+    }
+    // records from before the clarification round (no fingerprint, no question) and changed proposals are scored afresh
+    if (rec && (rec.fingerprint !== fp || typeof rec.question !== 'string')) {
+      if (rec.fingerprint && rec.fingerprint !== fp) this.log('proposal changed, scoring again', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle })
+      rec = undefined
+    }
+    if (rec && rec.asked_at && rec.thread_id && !rec.rescored_at) {
+      const answer = await this.sellerReplySince(rec.thread_id, p.seller.id, rec.asked_at)
+      if (answer) {
+        const s = await this.judge.scoreProposal(spec, await facts(answer))
+        rec = { ...s, fingerprint: fp, asked_at: rec.asked_at, thread_id: rec.thread_id, rescored_at: new Date(this.now()).toISOString() }
+        await remember(rec)
+        this.log('proposal re-scored with the seller answer', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, score: s.score, red_flags: s.red_flags })
+      }
+    }
+    if (!rec) {
+      const s = await this.judge.scoreProposal(spec, await facts())
+      rec = { ...s, fingerprint: fp }
+      await remember(rec)
+      this.log('proposal scored', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, score: s.score, red_flags: s.red_flags, question: s.question || undefined })
+    }
+    if (!rec.asked_at && rec.question && rec.score >= this.config.clarifyScore && rec.score < this.config.awardScore) {
+      const body = `Thanks for your proposal on "${spec.title}". Before the desk awards, one question: ${rec.question} Reply in this thread, or post your proposal again with more detail (POST /v1/bounties/${bountyId ?? '<bounty_id>'}/proposals replaces it). The desk scores your proposal again after your answer; the award goes to the best proposal that clears the bar.`
+      try {
+        const started = await this.client.threads.start(p.seller.id, body.slice(0, 4000))
+        rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: (started.thread as { id?: string }).id ?? null }
+        this.log('proposal clarification asked', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, thread_id: rec.thread_id })
+      } catch (e) {
+        const status = statusOf(e)
+        if (status == null || status >= 500) throw e
+        rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: null } // e.g. the seller is gone; do not retry every tick
+        this.log('proposal clarification could not be sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, error: msg(e) })
+      }
+      await remember(rec)
+    }
+    this.proposalScores.set(p.id, rec)
+    return rec
+  }
+
+  /** What the seller wrote in the direct thread after the desk's question (bodies joined, bounded), or null. */
+  private async sellerReplySince(threadId: string, sellerId: string, since: string): Promise<string | null> {
+    const res = await this.client.threads.messages(threadId, { order: 'asc', limit: 100 }).catch(() => null)
+    const items = ((res as { data?: { sender?: { id?: string }; body?: string; created_at?: string }[] } | null)?.data ?? []).filter((m) => m.sender?.id === sellerId && typeof m.created_at === 'string' && m.created_at > since && typeof m.body === 'string' && m.body.trim())
+    if (!items.length) return null
+    return items
+      .map((m) => m.body!.trim())
+      .join('\n\n')
+      .slice(0, 4000)
   }
 
   // --- the awarded job ----------------------------------------------------------------------------------------

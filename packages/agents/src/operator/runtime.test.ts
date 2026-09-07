@@ -38,13 +38,18 @@ const spec: BountySpec = {
   summary_fields: ['client.kind'],
 }
 
-function scriptedJudge(script: { score?: number; triage?: Triage['decision']; verdict?: Verdict['decision'] } = {}) {
+function scriptedJudge(script: { score?: number; scores?: number[]; question?: string; triage?: Triage['decision']; verdict?: Verdict['decision'] } = {}) {
   const seen: string[] = []
+  const clarifications: (string | null | undefined)[] = []
+  let n = 0
   const judge = {
     seen,
-    scoreProposal: async (): Promise<ProposalScore> => {
+    clarifications,
+    scoreProposal: async (_spec: unknown, p: { clarification?: string | null }): Promise<ProposalScore> => {
       seen.push('score')
-      return { score: script.score ?? 90, reasons: 'scripted', red_flags: [] }
+      clarifications.push(p.clarification)
+      const score = script.scores ? (script.scores[Math.min(n++, script.scores.length - 1)] ?? 90) : (script.score ?? 90)
+      return { score, reasons: 'scripted', red_flags: [], question: score >= 40 && score < 85 ? (script.question ?? '') : '' }
     },
     triagePreview: async (): Promise<Triage> => {
       seen.push('triage')
@@ -55,7 +60,7 @@ function scriptedJudge(script: { score?: number; triage?: Triage['decision']; ve
       return { decision: script.verdict ?? 'accept', rating: 5, message: 'Thanks, exactly as asked.', rubric_scores: [] }
     },
   }
-  return judge as unknown as Judge & { seen: string[] }
+  return judge as unknown as Judge & { seen: string[]; clarifications: (string | null | undefined)[] }
 }
 
 /** The operator wallet talks to a fake node whose receipts the API's chain reader also serves (same FakeChain). */
@@ -317,5 +322,57 @@ describe('OperatorRuntime', () => {
     expect(st.awards_paid).toBe(1)
     expect(st.paid_distinct).toEqual(['python-sdk'])
     expect(sent).toHaveLength(1) // paid exactly once
+  })
+
+  it('asks a middling proposal one concrete question in a direct thread, re-scores once with the answer, and scores a changed proposal afresh', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    const seller = await createTestAgent(app, { name: 'Middling Seller' })
+    const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
+    // 52: question asked; 58 with the answer: still below the bar, no second question; 90 for the rewritten proposal: awarded
+    const judge = scriptedJudge({ scores: [52, 58, 90], question: 'Which two friction points did you already hit in the sandbox?' })
+    const logs: string[] = []
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', (m) => logs.push(m), { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 0 })
+    await rt.init()
+    await rt.tick() // posted
+    const st = rt.stateOf(spec.key)!
+    const s = client(app, seller.api_keys.test)
+    await s.bounties.propose(st.bounty_id!, 800_000, 'I will do the walkthrough.')
+    await rt.tick()
+    expect(judge.seen).toEqual(['score'])
+    expect(st.job_id).toBeNull() // 52 < 60: not awarded, asked instead
+    const threads = (await call(app, 'GET', '/v1/threads?kind=direct', { key: seller.api_keys.test })).body.data
+    expect(threads).toHaveLength(1)
+    const messagesOf = async () => (await call(app, 'GET', `/v1/threads/${threads[0].id}/messages`, { key: seller.api_keys.test })).body.data as { body: string; mine: boolean }[]
+    expect((await messagesOf()).map((m) => m.body.includes('Which two friction points'))).toEqual([true])
+    expect((await messagesOf())[0]!.body).toContain(`POST /v1/bounties/${st.bounty_id}/proposals`)
+    await rt.tick() // nothing new: no second question, no re-score
+    expect(judge.seen).toEqual(['score'])
+    expect(await messagesOf()).toHaveLength(1)
+
+    // the seller answers -> exactly one re-score with the answer; 58 is still below the bar and there is no second question
+    await s.threads.send(threads[0].id, 'Two friction points: the payment terms need a wallet first; the receipt endpoint is not linked from the job.')
+    await rt.tick()
+    expect(judge.seen).toEqual(['score', 'score'])
+    expect(judge.clarifications[1]).toContain('Two friction points')
+    expect(st.job_id).toBeNull()
+    await rt.tick()
+    expect(judge.seen).toEqual(['score', 'score']) // the answer is used once
+    expect(await messagesOf()).toHaveLength(2)
+
+    // the seller rewrites the proposal -> fingerprint changed -> scored afresh (90) -> awarded
+    await s.bounties.propose(st.bounty_id!, 800_000, 'Concrete plan: register, set wallet, hire extract-web at 0.01 USDC, deliver sealed, inspect the payment terms, report eight steps and three friction points with the receipt in the preview.')
+    await rt.tick()
+    expect(judge.seen).toEqual(['score', 'score', 'score'])
+    expect(judge.clarifications[2]).toBeUndefined()
+    expect(st.job_id).toMatch(/^job_/)
+    expect(logs.some((l) => l.includes('proposal changed, scoring again'))).toBe(true)
+
+    // the record survives a restart: a fresh runtime does not score again
+    const again = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 0 })
+    await again.init()
+    await again.tick()
+    expect(judge.seen).toEqual(['score', 'score', 'score'])
   })
 })

@@ -133,10 +133,12 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
       (Agent Identity & Discovery v2; `a=pat` = Bearer-Key).
     - Name `_mcp` (also `_mcp.agentsouk.dev`), Typ TXT, Inhalt genau:
       `v=mcp1;registry=https://api.agentsouk.dev/.well-known/mcp.json;public=true;version=2026-09`
-11. **Listings beanspruchen, die nur mit Browser-Login gehen** (jeweils "Login with GitHub" mit `nickillig3-dotcom`, dann den Eintrag
-    `agent-souk/agentsouk` bzw. `dev.agentsouk/agentsouk` als eigenen markieren): https://glama.ai/mcp/servers (Claim),
-    https://smithery.ai (Claim), https://context7.com/add-library (Bibliothek `agent-souk/agentsouk` eintragen, damit Coding-Agents
-    die SDK-Doku mitten in der Arbeit ziehen). Alles optional; die Einträge existieren auch ohne Claim.
+11. **Glama zuerst (wichtig, ~10 Minuten):** Der PR an die größte Awesome-MCP-Liste (https://github.com/punkpeye/awesome-mcp-servers/pull/13922)
+    wird nur gemergt, wenn der Server auf Glama gelistet ist und ein Score-Badge hat. Auf https://glama.ai/mcp/servers mit
+    GitHub (`nickillig3-dotcom`) anmelden, Server `agent-souk/agentsouk` einreichen (Remote-Server: URL `https://api.agentsouk.dev/mcp`;
+    zusätzlich unter https://glama.ai/mcp/connectors als Hosted Endpoint eintragen). Sobald der Score existiert, sag Bescheid,
+    dann füge ich das Badge in den PR ein. Danach optional: https://smithery.ai (Claim), https://context7.com/add-library
+    (Bibliothek `agent-souk/agentsouk`, damit Coding-Agents die SDK-Doku mitten in der Arbeit ziehen).
 12. **ClawHub** (Skill-Registry der OpenClaw-Agents, Konto muss ≥ 1 Woche alt sein): `npm i -g clawhub`, `clawhub login` (GitHub im
     Browser), dann aus dem Repo `clawhub skill publish plugins/agentsouk/skills/agentsouk`. Ich kann den Befehl ausführen, sobald das
     Login einmal im Browser gemacht ist.
