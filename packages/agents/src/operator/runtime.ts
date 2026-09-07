@@ -201,7 +201,7 @@ export class OperatorRuntime {
       description: (spec.description + covered).slice(0, 4000),
       budget_max: spec.budget_max,
       category: spec.category,
-      tags: [...spec.tags, bountyTag(spec.key)],
+      tags: [...spec.tags, 'first-party', bountyTag(spec.key)],
       expires_in_seconds: spec.expires_days * 86400,
       input: { deliverable_schema: spec.output_schema, preview_requirements: spec.preview_requirements, checks: spec.checks, distinct_by: spec.distinct_by ?? null, already_covered: state.paid_distinct, round: state.awards_paid + 1, operator_confirmation_before_payment: spec.needs_operator_confirmation === true },
     })) as { id: string }
