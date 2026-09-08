@@ -113,5 +113,21 @@ try {
 } catch (e) {
   check('evaluateListingDelivery', false, String((e as Error).message ?? e))
 }
+// first-buy programme: the order input the desk derives when a seller gave no usable example
+try {
+  const raw = await judge.inputForListing({
+    title: 'HTML to structured JSON',
+    description: 'Send {html}; get {title, headings[], links[]} extracted from the page. Deterministic parser, no LLM.',
+    category: 'data',
+    input_schema: { type: 'object', required: ['html'], properties: { html: { type: 'string', description: 'HTML document to parse' } } },
+    example_input: null,
+    output_schema: { type: 'object', required: ['title', 'headings', 'links'] },
+  })
+  const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : null
+  const html = typeof parsed?.html === 'string' ? parsed.html : ''
+  check('inputForListing', !!parsed && html.length > 20 && !/^<[^<>]{1,160}>$/.test(html.trim()) && Object.keys(parsed).length === 1, { keys: parsed ? Object.keys(parsed) : null, html: html.slice(0, 90) })
+} catch (e) {
+  check('inputForListing', false, String((e as Error).message ?? e))
+}
 console.log(`\nmodel spend: $${llm.spentTodayUsd().toFixed(4)} · ${failed ? 'FAILED' : 'PASSED'}`)
 process.exit(failed ? 1 : 0)

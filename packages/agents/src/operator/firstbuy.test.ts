@@ -10,7 +10,7 @@ import type { App } from '../../../api/src/app.js'
 import { installFakeChain, type FakeChain } from '../../../api/src/test/chain.js'
 import { call, createTestAgent, freshApp, setWallet, type TestAgent } from '../../../api/src/test/setup.js'
 import { AgentSouk } from '../../../sdk/src/index.js'
-import { compactState, DEFAULT_FIRSTBUY, FirstBuyer, type FirstBuyConfig, type FirstBuyState, type Purchase } from './firstbuy.js'
+import { compactState, DEFAULT_FIRSTBUY, FirstBuyer, hasPlaceholder, type FirstBuyConfig, type FirstBuyState, type Purchase } from './firstbuy.js'
 import { escapeUntrusted, type Judge, type Verdict } from './judge.js'
 import { AUTHORIZATION_USED_TOPIC, CHAINS, typedDataSigner, UsdcWallet, type RpcFetch } from './usdc.js'
 
@@ -61,16 +61,22 @@ function walletFor(privateKey: string, chain: FakeChain) {
   return new UsdcWallet(privateKey, CHAINS.test, { fetchImpl: rpc, sleep: async () => undefined })
 }
 
-function scriptedJudge(script: { verdict?: Verdict['decision']; rating?: Verdict['rating'] } = {}) {
+function scriptedJudge(script: { verdict?: Verdict['decision']; rating?: Verdict['rating']; input?: string | null } = {}) {
   const seen: unknown[] = []
+  const asked: unknown[] = []
   const judge = {
     seen,
+    asked,
     evaluateListingDelivery: async (f: unknown): Promise<Verdict> => {
       seen.push(f)
       return { decision: script.verdict ?? 'accept', rating: script.rating ?? 5, message: script.verdict === 'revise' ? 'The links array is empty although the page has links; please add them.' : 'Exactly what the listing promised.', rubric_scores: [] }
     },
+    inputForListing: async (f: unknown): Promise<string | null> => {
+      asked.push(f)
+      return script.input === undefined ? JSON.stringify({ html: '<html><h1>Real page</h1><a href="/x">x</a></html>' }) : script.input
+    },
   }
-  return judge as unknown as Pick<Judge, 'evaluateListingDelivery'> & { seen: unknown[] }
+  return judge as unknown as Pick<Judge, 'evaluateListingDelivery' | 'inputForListing'> & { seen: unknown[]; asked: unknown[] }
 }
 
 async function listingBy(app: App, seller: TestAgent, over: Record<string, unknown> = {}) {
@@ -356,6 +362,40 @@ describe('FirstBuyer', () => {
     const refusedSeller = st.index[l1.id] ? twins[1]! : twins[0]!
     const theirJobs = (await call(w.app, 'GET', '/v1/jobs?role=seller', { key: refusedSeller.api_keys.test })).body
     expect(theirJobs.data.map((j: { status: string }) => j.status)).toEqual(['cancelled'])
+  })
+
+  it('never orders with a schema placeholder: it derives a real input, checks it against the listing schema, and skips when it cannot', async () => {
+    const w = await world({ input: undefined })
+    const seller = await createTestAgent(w.app, { name: 'No Example Seller' })
+    // no example_input: the platform's ready-to-send body carries `<html: ...>` placeholders (API 0.3.6)
+    const l = await listingBy(w.app, seller, { example_input: undefined, input_schema: { type: 'object', required: ['html'], properties: { html: { type: 'string', description: 'HTML document to parse' } } } })
+    const fb = w.mk()
+    await fb.tick()
+    const p = fb.stateOf()!.purchases[0]!
+    expect(p.listing_id).toBe(l.id)
+    expect(w.judge.asked).toHaveLength(1)
+    const sent = (await view(w, seller.api_keys.test, p.job_id)).input
+    expect(sent.html).toContain('Real page')
+    expect(hasPlaceholder(sent)).toBe(false)
+
+    // a generated input that does not satisfy the schema is refused, and so is a placeholder the model echoed back
+    for (const bad of ['{"wrong_field":"x"}', '{"html":"<html: HTML document to parse>"}', 'not json', null]) {
+      const w2 = await world({ input: bad })
+      const s2 = await createTestAgent(w2.app, { name: 'Another Seller' })
+      const l2 = await listingBy(w2.app, s2, { example_input: undefined, input_schema: { type: 'object', required: ['html'], properties: { html: { type: 'string' } } } })
+      const fb2 = w2.mk()
+      await fb2.tick()
+      expect(fb2.stateOf()!.purchases, String(bad)).toHaveLength(0)
+      expect(fb2.stateOf()!.skipped[l2.id]).toContain('no realistic input')
+    }
+    // a listing whose seller DID give a real example is never sent to the model
+    const w3 = await world()
+    const s3 = await createTestAgent(w3.app, { name: 'Example Seller' })
+    await listingBy(w3.app, s3)
+    const fb3 = w3.mk()
+    await fb3.tick()
+    expect(w3.judge.asked).toHaveLength(0)
+    expect((await view(w3, s3.api_keys.test, fb3.stateOf()!.purchases[0]!.job_id)).input).toEqual({ html: '<h1>Hi</h1>' })
   })
 
   it('keeps the persisted state under the memory limit and escapes closing data tags in untrusted text', () => {

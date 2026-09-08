@@ -17,6 +17,7 @@
  * few cents is not worth anyone's time): a bad delivery gets rating 1 or 2 and the reasons in the public review.
  */
 import type { AgentSouk, Job, Listing, TypedDataSigner } from 'agentsouk'
+import { validateDocuments } from '../services/validate-json.js'
 import type { Judge, Verdict } from './judge.js'
 import type { Env, Logger } from './runtime.js'
 import { formatUsdc, sameAddress, type UsdcWallet } from './usdc.js'
@@ -107,6 +108,19 @@ const MAX_BYTES = 56_000
 
 const emptyState = (): FirstBuyState => ({ purchases: [], index: {}, skipped: {}, last_error: null })
 
+/** `<name>` / `<name: description>`: what the platform fills required fields with when the seller gave no example. */
+export const isPlaceholderString = (v: unknown): boolean => typeof v === 'string' && /^<[^<>]{1,160}>$/.test(v.trim())
+
+/** True when any string anywhere in the value is such a placeholder. */
+export function hasPlaceholder(v: unknown, depth = 0): boolean {
+  if (isPlaceholderString(v)) return true
+  if (depth > 6 || !v || typeof v !== 'object') return false
+  return Object.values(v as Record<string, unknown>).some((x) => hasPlaceholder(x, depth + 1))
+}
+
+/** A usable JSON Schema object (non-empty plain object). */
+const isSchemaObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length > 0
+
 const compactVerdict = (v: Verdict, outputHash: string | null, at: string, acted: boolean): CompactVerdict => ({ decision: v.decision, rating: v.rating, message: String(v.message ?? '').slice(0, 300), output_hash: outputHash, at, acted })
 
 /**
@@ -149,7 +163,7 @@ export class FirstBuyer {
     readonly client: AgentSouk,
     readonly wallet: UsdcWallet,
     readonly signer: TypedDataSigner,
-    readonly judge: Pick<Judge, 'evaluateListingDelivery'>,
+    readonly judge: Pick<Judge, 'evaluateListingDelivery' | 'inputForListing'>,
     readonly env: Env,
     readonly log: Logger,
     readonly config: FirstBuyConfig,
@@ -294,7 +308,7 @@ export class FirstBuyer {
     if (l.pricing.model !== 'fixed' && l.pricing.model !== 'per_unit') return { why: `pricing model ${l.pricing.model}`, permanent: true }
     if (l.pricing.price == null || l.pricing.price <= 0) return { why: 'free or unpriced', permanent: true }
     if (BigInt(l.pricing.price) > this.config.maxPrice) return { why: `price above the cap (${formatUsdc(l.pricing.price)} > ${formatUsdc(this.config.maxPrice)})`, permanent: true }
-    if (!this.inputFor(l)) return { why: 'no example input to order with', permanent: true }
+    if (!this.exampleInput(l) && !isSchemaObject(l.input_schema)) return { why: 'no example input and no input schema to order with', permanent: true }
     const sellerEntries = this.bySeller(st, l.seller.id)
     if (sellerEntries.length >= this.config.perSeller) return { why: `seller already bought ${sellerEntries.length} times`, permanent: true }
     if (st.purchases.some((p) => !p.outcome && p.seller_id === l.seller.id)) return { why: 'a purchase from this seller is open', permanent: false }
@@ -308,17 +322,55 @@ export class FirstBuyer {
     return null
   }
 
-  /** The input the desk orders with: the seller's example first, else the ready-to-send body the platform derives from the schema. */
-  inputFor(l: Listing): Record<string, unknown> | null {
-    const ex = l.example_input
-    if (ex && typeof ex === 'object' && !Array.isArray(ex) && Object.keys(ex as object).length) return ex as Record<string, unknown>
-    const body = (l.how_to_order?.body_example ?? {}) as { input?: unknown }
-    if (body.input && typeof body.input === 'object' && !Array.isArray(body.input) && Object.keys(body.input as object).length) return body.input as Record<string, unknown>
+  /**
+   * The seller's own example, if it is real content. The platform fills missing required fields of
+   * `how_to_order.body_example` with `<name: description>` placeholders (API 0.3.6); ordering with those wastes the
+   * money and earns the seller an unfair rating, so anything containing one is not an example (learned the hard way
+   * on the first live first-buy, 2026-09-08: we sent `<html: HTML document to parse>` and paid for an empty result).
+   */
+  exampleInput(l: Listing): Record<string, unknown> | null {
+    for (const candidate of [l.example_input, (l.how_to_order?.body_example as { input?: unknown } | undefined)?.input]) {
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate) && Object.keys(candidate as object).length && !hasPlaceholder(candidate)) return candidate as Record<string, unknown>
+    }
     return null
   }
 
+  /** What to order with: the seller's real example, else one the judge writes from the listing and its schema. */
+  async inputFor(l: Listing): Promise<Record<string, unknown> | null> {
+    const example = this.exampleInput(l)
+    if (example) return example
+    if (!isSchemaObject(l.input_schema)) return null
+    const raw = await this.judge.inputForListing({ title: l.title, description: l.description, category: l.category, input_schema: l.input_schema, example_input: l.example_input, output_schema: l.output_schema }).catch((e: unknown) => {
+      this.log('first-buy: input generation failed', { env: this.env, listing_id: l.id, error: msg(e) })
+      return null
+    })
+    if (!raw) return null
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      this.log('first-buy: generated input is not JSON', { env: this.env, listing_id: l.id })
+      return null
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Object.keys(parsed).length || hasPlaceholder(parsed)) return null
+    if (JSON.stringify(parsed).length > 8000) return null
+    const check = validateDocuments(l.input_schema as Record<string, unknown>, [parsed])
+    if (check.schema_error) this.log('first-buy: the listing input_schema could not be compiled; ordering with the generated input anyway', { env: this.env, listing_id: l.id, schema_error: check.schema_error })
+    else if (!check.results[0]?.valid) {
+      this.log('first-buy: generated input does not satisfy the listing schema', { env: this.env, listing_id: l.id, errors: check.results[0]?.errors?.slice(0, 3) })
+      return null
+    }
+    this.log('first-buy: ordering with a generated input', { env: this.env, listing_id: l.id, input: JSON.stringify(parsed).slice(0, 200) })
+    return parsed as Record<string, unknown>
+  }
+
   private async hire(st: FirstBuyState, l: Listing): Promise<Purchase | null> {
-    const input = this.inputFor(l)!
+    const input = await this.inputFor(l)
+    if (!input) {
+      st.skipped[l.id] = 'no realistic input could be derived for this listing'
+      this.log('first-buy: listing skipped', { env: this.env, listing_id: l.id, seller: l.seller.handle, why: st.skipped[l.id] })
+      return null
+    }
     // idempotent per listing: a crash between create and save replays into the same job instead of a second one
     const job = await this.client.jobs.create({ listing_id: l.id, input, units: l.pricing.model === 'per_unit' ? 1 : undefined, title: `First buy by the platform desk: ${l.title.slice(0, 80)}`, max_revisions: 1 }, `firstbuy:${this.env}:${l.id}`)
     const wallet = job.payment.pay_to ?? null
