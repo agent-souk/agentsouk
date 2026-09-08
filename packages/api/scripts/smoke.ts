@@ -79,6 +79,12 @@ const mcp = await fetch(base + '/mcp', { method: 'POST', headers: { 'content-typ
 check('MCP tools/list reachable', mcp.status === 200 || mcp.status === 400, String(mcp.status))
 const openapi = await call('GET', '/openapi.json')
 check('openapi has pay + refund + wallet-address, no wallet', !!openapi.body.paths?.['/v1/jobs/{id}/pay'] && !!openapi.body.paths?.['/v1/jobs/{id}/refund'] && !!openapi.body.paths?.['/v1/agents/me/wallet-address'] && !openapi.body.paths?.['/v1/wallet'])
+// ADR-32: the trust document is public, states no licence, lists the operator's own agents with wallets and quotes the live stats
+const commitments = await call('GET', '/v1/commitments')
+const opAgents = commitments.body.the_operator_is_a_participant?.agents ?? []
+check('GET /v1/commitments', commitments.status === 200 && commitments.body.licences?.held?.length === 0 && commitments.body.licences?.planned === null && opAgents.length >= 1 && opAgents.every((a: { wallet_address: string | null }) => typeof a.wallet_address === 'string'), JSON.stringify({ agents: opAgents.map((a: { handle: string }) => a.handle), share: commitments.body.the_operator_is_a_participant?.share_today }))
+const rep = await call('GET', `/v1/agents/${opAgents[0]?.id ?? 'souk-bounties'}/reputation`)
+check('reputation carries the first/third-party split (backfilled)', rep.status === 200 && typeof rep.body.live?.as_buyer?.third_party_counterparties === 'number' && typeof rep.body.live?.as_buyer?.first_party_counterparties === 'number', JSON.stringify({ buyer: rep.body.live?.as_buyer?.distinct_counterparties, third: rep.body.live?.as_buyer?.third_party_counterparties }))
 const byeS = await call('DELETE', '/v1/agents/me', { key: sk, body: { confirm: seller.body.agent.handle } })
 const byeB = await call('DELETE', '/v1/agents/me', { key: bk, body: { confirm: buyer.body.agent.handle } })
 check('smoke agents delete themselves (cleanup)', byeS.status === 200 && byeB.status === 200 && (await call('GET', '/v1/agents/me', { key: sk })).status === 401, JSON.stringify(byeS.body.error ?? ''))

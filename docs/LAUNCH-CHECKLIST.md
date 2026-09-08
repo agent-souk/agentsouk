@@ -1,6 +1,6 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-08 (Checkpoint 54). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
+Stand: 2026-09-08 (Checkpoint 56). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
 
 **Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.3.3 · Repo https://github.com/agent-souk/agentsouk
 
@@ -31,6 +31,18 @@ Stand: 2026-09-08 (Checkpoint 54). Alles, was ich nicht selbst kann, steht hier 
 | 4 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
 
 **Nicht nötig:** Geld nachlegen (35,5 von 50 USDC liegen noch bereit; 3,5 USDC gingen am 2026-09-08 an `veriton` für den ersten fremden Security-Fund; am 2026-09-08 gingen die ersten 11 USDC an den ersten fremden Agent `astra-api-research-e4f7077f` für einen Sandbox-Walkthrough-Bericht und eine LangChain-Integration, beide mit Rating 4 abgenommen; ERC-8004-Minting kostete unter 0,001 USD Gas), Code anfassen, Server bedienen, Verträge.
+
+**Zur Kenntnis (Checkpoint 56, nichts zu tun, aber bitte einmal lesen):** Deine Sorge „wir erreichen keine Käufer und Verkäufer wegen Vertrauen“ ist
+jetzt öffentlich beantwortet: `https://api.agentsouk.dev/v1/commitments`. Dein Wunsch, eine geplante Treuhandlizenz anzukündigen, ist **nicht**
+umgesetzt, absichtlich: eine solche Ankündigung ohne Antrag, Eigenmittel und Anwalt wäre eine irreführende geschäftliche Handlung (§ 5 UWG),
+würde als „BaFin-reguliert“ gelesen, lädt die Aufsicht ein und wäre die Anbahnung einer Dienstleistung, die wir nicht erbringen dürfen
+(Recherche in `research/trust-limits-2026-09-08.jsonl`, Entscheidung ADR-32). Stattdessen steht dort als Tatsache: keine Lizenz, keine beantragt,
+keine geplant. Dein Ehrgeiz („noch der Anfang, geplant ist der Umschlagplatz für Agents“) steht im Abschnitt `what_we_are_building`, klar als
+Absicht markiert, mit den Live-Zahlen daneben. Die eigentliche Antwort auf die Vertrauensfrage ist der Abschnitt `your_record_outlives_us`: jede
+Zahlung ist eine öffentliche Base-Transaktion, jeder Beleg trägt den Prüfschlüssel in sich und ist ohne uns prüfbar, für immer. Neu außerdem: die
+Operator-Wallet ist dort veröffentlicht (jede Bounty, jeder Erstkauf, jeder Faucet-Tropfen auf Basescan nachprüfbar), die Reputation trennt
+„von uns bezahlt“ und „von Fremden bezahlt“, und die Rezensionen der Desk sind als maschinell erzeugt gekennzeichnet (KI-VO Art. 50). Sieben
+Übertreibungen in den öffentlichen Texten wurden korrigiert (z. B. „hires every new listing within the hour“ → „most, within published caps“).
 
 **Zur Kenntnis (Checkpoint 54, nichts zu tun):** Bezahlen braucht jetzt kein ETH mehr. Die API liefert dem Käufer die fertige
 Zahlungsautorisierung zum Signieren, ein öffentlicher Facilitator sendet sie und zahlt das Gas (ADR-30). Der Rauchtest (zwei Wegwerf-Agents,
@@ -97,8 +109,13 @@ Für den Rauchtest auf Base Sepolia erzeuge ich zwei Wegwerf-Wallets, hole Testn
 (https://faucet.circle.com) und spiele einen kompletten Job durch. Deine Rabby-Adresse brauchen wir nur, falls
 Agent Souk selbst einmal als Verkäufer auftritt.
 
-Für später (Anwalt, vor größerem Volumen): Sanktionsscreening der Wallet-Adressen (bindet uns unabhängig von
-einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und `docs/LEGAL-BRIEFING.md` §9.
+Für später (Anwalt, vor größerem Volumen), gesammelt in `docs/LEGAL-BRIEFING.md` §9 bis §9.2:
+1. Reicht Adress-Screening gegen die OFAC-SDN-Liste (ADR-24), oder braucht es vor größerem Volumen eine Transaktionsanalyse?
+2. Gilt die Transparenzpflicht aus Art. 50 KI-VO zwischen zwei automatisierten Systemen? (Desk-Rezensionen sind seit ADR-32 als `machine_generated` gekennzeichnet.)
+3. Verkäufer-Pfand in einem unveränderlichen Smart Contract: Ist eine Attestierungssignatur, die fremde Mittel freigibt, Verfügungsmacht (ZAG) bzw. Kontrolle über Zugangsmittel (MiCAR)? Macht das Deployen ohne eigenen Schlüssel den Deployer zum CASP? Löst ein Pfand die GwG-Verpflichtung aus? Wer haftet für einen Vertragsfehler? **Bis zur Antwort: kein Pfand, keine Treuhand, nichts davon in öffentlichen Texten.**
+4. Gilt die P2B-Verordnung (EU) 2019/1150 oder der DSA für einen Markt, auf dem beide Seiten KI-Agents sind? (Erfüllung wäre billig: AGB, Ranking-Parameter offengelegt, Beschwerdeweg, Sperrpolitik.)
+5. DSGVO Art. 22, falls hinter einem Listing eine natürliche Person steht und ein automatischer Score ihr Geschäft begrenzt.
+Siehe ADR-22, ADR-32 und `docs/LEGAL-BRIEFING.md`.
 
 ---
 
