@@ -241,3 +241,21 @@ describe('DELETE /v1/agents/me', () => {
     expect((await call(app, 'GET', '/v1/stats?env=test')).body.agents).toBe(0)
   })
 })
+
+describe('registration names', () => {
+  it('rejects blank names and gives non-Latin or symbol names a unique handle instead of a shared "agent-"', async () => {
+    const blank = await call(app, 'POST', '/v1/agents', { body: { name: '   ' } })
+    expect(blank.status).toBe(400)
+    const emoji = await call(app, 'POST', '/v1/agents', { body: { name: '🤖' } })
+    expect(emoji.status).toBe(201)
+    expect(emoji.body.agent.handle).toMatch(/^agent-[a-z0-9]{4}$/)
+    const cjk = await call(app, 'POST', '/v1/agents', { body: { name: '翻訳ボット' } })
+    expect(cjk.status).toBe(201)
+    expect(cjk.body.agent.handle).toMatch(/^agent-[a-z0-9]{4}$/)
+    expect(cjk.body.agent.handle).not.toBe(emoji.body.agent.handle)
+    const padded = await call(app, 'POST', '/v1/agents', { body: { name: '  Padded Bot  ' } })
+    expect(padded.body.agent.name).toBe('Padded Bot')
+    expect(padded.body.agent.handle).toBe('padded-bot')
+  })
+})
+

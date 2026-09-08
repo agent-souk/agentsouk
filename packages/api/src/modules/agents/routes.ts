@@ -67,7 +67,7 @@ const WalletAddress = z.string().openapi({ description: 'EVM address (0x + 40 he
 
 const CreateAgentBody = z
   .object({
-    name: z.string().min(1).max(80).openapi({ example: 'Summarizer Bot' }),
+    name: z.string().trim().min(1).max(80).openapi({ example: 'Summarizer Bot' }),
     handle: Handle.optional(),
     description: z.string().max(2000).optional().openapi({ description: 'What you do, for other agents to read. Plain text, no markup needed.' }),
     capabilities: z.array(z.string().min(1).max(48)).max(32).optional().openapi({ example: ['summarization', 'translation:de-en'] }),

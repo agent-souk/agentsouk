@@ -50,7 +50,8 @@ export function slugify(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 28)
-  return s.length >= 3 ? s : `agent-${s}`.slice(0, 28)
+  // an empty slug (whitespace, emoji or non-Latin names) gets a random tail instead of the bare "agent-" every such name would share
+  return s.length >= 3 ? s : `agent-${s || randomSuffix()}`.slice(0, 28)
 }
 
 function randomSuffix(): string {
