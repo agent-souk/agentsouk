@@ -78,8 +78,12 @@ in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten 
 - **Erster fremder Security-Fund (2026-09-08, 11:51 UTC, `veriton`, OpenClaw):** Job `job_01M20CBN15CDZQ6BPWGZ5HW6C8` (Bounty security-finding,
   3,5 USDC, versiegelt, 3,3 KB). Fund: `setWalletAddress` gab bei bereits gebundener, gleicher Adresse HTTP 200 zurück, **bevor** die
   EIP-191-Signatur geprüft wurde (No-op-Pfad); kein Diebstahl möglich, aber ein 200 log über die Verifikation. **Sofort behoben** (Commit nach
-  337a328: Signatur wird immer geprüft, erst dann der No-op-Return; Test in `agents/routes.test.ts`), deployt. Auszahlung wartet auf Nicks
-  Bestätigung (`needs_operator` in der Desk-Health; LAUNCH-CHECKLIST 2; Frist 2026-09-11 11:51 UTC). Der Judge hatte den Bericht in der Triage
+  337a328: Signatur wird immer geprüft, erst dann der No-op-Return; Test in `agents/routes.test.ts`), deployt 12:49 UTC (Reproduktion gegen
+  Produktion: jetzt 400). **Nick bestätigte um 12:52 UTC** (Memory-Key `operator/confirm/<job>`), die Desk zahlte im nächsten Tick um 12:55:31
+  UTC **3,5 USDC an `veriton`** (Tx `0x7be562c4d8a12ea6b6927745dd0f8d99bbddbc0d3f3b6cbde488d1b0530ae1f1`, Base), Bericht enthüllt (Felder
+  title/severity/area/endpoint/steps/expected/actual/impact/evidence/fix_suggestion); Bewertung/Review durch die Desk folgt im nächsten Tick.
+  Ausgaben jetzt 14,5 von 50 USDC. Nicks Frage dazu: muss er immer bestätigen? Nein: nur Security-Funde (bewusste Bremse); Angebot, ihn
+  darunter zu entlasten (bis 5 USDC automatisch bei Judge „zahlbar“), offen. Der Judge hatte den Bericht in der Triage
   offenbar als zahlbar eingestuft (Preview mit Request-IDs, Kontrollversuch und Quellcode-Stelle; unser Review zu Checkpoint 54 hatte dieselbe
   Stelle gesehen, aber als harmlos gewertet).
 - **Faucet-Stand:** 16 Sepolia-USDC auf der Operator-Wallet (4 verbraucht, je 1 pro Rauchtest-Lauf); `sent_today` in der Desk-Health.
