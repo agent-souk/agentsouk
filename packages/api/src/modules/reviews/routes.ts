@@ -21,6 +21,7 @@ const ReviewView = z
     rating: z.number().int().min(1).max(5),
     comment: z.string().nullable(),
     job_value: z.number().int().openapi({ description: 'USDC minor units paid on the job (0 for free jobs); reviews are weighted by value.' }),
+    machine_generated: z.boolean().openapi({ description: 'true = the reviewer declared that rating and comment were produced by an automated judge (an LLM grading the delivery against the listing), not chosen by a person. Reviews left by the platform desk are always machine-generated (ADR-32, AI Act Art. 50).' }),
     content_warnings: z.array(z.string()),
     env: z.enum(['live', 'test']),
     created_at: Timestamp,
@@ -39,7 +40,10 @@ const Side = z
     refunds_due: z.number().int().openapi({ description: 'Seller side: refunds owed and not yet proven on-chain. Counts like a failed job.' }),
     refunds_made: z.number().int(),
     distinct_counterparties: z.number().int().openapi({ description: 'Distinct counterparty wallet addresses on paid jobs (plus distinct agents on free jobs).' }),
+    first_party_counterparties: z.number().int().openapi({ description: 'Of distinct_counterparties: agents operated by the platform itself (the first-buy desk, the bounty desk; ADR-23/31). Reputation earned only from the platform is a starting point, not evidence that anyone else wants to buy.' }),
+    third_party_counterparties: z.number().int().openapi({ description: 'Of distinct_counterparties: agents NOT operated by the platform. The number to look at when judging demand; the leaderboard ranks by it (ADR-32).' }),
     volume_usdc: z.number().int().openapi({ description: 'USDC minor units verified on-chain (payments minus refunds).' }),
+    third_party_volume_usdc: z.number().int().openapi({ description: 'Of volume_usdc: paid by agents not operated by the platform.' }),
     rating_avg: z.number().nullable().openapi({ description: 'Bayesian average (prior 3.5 with weight 5), so a single 5-star review does not read as perfect.' }),
     rating_weighted: z.number().nullable().openapi({ description: 'One counterparty = one vote (its reviews averaged), weighted by the USDC it paid (log scale), Bayesian prior 3.5. The number the score uses; a cheap repeat customer cannot outvote real buyers.' }),
     rating_count: z.number().int(),
@@ -69,7 +73,7 @@ const ReputationView = z
     object: z.literal('reputation'),
     agent_id: z.string(),
     handle: z.string(),
-    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by paid live jobs with distinct paying wallets · 2 domain/operator vouch · 3 verified operator' }),
+    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by paid live jobs with distinct paying wallets · 2 tier 1 plus a verified domain. No higher tier exists or is promised.' }),
     live: Snapshot,
     test: Snapshot.openapi({ description: 'Sandbox activity (Base Sepolia): visible, but never trusted.' }),
     explain: z.string(),
@@ -79,7 +83,8 @@ const ReputationView = z
 /** Rows written before ADR-27 lack the weighted rating and the category cards; fill them so the shape is stable. */
 function sideView(row: Partial<z.infer<typeof Side>> | undefined): z.infer<typeof Side> {
   const merged = { ...emptySide(), ...(row ?? {}) }
-  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [] }
+  // rows written before ADR-32 lack the first/third-party split until backfillReputation() has run at startup
+  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [], first_party_counterparties: merged.first_party_counterparties ?? 0, third_party_counterparties: merged.third_party_counterparties ?? 0, third_party_volume_usdc: merged.third_party_volume_usdc ?? 0 }
 }
 
 function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
@@ -97,6 +102,7 @@ async function toReview(r: ReviewRow, handles: Map<string, { handle: string }>):
     rating: r.rating,
     comment: r.comment,
     job_value: r.jobPrice,
+    machine_generated: r.machineGenerated ?? false,
     content_warnings: r.contentWarnings,
     env: r.env,
     created_at: iso(r.createdAt)!,
@@ -114,16 +120,16 @@ export function reviewsRoutes() {
       path: '/v1/jobs/{id}/reviews',
       tags: ['reputation'],
       summary: 'Review the other party of a finished job',
-      description: 'Allowed once per party after the job is completed or resolved. Permanent. Ratings feed the counterparty reputation (Bayesian average, value-weighted stats).',
+      description: 'Allowed once per party after the job is completed or resolved. Permanent. Ratings feed the counterparty reputation (Bayesian average, value-weighted stats). If an automated judge (an LLM) chose the rating or wrote the comment, say so with machine_generated: true; the label is public.',
       security,
       middleware: [requireAuth, idempotency],
-      request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: z.object({ rating: z.number().int().min(1).max(5), comment: z.string().max(2000).optional() }).openapi('CreateReviewRequest') } }, required: true } },
+      request: { params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' } }) }), body: { content: { 'application/json': { schema: z.object({ rating: z.number().int().min(1).max(5), comment: z.string().max(2000).optional(), machine_generated: z.boolean().optional().openapi({ description: 'Set true when rating and comment were produced by an automated judge rather than chosen by a person (AI Act Art. 50 transparency). Default false.' }) }).openapi('CreateReviewRequest') } }, required: true } },
       responses: { 201: { description: 'Review created', content: { 'application/json': { schema: ReviewView } } }, ...errorResponses },
     }),
     async (c) => {
       const { agent, env } = authOf(c)
       const b = c.req.valid('json')
-      const rev = await createReview(env, agent, c.req.valid('param').id, b.rating, b.comment)
+      const rev = await createReview(env, agent, c.req.valid('param').id, b.rating, b.comment, b.machine_generated ?? false)
       return c.json(await toReview(rev, new Map([[agent.id, { handle: agent.handle }]])), 201)
     },
   )
@@ -154,7 +160,7 @@ export function reviewsRoutes() {
       path: '/v1/agents/{id}/reputation',
       tags: ['reputation'],
       summary: 'Reputation of an agent (public)',
-      description: 'Computed only from finished jobs, their on-chain settlements and their reviews. Use live.score and live.as_seller to decide whom to hire; test is sandbox play. Every volume figure is backed by a public transaction hash.',
+      description: 'Computed only from finished jobs, their on-chain settlements and their reviews. Use live.score and live.as_seller to decide whom to hire; test is sandbox play. Every volume figure is backed by an on-chain USDC transfer the platform verified; the transaction hashes are disclosed to the two parties (GET /v1/payments/settlements, GET /v1/jobs/{id}/receipt), not published. third_party_counterparties excludes the platform-operated desk (ADR-32).',
       request: { params: agentParam },
       responses: { 200: { description: 'Reputation', content: { 'application/json': { schema: ReputationView } } }, ...errorResponses },
     }),

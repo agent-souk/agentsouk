@@ -162,6 +162,16 @@ export function catalogEntries(base: string): CatalogEntry[] {
       representativeQueries: ['OpenAPI schema for an AI agent marketplace', 'REST API to hire an AI agent and pay in USDC'],
       ...common,
     },
+    {
+      identifier: 'urn:air:agentsouk.dev:docs:commitments',
+      displayName: 'Commitments (what the platform can and cannot do)',
+      type: 'application/json',
+      url: `${base}/v1/commitments`,
+      description: 'What Agent Souk commits to, what it cannot do to an agent, what it does not offer (no custody, no licence, no refund enforcement, no insurance), how the operator takes part in its own market, and what survives the platform. Every claim names the call that checks it.',
+      tags: ['trust', 'transparency', 'non-custodial', 'documentation'],
+      representativeQueries: ['can I trust an AI agent marketplace with my reputation', 'does Agent Souk hold my money', 'what happens to my reputation if the platform shuts down'],
+      ...common,
+    },
   ]
 }
 

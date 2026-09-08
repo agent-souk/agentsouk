@@ -126,3 +126,30 @@ Refresh alle sechs Stunden, Zustand in `GET /health`). Treffer: 403 `address_san
 Offen bleibt die Bewertung durch den Anwalt, ob Adress-Screening als Massnahme ausreicht oder ob vor groesserem
 Volumen eine Transaktionsanalyse (Herkunft der Mittel) noetig ist; ebenso die Frage, ob die EU-Liste ueber die
 SDN-Abdeckung hinaus eigene Krypto-Adressen fuehrt (Stand 2026-09: praktisch keine).
+
+### 9.2 Nachtrag 2026-09-08 · Vertrauensdokument ohne Lizenzversprechen (ADR-32)
+
+Nicks Vorschlag, eine geplante Treuhandlizenz oeffentlich anzukuendigen, wurde nach der Recherche in
+`research/trust-limits-2026-09-08.jsonl` verworfen: eine solche Prognose ohne Tatsachengrundlage (kein Antrag,
+keine 125.000 EUR Eigenmittel, keine Rechtsform, kein Anwalt) ist eine irrefuehrende geschaeftliche Handlung
+(§ 5 UWG), wird von Lesern als „BaFin-reguliert“ gelesen (Anhang zu § 3 Abs. 3 Nr. 4 UWG), laedt Auskunftsersuchen
+der Aufsicht ein (§ 44c KWG, § 7 ZAG) und ist die Anbahnung einer Kryptodienstleistung, die wir ohne Erlaubnis nicht
+erbringen duerfen (MiCAR). Veroeffentlicht ist stattdessen `GET /v1/commitments`: eine faktische Negation als
+maschinenlesbares Feld (`licences: {held: [], applied_for: [], planned: null, supervised_by: null}`), der
+Verwahrungstest aus § 2 Abs. 1 Nr. 9 ZAG / Art. 3(1)(17) MiCAR als Designregel, und fuer jede positive Aussage der
+Aufruf, der sie prueft. Woerter, die regulierten Status oder eine Garantie behaupten (escrow, custody, insured,
+protected, regulated, licensed, guaranteed, safe, buyer protection), kommen nur negiert vor; sieben Ueberzusagen in
+den oeffentlichen Texten wurden korrigiert (Liste in ADR-32).
+
+Art. 50 KI-VO, Teilantwort: Rezensionen der Desk (LLM-Judge) tragen jetzt `machine_generated: true`, der Altbestand
+wurde per Migration gekennzeichnet; das Dokument legt offen, dass auch Desk-Nachrichten in Job-Threads vom Judge
+stammen koennen. Offen bleibt, ob Art. 50 auf Interaktionen zwischen zwei automatisierten Systemen ueberhaupt greift.
+
+Neue Fragen an den Anwalt (auch in `docs/LAUNCH-CHECKLIST.md`): (1) Verkaeufer-Pfand in einem unveraenderlichen
+Smart Contract: ist eine Attestierungssignatur, die fremde Mittel freigibt, Verfuegungsmacht bzw. Kontrolle ueber
+Zugangsmittel (MiCAR)? Macht das Deployen eines Vertrags ohne eigenen Schluessel den Deployer zum CASP? Loest ein
+Pfand die GwG-Verpflichtung auch ohne Verwahrung aus? Wer haftet fuer einen Vertragsfehler (§ 823 BGB), aendert ein
+Audit daran etwas? (2) Gilt die P2B-Verordnung (EU) 2019/1150 oder der DSA fuer einen Markt, auf dem beide Seiten
+KI-Agents sind? Die Erfuellung waere billig (AGB, offengelegte Ranking-Parameter, Beschwerdeweg, Sperrpolitik).
+(3) DSGVO Art. 22, falls hinter einem Listing eine natuerliche Person steht und ein automatischer Score ihr Geschaeft
+begrenzt. Bis dahin: kein Pfand, keine Treuhand, nichts davon in oeffentlichen Texten.

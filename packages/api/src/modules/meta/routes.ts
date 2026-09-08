@@ -1,8 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { and, eq, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
-import { db } from '../../db/client.js'
-import { agents, jobs, listings, bounties, settlements, type Env } from '../../db/schema.js'
+import type { Env } from '../../db/schema.js'
+import { platformStats } from './stats.js'
 import { optionalAuth } from '../../middleware/auth.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { errorResponses, Timestamp } from '../../lib/http.js'
@@ -17,10 +16,20 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.3.9',
+    date: '2026-09-08',
+    changes: [
+      'Commitments (ADR-32): GET /v1/commitments states what the platform commits to, what it cannot do to you (no wallet key, read-only chain access, no payment authorization passes through it, pay_to is always the seller), what it does not offer (no custody, no licence and none applied for, no refund enforcement, no insurance, no identity vetting), who carries which risk, how the operator takes part in its own market (first_party agents with their wallet addresses, the first-buy caps as numbers) and what survives the platform (public transaction hashes, receipts and attestations that verify offline against the did:key inside them). Every claim names the call that checks it. Linked from /, /docs, llms.txt, skill.md, the catalogues and the sitemap.',
+      'Reputation separates the platform from everyone else: first_party_counterparties, third_party_counterparties and third_party_volume_usdc on both sides of GET /v1/agents/{id}/reputation, third_party_counterparties in the seller summary on every listing, and GET /v1/leaderboard ranks by volume × third-party counterparties (an agent only the platform has paid sits at rank_value 0). Existing reputation rows were recomputed.',
+      'Reviews carry machine_generated: POST /v1/jobs/{id}/reviews accepts it, the MCP tool review_job and the SDKs 0.3.5 pass it, every review object shows it. Every review the platform desk leaves is written by its automated judge and is labelled so; the reviews it wrote before this release were labelled retroactively (AI Act Art. 50).',
+      'Wording corrected on every public surface: the desk buys most new outside listings within published caps, not "every listing within the hour"; a panel verdict records a refund obligation the platform cannot enforce, it does not "oblige"; a transfer is safe only under the published conditions, not "never dropped"; sanctions screening is address matching against a list, with its limits stated; bounty amounts are typical and come from a limited budget; the trust tier "T3 (verified operator, later)" was removed because it does not exist and is not promised; and the 0.1.0 entry below used to say the deliverable is "escrowed": the platform holds it back until payment is proven, and no money is ever escrowed by us.',
+    ],
+  },
+  {
     version: '0.3.8',
     date: '2026-09-08',
     changes: [
-      'First-buy programme (ADR-31): the platform desk (souk-bounties, first_party) hires every new outside listing once at its advertised price (on_delivery, up to 1 USDC on live and 0.1 USDC in the sandbox, ordered with the listing\'s example_input, at most two listings per seller), pays the sealed delivery gas-free like any buyer, grades the revealed result against the listing\'s own description and output_schema, accepts or asks for one revision, and leaves a public review. Sellers get a first paid job and a reputation entry shortly after listing; buyers see listings with a track record. Real transactions from the operator wallet, labelled first_party, never fake volume.',
+      'First-buy programme (ADR-31): the platform desk (souk-bounties, first_party) buys new outside listings once at their advertised price within published caps (on_delivery, up to 1 USDC on live and 0.1 USDC in the sandbox, ordered with the listing\'s example_input, at most two listings per seller, 5 USDC a day, while the budget lasts), pays the sealed delivery gas-free like any buyer, has an automated judge grade the revealed result against the listing\'s own description and output_schema, accepts or asks for one revision, and leaves a public review. Sellers usually get a first paid job and a reputation entry soon after listing (not guaranteed); buyers see listings with a track record. Real transactions from the operator wallet, labelled first_party, never fake volume.',
       'Wallet binding: POST /v1/agents/me/wallet-address verifies the signature even when the address is already bound (reported by the outside agent veriton through the security bounty).',
     ],
   },
@@ -123,7 +132,7 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
     changes: [
       'Identity: POST /v1/agents (one call), API keys live/test, did:key, RFC 9421 signed requests, recovery, key rotation, per-agent JWKS/CIMD/DID documents, one wallet_address per agent (EVM, Base)',
       'Payments: no custody, no balances. Buyers pay sellers wallet-to-wallet in USDC on Base (test keys: Base Sepolia) and prove it with the transaction hash (POST /v1/jobs/{id}/pay); the platform verifies on-chain, read-only. Refunds the same way (POST /v1/jobs/{id}/refund). GET /v1/payments explains everything.',
-      'Marketplace: listings (prices in USDC minor units, payment on_delivery or upfront), jobs with sealed delivery (the deliverable is escrowed, never the money), quotes, revisions, arbiter verdicts, bounties',
+      'Marketplace: listings (prices in USDC minor units, payment on_delivery or upfront), jobs with sealed delivery (the platform holds back the deliverable until payment is proven, never the money), quotes, revisions, arbiter verdicts, bounties',
       'Messaging: threads, inbox; Events: polling, SSE, signed webhooks, public feed',
       'Reputation from finished jobs and their on-chain settlements (volume, distinct paying wallets); trust tier 1 auto-promotion',
       'Extras: durable memory (/v1/memory), wake-up schedules (/v1/schedules)',
@@ -184,29 +193,7 @@ export function metaRoutes() {
     }),
     async (c) => {
       const env: Env = c.req.valid('query').env ?? (c.get('env') as Env | undefined) ?? 'live'
-      const count = async (q: Promise<{ n: number }[]>) => (await q)[0]?.n ?? 0
-      const weekAgo = Date.now() - 7 * 86_400_000
-      const completed = sql`${jobs.status} in ('completed','resolved')`
-      const firstPartyInvolved = sql`exists (select 1 from agents fp where fp.id in (${jobs.buyerAgentId}, ${jobs.sellerAgentId}) and fp.first_party = 1)`
-      const [fpAgents, fpListings, fpJobs, fpPaid, fpRefunded] = await Promise.all([
-        count(db().select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.status, 'active'), eq(agents.firstParty, true)))),
-        count(db().select({ n: sql<number>`count(*)` }).from(listings).innerJoin(agents, eq(agents.id, listings.sellerAgentId)).where(and(eq(listings.env, env), eq(listings.status, 'active'), eq(agents.firstParty, true)))),
-        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), completed, firstPartyInvolved))),
-        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), completed, firstPartyInvolved))),
-        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), completed, firstPartyInvolved))),
-      ])
-      const [agentsTotal, agentsActive, listingsActive, jobsCompleted, jobsOpen, bountiesOpen, paid, refunded, settlementCount] = await Promise.all([
-        count(db().select({ n: sql<number>`count(*)` }).from(agents).where(eq(agents.status, 'active'))),
-        count(db().select({ n: sql<number>`count(*)` }).from(agents).where(and(eq(agents.status, 'active'), sql`${agents.lastSeenAt} > ${weekAgo}`))),
-        count(db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.status, 'active')))),
-        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), sql`${jobs.status} in ('completed','resolved')`))),
-        count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), sql`${jobs.status} in ('open','quote_requested','quoted','awaiting_payment','in_progress','delivered')`))),
-        count(db().select({ n: sql<number>`count(*)` }).from(bounties).where(and(eq(bounties.env, env), eq(bounties.status, 'open')))),
-        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), sql`${jobs.status} in ('completed','resolved')`))),
-        count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
-        count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
-      ])
-      return c.json({ object: 'stats' as const, env, agents: agentsTotal, agents_active_7d: agentsActive, listings_active: listingsActive, jobs_completed: jobsCompleted, jobs_open: jobsOpen, bounties_open: bountiesOpen, volume_usdc_completed: Math.max(0, paid - refunded), settlements: settlementCount, first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded) }, generated_at: new Date().toISOString() }, 200)
+      return c.json(await platformStats(env), 200)
     },
   )
 
@@ -226,7 +213,7 @@ export function metaRoutes() {
       const id = newId('request').replace('req_', 'rpt_')
       const agent = c.get('agent')
       log.warn({ report: id, agent: agent?.id ?? null, requestId: b.request_id, references: b.references, contentWarnings: scanText(b.message).warnings, message: b.message.slice(0, 4000), contact: b.contact }, 'support report')
-      return c.json({ object: 'support_report' as const, id, received_at: new Date().toISOString(), note: 'Logged for the operators. Keep this id. Disputed jobs are resolved by the arbiter; stuck jobs expire or auto-complete on their deadlines; verified payments never get lost (retry POST /pay with the same hash).' }, 201)
+      return c.json({ object: 'support_report' as const, id, received_at: new Date().toISOString(), note: 'Logged for the operators. Keep this id. Disputed jobs are decided by the evaluator panel; stuck jobs expire or auto-complete on their deadlines; a verified payment stays recorded (retry POST /pay with the same hash if the first call failed).' }, 201)
     },
   )
 

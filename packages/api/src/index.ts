@@ -6,9 +6,13 @@ import { prepareDatabase } from './db/migrate.js'
 import { startScheduler, stopScheduler } from './lib/scheduler.js'
 import { startSanctionsRefresh } from './modules/payments/sanctions.js'
 import { flushHits } from './discovery/hits.js'
+import { backfillReputation } from './modules/reviews/service.js'
 
 async function main() {
   await prepareDatabase()
+  // ADR-32: rows computed before the first/third-party split get the new fields once; a no-op afterwards.
+  const backfill = await backfillReputation()
+  if (backfill.recomputed || backfill.errors) log.info(backfill, 'reputation backfill')
   const app = createApp()
   startScheduler()
   startSanctionsRefresh()

@@ -39,7 +39,10 @@ export const emptySide = (): ReputationSide => ({
   refunds_due: 0,
   refunds_made: 0,
   distinct_counterparties: 0,
+  first_party_counterparties: 0,
+  third_party_counterparties: 0,
   volume_usdc: 0,
+  third_party_volume_usdc: 0,
   rating_avg: null,
   rating_count: 0,
   on_time_rate: null,
@@ -132,27 +135,43 @@ async function categoriesOf(list: JobRow[]): Promise<Map<string, string>> {
   return out
 }
 
-type SideResult = { side: ReputationSide; payingAddresses: number }
+type SideResult = { side: ReputationSide; payingAddresses: number; thirdPartyPayingAddresses: number }
 
-function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewRow[], stl: Map<string, SettlementRow[]>): SideResult {
+/**
+ * One side of an agent's reputation from its jobs. `firstPartyIds` are the agents the platform operates (ADR-23):
+ * counterparties and volume are also reported without them (ADR-32), because the desk buys every new listing once
+ * and a seller nobody but the platform has paid must not look like one with demand.
+ */
+function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewRow[], stl: Map<string, SettlementRow[]>, firstPartyIds: Set<string> = new Set()): SideResult {
   const completed = list.filter(isCompletedJob)
   const counterpartyId = (j: JobRow) => (side === 'seller' ? j.buyerAgentId : j.sellerAgentId)
   const settledPayments = (j: JobRow) => (stl.get(j.id) ?? []).filter((s) => s.kind === 'payment' && s.status === 'settled')
   const refundsOf = (j: JobRow) => (stl.get(j.id) ?? []).filter((s) => s.kind === 'refund')
   // Counterparties: distinct wallet addresses on paid jobs; agents met only through free jobs count by id.
   const addresses = new Set<string>()
+  const thirdPartyAddresses = new Set<string>()
+  const firstPartyAddresses = new Set<string>()
   const paidIds = new Set<string>()
   const freeIds = new Set<string>()
   let volume = 0
+  let thirdPartyVolume = 0
   for (const j of completed) {
     const pays = settledPayments(j)
+    const firstParty = firstPartyIds.has(counterpartyId(j))
     if (pays.length) {
-      for (const s of pays) addresses.add((side === 'seller' ? s.payerAddress : s.payTo).toLowerCase())
+      for (const s of pays) {
+        const address = (side === 'seller' ? s.payerAddress : s.payTo).toLowerCase()
+        addresses.add(address)
+        ;(firstParty ? firstPartyAddresses : thirdPartyAddresses).add(address)
+      }
       paidIds.add(counterpartyId(j))
-      volume += pays.reduce((sum, s) => sum + s.amount, 0) - refundsOf(j).reduce((sum, s) => sum + s.amount, 0)
+      const net = pays.reduce((sum, s) => sum + s.amount, 0) - refundsOf(j).reduce((sum, s) => sum + s.amount, 0)
+      volume += net
+      if (!firstParty) thirdPartyVolume += net
     } else if (paidValue(j) === 0) freeIds.add(counterpartyId(j))
   }
   const ids = new Set([...freeIds].filter((id) => !paidIds.has(id)))
+  const thirdPartyIds = [...ids].filter((id) => !firstPartyIds.has(id))
   const failed = side === 'seller' ? list.filter(isSellerFailure) : []
   const cancelled = side === 'seller' ? list.filter((j) => j.status === 'cancelled' && j.cancelKind === 'seller_failed') : list.filter(isBuyerCancellation)
   const disputed = list.filter((j) => j.disputeReason != null)
@@ -169,7 +188,10 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
     refunds_due: side === 'seller' ? list.filter(isRefundDue).length : 0,
     refunds_made: side === 'seller' ? list.filter(isRefunded).length : 0,
     distinct_counterparties: addresses.size + ids.size,
+    first_party_counterparties: firstPartyAddresses.size + (ids.size - thirdPartyIds.length),
+    third_party_counterparties: thirdPartyAddresses.size + thirdPartyIds.length,
     volume_usdc: Math.max(0, volume),
+    third_party_volume_usdc: Math.max(0, thirdPartyVolume),
     rating_avg: bayesianRating(
       ratings.reduce((s, r) => s + r.rating, 0),
       ratings.length,
@@ -178,7 +200,13 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
     rating_weighted: weightedRating(ratings),
     on_time_rate: side === 'seller' && delivered.length ? Math.round((onTime.length / delivered.length) * 100) / 100 : null,
   }
-  return { side: sideStats, payingAddresses: addresses.size }
+  return { side: sideStats, payingAddresses: addresses.size, thirdPartyPayingAddresses: thirdPartyAddresses.size }
+}
+
+/** Ids of the agents the platform operates (ADR-23); a handful of rows, read per recomputation. */
+export async function firstPartyAgentIds(): Promise<Set<string>> {
+  const rows = await db().query.agents.findMany({ where: eq(agents.firstParty, true), columns: { id: true } })
+  return new Set(rows.map((r) => r.id))
 }
 
 export function scoreOf(asSeller: ReputationSide, asBuyer: ReputationSide): number {
@@ -201,8 +229,9 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
   const stlRows = jobIds.length ? await db().query.settlements.findMany({ where: inArray(settlements.jobId, jobIds) }) : []
   const stl = new Map<string, SettlementRow[]>()
   for (const s of stlRows) stl.set(s.jobId, [...(stl.get(s.jobId) ?? []), s])
-  const seller = sideFromJobs(all.filter((j) => j.sellerAgentId === agentId), 'seller', revs.filter((r) => r.role === 'buyer'), stl)
-  const buyer = sideFromJobs(all.filter((j) => j.buyerAgentId === agentId), 'buyer', revs.filter((r) => r.role === 'seller'), stl)
+  const firstParty = await firstPartyAgentIds()
+  const seller = sideFromJobs(all.filter((j) => j.sellerAgentId === agentId), 'seller', revs.filter((r) => r.role === 'buyer'), stl, firstParty)
+  const buyer = sideFromJobs(all.filter((j) => j.buyerAgentId === agentId), 'buyer', revs.filter((r) => r.role === 'seller'), stl, firstParty)
   const sellerJobs = all.filter((j) => j.sellerAgentId === agentId)
   const asSeller: ReputationSide = { ...seller.side, categories: categoryCards(sellerJobs, await categoriesOf(sellerJobs), revs.filter((r) => r.role === 'buyer'), stl) }
   const asBuyer: ReputationSide = { ...buyer.side, categories: [] }
@@ -228,6 +257,27 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
   return (await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.agentId, agentId), eq(agentReputation.env, env)) }))!
 }
 
+/**
+ * ADR-32 rollout: reputation rows written before the first/third-party split lack the new fields; recompute them
+ * once at startup so no profile reports "0 third-party counterparties" merely because it was never recomputed.
+ * Idempotent (rows that already carry the field are skipped), bounded by the number of reputation rows.
+ */
+export async function backfillReputation(): Promise<{ recomputed: number; errors: number }> {
+  const rows = await db().query.agentReputation.findMany({ columns: { agentId: true, env: true, asSeller: true } })
+  let recomputed = 0
+  let errors = 0
+  for (const r of rows) {
+    if (r.asSeller.third_party_counterparties != null) continue
+    try {
+      await recomputeReputation(r.env, r.agentId)
+      recomputed += 1
+    } catch {
+      errors += 1
+    }
+  }
+  return { recomputed, errors }
+}
+
 // --- CONTRACT used by jobs ---------------------------------------------------------------------
 
 export async function recordJobOutcome(job: JobRow): Promise<void> {
@@ -237,7 +287,7 @@ export async function recordJobOutcome(job: JobRow): Promise<void> {
 
 // --- reviews ----------------------------------------------------------------------------------
 
-export async function createReview(env: Env, reviewer: Agent, jobId: string, rating: number, comment?: string): Promise<ReviewRow> {
+export async function createReview(env: Env, reviewer: Agent, jobId: string, rating: number, comment?: string, machineGenerated = false): Promise<ReviewRow> {
   const job = await db().query.jobs.findFirst({ where: and(eq(jobs.id, jobId), eq(jobs.env, env)) })
   const role = job ? (job.buyerAgentId === reviewer.id ? 'buyer' : job.sellerAgentId === reviewer.id ? 'seller' : undefined) : undefined
   if (!job || !role) throw errors.notFound('Job', jobId, 'You can only review jobs you were part of. GET /v1/jobs lists them.')
@@ -259,12 +309,13 @@ export async function createReview(env: Env, reviewer: Agent, jobId: string, rat
     comment: comment?.trim().slice(0, 2000) || null,
     jobPrice: paidValue(job),
     contentWarnings: scan.warnings,
+    machineGenerated,
     createdAt: Date.now(),
   }
   await db().insert(reviews).values(row)
   await recomputeReputation(env, subject)
   if (job.listingId) await recordListingOutcome({ listingId: job.listingId, status: 'completed', buyerAgentId: job.buyerAgentId, price: job.price ?? 0 })
-  await emit(env, subject, 'review.received', { review_id: row.id, job_id: jobId, from: reviewer.id, role, rating, comment: row.comment, content_warnings: scan.warnings })
+  await emit(env, subject, 'review.received', { review_id: row.id, job_id: jobId, from: reviewer.id, role, rating, comment: row.comment, machine_generated: machineGenerated, content_warnings: scan.warnings })
   return row as ReviewRow
 }
 

@@ -93,7 +93,7 @@ export type FirstBuyDeps = {
   now?: () => number
 }
 
-const FIRSTBUY_NOTE = 'Hello from the platform desk. Agent Souk hires every new listing once at its advertised price (first-buy programme, ADR-31): this is a real job, paid gas-free on delivery, then graded against your own listing text and reviewed honestly. Deliver what the listing promises for the input above; nothing else is expected.'
+const FIRSTBUY_NOTE = 'Hello from the platform desk. Agent Souk buys new outside listings once at their advertised price, within published caps (first-buy programme, ADR-31; GET /v1/commitments): this is a real job, paid gas-free on delivery, then graded by an automated judge against your own listing text and reviewed publicly with that label. Deliver what the listing promises for the input above; nothing else is expected. A purchase by us shows you can deliver; it is not evidence that anyone else wants to buy.'
 
 const statusOf = (e: unknown): number | null => (typeof e === 'object' && e != null && typeof (e as { status?: unknown }).status === 'number' ? (e as { status: number }).status : null)
 const errorCode = (e: unknown): string | null => (typeof e === 'object' && e != null && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : null)
@@ -608,9 +608,10 @@ export class FirstBuyer {
     }
     const rating = upheld ? (p.verdict?.rating ?? 3) : 1
     if (!p.reviewed) {
-      const text = upheld ? `First buy by the platform desk (ADR-31): ${p.verdict?.message || 'delivered as the listing promised.'}` : 'First buy by the platform desk: the dispute panel found the delivery did not do what the listing promised.'
+      // ADR-32 / AI Act Art. 50: the rating and the text come from the automated judge; say so in the text and in the public flag
+      const text = upheld ? `First buy by the platform desk (ADR-31), graded by an automated judge against the listing text: ${p.verdict?.message || 'delivered as the listing promised.'}` : 'First buy by the platform desk (automated judge): the dispute panel found the delivery did not do what the listing promised.'
       try {
-        await this.client.jobs.review(job.id, rating, text)
+        await this.client.jobs.review(job.id, rating, text, { machine_generated: true })
         p.reviewed = true
         p.rating = rating
       } catch (e) {

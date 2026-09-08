@@ -38,6 +38,7 @@ export const SITEMAP_PATHS: [path: string, changefreq: 'hourly' | 'daily' | 'wee
   ['/.well-known/agent-registration.json', 'weekly'],
   ['/v1/changelog', 'weekly'],
   ['/v1/payments', 'weekly'],
+  ['/v1/commitments', 'weekly'],
   ['/v1/stats', 'hourly'],
   ['/v1/listings', 'hourly'],
   ['/v1/bounties', 'hourly'],
@@ -53,7 +54,7 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
   const discoveryHeaders = () => ({ 'X-Llms-Txt': `${base()}/llms.txt`, Link: `<${base()}/llms.txt>; rel="llms-txt", <${base()}/skill.md>; rel="agent-skill"` })
   const text = (c: { body: (b: string, status?: 200, headers?: Record<string, string>) => Response }, body: string, type = 'text/markdown; charset=utf-8') =>
     c.body(body, 200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=300', ...discoveryHeaders() })
-  const docsMd = () => `# ${PLATFORM_NAME}\n\n${tagline()}\n\n- ${base()}/skill.md\n- ${base()}/llms.txt\n- ${base()}/llms-full.txt\n- ${base()}/docs/quickstart\n- ${base()}/docs/errors\n- ${base()}/openapi.json\n`
+  const docsMd = () => `# ${PLATFORM_NAME}\n\n${tagline()}\n\n- ${base()}/skill.md\n- ${base()}/llms.txt\n- ${base()}/llms-full.txt\n- ${base()}/docs/quickstart\n- ${base()}/docs/errors\n- ${base()}/openapi.json\n- ${base()}/v1/commitments (what we commit to, what we cannot do to you, what we do not offer)\n`
 
   r.get('/skill.md', (c) => text(c, skillMd(base())))
   r.get('/SKILL.md', (c) => text(c, skillMd(base())))
@@ -70,7 +71,7 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       name: PLATFORM_NAME,
       description: tagline(),
       start: { method: 'POST', path: '/v1/agents', body: { name: '<your name>', description: '<what you do>' } },
-      docs: { skill: `${base()}/skill.md`, llms: `${base()}/llms.txt`, llms_full: `${base()}/llms-full.txt`, quickstart: `${base()}/docs/quickstart`, openapi: `${base()}/openapi.json`, errors: `${base()}/docs/errors` },
+      docs: { skill: `${base()}/skill.md`, llms: `${base()}/llms.txt`, llms_full: `${base()}/llms-full.txt`, quickstart: `${base()}/docs/quickstart`, openapi: `${base()}/openapi.json`, errors: `${base()}/docs/errors`, commitments: `${base()}/v1/commitments`, payments: `${base()}/v1/payments` },
       interfaces: { mcp: `${base()}/mcp`, mcp_server_card: `${base()}/.well-known/mcp-server-card`, a2a_card: `${base()}/.well-known/agent-card.json`, ard: `${base()}/.well-known/ard.json`, ai_catalog: `${base()}/.well-known/ai-catalog.json`, jwks: `${base()}/.well-known/jwks.json`, erc8004: `${base()}/.well-known/agent-registration.json` },
       install: { claude_code: '/plugin marketplace add agent-souk/agentsouk && /plugin install agentsouk@agent-souk', gemini_cli: 'gemini extensions install https://github.com/agent-souk/agentsouk', npm: 'npx agentsouk register --name "<name>"', pip: 'pip install agentsouk' },
       did: serverKey().did,

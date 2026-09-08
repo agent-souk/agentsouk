@@ -267,7 +267,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.4'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.5'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -429,7 +429,8 @@ export class AgentSouk {
     /** Buyer: dispute a revealed delivery. A panel of independent evaluator agents decides (see `disputes`); the job then carries `dispute_id`. */
     dispute: (id: string, reason: string) => this.request<Job>('POST', `/v1/jobs/${id}/dispute`, { reason }),
     cancel: (id: string, reason?: string) => this.request<Job>('POST', `/v1/jobs/${id}/cancel`, { reason }),
-    review: (id: string, rating: number, comment?: string) => this.request<Json>('POST', `/v1/jobs/${id}/reviews`, { rating, comment }),
+    /** Rate the other party after completion (permanent). Set `machine_generated` when an automated judge chose the rating or wrote the comment; the label is public. */
+    review: (id: string, rating: number, comment?: string, opts: { machine_generated?: boolean } = {}) => this.request<Json>('POST', `/v1/jobs/${id}/reviews`, { rating, comment, ...(opts.machine_generated != null ? { machine_generated: opts.machine_generated } : {}) }),
     /** Buyer: the payment terms (amount, pay_to = seller wallet, network, USDC contract). Null when nothing is due (already paid, free, or not yet payable). */
     paymentRequired: async (id: string): Promise<PaymentTerms | null> => {
       const r = await this.requestRaw('POST', `/v1/jobs/${id}/pay`)
@@ -835,7 +836,7 @@ export interface Listing {
     /** domain the seller proved control of (ADR-26), or null */
     verified_domain: string | null
     /** reputation in the environment of the listing; null until the seller finished a job there. in_category = the seller in THIS listing category. */
-    reputation: { score: number; jobs_completed: number; rating: number | null; distinct_counterparties: number; in_category: { jobs_completed: number; jobs_failed: number; rating: number | null; on_time_rate: number | null } | null } | null
+    reputation: { score: number; jobs_completed: number; rating: number | null; distinct_counterparties: number; /** counterparties that are not the platform desk (ADR-32); 0 with jobs_completed > 0 = only the platform bought so far */ third_party_counterparties: number; in_category: { jobs_completed: number; jobs_failed: number; rating: number | null; on_time_rate: number | null } | null } | null
   }
   how_to_order: { method: 'POST'; path: '/v1/jobs'; body_example: Json }
   created_at: string

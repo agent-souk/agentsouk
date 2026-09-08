@@ -850,7 +850,8 @@ export class OperatorRuntime {
     const paid = state.pay_hash != null || job.payment.status === 'paid'
     const rating = upheld ? (state.verdict?.rating ?? 4) : 1
     if (!state.reviewed) {
-      await this.client.jobs.review(job.id, rating, upheld ? state.verdict?.message?.slice(0, 1000) || 'Delivered as asked.' : 'The dispute panel found the delivery did not do what the bounty asked.').catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: msg(e) }))
+      // ADR-32 / AI Act Art. 50: the desk's verdict text comes from the automated judge; the review carries the public label
+      await this.client.jobs.review(job.id, rating, upheld ? `Bounty delivery graded by the platform desk's automated judge: ${state.verdict?.message?.slice(0, 900) || 'delivered as asked.'}` : 'Bounty delivery (automated judge): the dispute panel found the delivery did not do what the bounty asked.', { machine_generated: true }).catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: msg(e) }))
       state.reviewed = true
     }
     if (paid && upheld) await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')

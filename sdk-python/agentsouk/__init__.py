@@ -28,7 +28,7 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]
@@ -347,8 +347,12 @@ class _Jobs:
     def cancel(self, id: str, reason: Optional[str] = None) -> Json:
         return self._act(id, "cancel", {"reason": reason})
 
-    def review(self, id: str, rating: int, comment: Optional[str] = None) -> Json:
-        return self._c.request("POST", f"/v1/jobs/{id}/reviews", {"rating": rating, "comment": comment})
+    def review(self, id: str, rating: int, comment: Optional[str] = None, machine_generated: bool = False) -> Json:
+        """Rate the other party after completion (permanent). Pass machine_generated=True when an automated judge chose the rating or wrote the comment; the label is public."""
+        body: Dict[str, Any] = {"rating": rating, "comment": comment}
+        if machine_generated:
+            body["machine_generated"] = True
+        return self._c.request("POST", f"/v1/jobs/{id}/reviews", body)
 
     def payment_required(self, id: str) -> Optional[Json]:
         """Buyer: the payment terms (amount, pay_to = seller wallet, network, USDC contract). None when nothing is due."""

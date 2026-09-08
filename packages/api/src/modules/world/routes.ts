@@ -48,11 +48,12 @@ const LeaderboardEntryView = z
     agent: z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int(), first_party: z.boolean() }),
     jobs_completed: z.number().int(),
     distinct_counterparties: z.number().int(),
+    third_party_counterparties: z.number().int().openapi({ description: 'Counterparties that are not the platform desk (ADR-32).' }),
     volume_usdc: z.number().int(),
     volume_display: z.string(),
     rating_avg: z.number().nullable(),
     score: z.number().int(),
-    rank_value: z.number().openapi({ description: 'volume_usdc × distinct_counterparties: the number the list is sorted by.' }),
+    rank_value: z.number().openapi({ description: 'volume_usdc × third_party_counterparties: the number the list is sorted by. 0 = only the platform has paid this agent so far.' }),
   })
   .openapi('LeaderboardEntry')
 
@@ -123,7 +124,7 @@ export function worldRoutes() {
       path: '/v1/leaderboard',
       tags: ['reputation'],
       summary: 'Top agents by settled volume × distinct counterparties',
-      description: 'Public. Ranked by verified on-chain USDC volume multiplied by the number of distinct counterparty wallets, never by raw volume or ratings alone: circular payments between two wallets rank at zero. role=seller (default) or buyer; env=live (default) or test (sandbox play, never trusted). first_party marks agents operated by the platform.',
+      description: 'Public. Ranked by verified on-chain USDC volume multiplied by the number of distinct counterparty wallets that are not the platform desk, never by raw volume or ratings alone: circular payments between two wallets rank at zero, and so does an agent only the platform has paid (ADR-32). role=seller (default) or buyer; env=live (default) or test (sandbox play, never trusted). first_party marks agents operated by the platform.',
       middleware: [optionalAuth],
       request: { query: z.object({ env: z.enum(['live', 'test']).optional(), role: z.enum(['seller', 'buyer']).default('seller'), limit: z.coerce.number().int().min(1).max(100).default(20) }) },
       responses: { 200: { description: 'Leaderboard', content: { 'application/json': { schema: z.object({ object: z.literal('leaderboard'), env: z.enum(['live', 'test']), role: z.enum(['seller', 'buyer']), method: z.string(), data: z.array(LeaderboardEntryView), generated_at: Timestamp }).openapi('Leaderboard') } } }, ...errorResponses },
@@ -137,12 +138,13 @@ export function worldRoutes() {
           object: 'leaderboard' as const,
           env,
           role: q.role,
-          method: 'rank_value = volume_usdc (verified on-chain, payments minus refunds) × distinct_counterparties (wallet addresses); ties by reputation score. Minimum: 1 completed job with 1 counterparty.',
+          method: 'rank_value = volume_usdc (verified on-chain, payments minus refunds) × third_party_counterparties (wallet addresses of counterparties that are not the platform desk); ties by reputation score. Minimum: 1 completed job with 1 counterparty; agents only the platform has paid appear with rank_value 0.',
           data: rows.map((x, i) => ({
             rank: i + 1,
             agent: { id: x.agent.id, handle: x.agent.handle, name: x.agent.name, trust_tier: x.agent.trustTier, first_party: x.agent.firstParty },
             jobs_completed: x.side.jobs_completed ?? 0,
             distinct_counterparties: x.side.distinct_counterparties ?? 0,
+            third_party_counterparties: x.side.third_party_counterparties ?? 0,
             volume_usdc: x.side.volume_usdc ?? 0,
             volume_display: formatUsdc(x.side.volume_usdc ?? 0),
             rating_avg: x.side.rating_avg ?? null,

@@ -407,6 +407,8 @@ export const reviews = sqliteTable(
     /** price of the underlying job (USDC minor units): reviews are weighted by settled value */
     jobPrice: integer('job_price').notNull(),
     contentWarnings: text('content_warnings', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    /** ADR-32 / AI Act Art. 50: the reviewer declares that rating and comment were produced by an automated judge (an LLM), not chosen by a person */
+    machineGenerated: integer('machine_generated', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [uniqueIndex('reviews_job_reviewer').on(t.jobId, t.reviewerAgentId), index('reviews_subject').on(t.subjectAgentId, t.createdAt)],
@@ -448,8 +450,17 @@ export type ReputationSide = {
   refunds_made: number
   /** distinct counterparty wallet addresses (paid jobs) plus distinct agent ids (free jobs) */
   distinct_counterparties: number
+  /**
+   * ADR-32: the same count split by who the counterparty is. first_party = agents operated by the platform itself
+   * (the first-buy desk, the bounty desk); third_party = everyone else. Reputation earned only from the platform is
+   * a starting point, not evidence of demand; rankings use the third-party number.
+   */
+  first_party_counterparties?: number
+  third_party_counterparties?: number
   /** USDC minor units settled on-chain (payments minus refunds) */
   volume_usdc: number
+  /** ADR-32: the part of volume_usdc paid by third parties (not platform-operated agents) */
+  third_party_volume_usdc?: number
   rating_avg: number | null
   rating_count: number
   on_time_rate: number | null

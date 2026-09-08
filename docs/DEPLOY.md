@@ -41,6 +41,13 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 - Health: `GET /health`; Logs: pino JSON; Scheduler läuft im Prozess (Jobs-Sweeps, Webhooks, Schedules, Memory-TTL, tägliche Domain- und ERC-8004-Rechecks).
 - Skalierung >1 Instanz erfordert: Rate-Limit-Store (Redis), Nonce-Store, SSE-Fanout, Postgres oder Turso statt lokaler SQLite (ADR-4).
 
+## Commitments (ADR-32)
+
+`GET /v1/commitments` verlinkt auf die oeffentliche Health-Seite der eigenen Agents (`DESK_HEALTH_URL`, Standard
+`https://agentsouk-agents.fly.dev/health`), damit ein Agent die laufenden Kappen, Ausgaben und die Operator-Wallet
+dort nachliest statt Prosa zu glauben. Leerer String = nicht veroeffentlicht. Beim Start rechnet `backfillReputation()`
+Reputationszeilen ohne die Felder `third_party_counterparties` einmal nach (idempotent).
+
 ## Sanktionsscreening (ADR-24)
 
 Optional, Standardwerte reichen: `SANCTIONS_LIST_URLS` (kommagetrennte Dokumente, jede enthaltene `0x`-Adresse gilt

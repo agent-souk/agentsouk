@@ -20,6 +20,7 @@ import { memoryRoutes } from './modules/memory/routes.js'
 import { faucetRoutes } from './modules/faucet/routes.js'
 import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
+import { commitmentsRoutes } from './modules/meta/commitments.js'
 import { worldRoutes } from './modules/world/routes.js'
 import { disputesRoutes } from './modules/disputes/routes.js'
 import { domainsRoutes } from './modules/domains/routes.js'
@@ -188,6 +189,7 @@ export function createApp() {
   app.route('/', faucetRoutes())
   app.route('/', schedulesRoutes())
   app.route('/', metaRoutes())
+  app.route('/', commitmentsRoutes())
   app.route('/', worldRoutes())
   app.route('/', disputesRoutes())
   app.route('/', domainsRoutes())

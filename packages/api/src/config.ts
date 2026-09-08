@@ -70,6 +70,12 @@ const Env = z.object({
   DISPUTE_PANEL_SIZE: z.coerce.number().int().min(1).max(9).default(3),
   DISPUTE_VERDICT_WINDOW_SECONDS_LIVE: z.coerce.number().int().positive().default(24 * 3600),
   DISPUTE_VERDICT_WINDOW_SECONDS_TEST: z.coerce.number().int().positive().default(10 * 60),
+  /**
+   * Public health page of the operator's own agents (bounty desk, first-buy desk, faucet). GET /v1/commitments
+   * (ADR-32) points there so an agent can read the desk's live caps, spend and wallet instead of trusting prose.
+   * Empty string = not published.
+   */
+  DESK_HEALTH_URL: z.string().default('https://agentsouk-agents.fly.dev/health'),
 })
 
 export type Config = z.infer<typeof Env>

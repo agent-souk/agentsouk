@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { installFakeChain, FakeChain } from '../../test/chain.js'
 import { _setRpcFetchForTests } from '../payments/chain.js'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
+import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
 import { bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
 
@@ -142,5 +143,53 @@ describe('reviews & reputation', () => {
     const newcomer = await createTestAgent(app, { name: 'Newcomer' })
     const fresh = await call(app, 'POST', '/v1/listings', { key: newcomer.api_keys.test, body: { title: 'Brand new', description: 'No finished jobs anywhere yet, so no reputation.', category: 'ops', pricing_model: 'fixed', price: 1000 } })
     expect((await call(app, 'GET', `/v1/listings/${fresh.body.id}?env=test`)).body.seller.reputation).toBeNull()
+  })
+  it('splits counterparties and volume into first-party and third-party (ADR-32) and labels machine-generated reviews', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'adm-token-1234567890' })
+    try {
+      const desk = await createTestAgent(app, { name: 'Souk Desk' })
+      expect((await call(app, 'POST', `/v1/admin/agents/${desk.agent.id}/first-party`, { headers: { 'x-admin-token': 'adm-token-1234567890' }, body: { first_party: true } })).status).toBe(200)
+
+      // 1. the platform desk is the only buyer: everything counts as first party
+      const j1 = await completedJob('test', seller, desk, 20_000)
+      const machine = await call(app, 'POST', `/v1/jobs/${j1.id}/reviews`, { key: desk.api_keys.test, body: { rating: 3, comment: 'Graded by an automated judge against the listing text.', machine_generated: true } })
+      expect(machine.status).toBe(201)
+      expect(machine.body.machine_generated).toBe(true)
+      let rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ jobs_completed: 1, distinct_counterparties: 1, first_party_counterparties: 1, third_party_counterparties: 0, volume_usdc: 20_000, third_party_volume_usdc: 0 })
+      let listing = (await call(app, 'GET', `/v1/listings/${j1.listing_id}`, { key: buyer.api_keys.test })).body
+      expect(listing.seller.reputation).toMatchObject({ jobs_completed: 1, distinct_counterparties: 1, third_party_counterparties: 0 })
+      let lb = (await call(app, 'GET', '/v1/leaderboard?env=test')).body
+      expect(lb.data[0]).toMatchObject({ agent: { id: seller.agent.id }, distinct_counterparties: 1, third_party_counterparties: 0, rank_value: 0 })
+
+      // 2. a real buyer pays: the third-party numbers move, the first-party ones do not
+      const j2 = await completedJob('test', seller, buyer, 30_000)
+      const human = await call(app, 'POST', `/v1/jobs/${j2.id}/reviews`, { key: buyer.api_keys.test, body: { rating: 5, comment: 'chosen by me' } })
+      expect(human.status).toBe(201)
+      expect(human.body.machine_generated).toBe(false)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ jobs_completed: 2, distinct_counterparties: 2, first_party_counterparties: 1, third_party_counterparties: 1, volume_usdc: 50_000, third_party_volume_usdc: 30_000 })
+      listing = (await call(app, 'GET', `/v1/listings/${j2.listing_id}`, { key: buyer.api_keys.test })).body
+      expect(listing.seller.reputation).toMatchObject({ jobs_completed: 2, distinct_counterparties: 2, third_party_counterparties: 1 })
+      lb = (await call(app, 'GET', '/v1/leaderboard?env=test')).body
+      expect(lb.data[0]).toMatchObject({ agent: { id: seller.agent.id }, third_party_counterparties: 1, rank_value: 50_000 })
+      expect(lb.method).toContain('third_party_counterparties')
+
+      // 3. the desk's own buyer side: the seller is a third party to it
+      const deskRep = (await call(app, 'GET', `/v1/agents/${desk.agent.id}/reputation`)).body
+      expect(deskRep.test.as_buyer).toMatchObject({ jobs_completed: 1, distinct_counterparties: 1, first_party_counterparties: 0, third_party_counterparties: 1, third_party_volume_usdc: 20_000 })
+
+      // 4. the label is public on the list and in the event the subject received
+      const list = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reviews`)).body
+      expect(list.data.map((r: any) => r.machine_generated).sort()).toEqual([false, true])
+      const events = (await call(app, 'GET', '/v1/events?types=review.received', { key: seller.api_keys.test })).body
+      expect(events.data.map((e: any) => e.data.machine_generated).sort()).toEqual([false, true])
+
+      // 5. the attestation carries the split too
+      const att = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation/attestation?env=test`)).body
+      expect(att.attestation.reputation.as_seller).toMatchObject({ third_party_counterparties: 1, first_party_counterparties: 1 })
+    } finally {
+      _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
   })
 })
