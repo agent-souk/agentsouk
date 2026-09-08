@@ -2,63 +2,70 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~18:20 UTC; Baum sauber, alles deployt; NÄCHSTE AUFGABE UNTEN)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~21:00 UTC; Baum sauber, alles deployt: API 0.3.9, SDKs 0.3.5, Plugin/Extension 0.3.6)
 
-**Erledigt seit Checkpoint 55:** erster Erstkauf live bezahlt (`veriton`, 0,02 USDC, Tx `0xdf7f12be…d573f`, Rating 3,
-öffentlich rezensiert) und der dabei entdeckte Platzhalter-Fehler behoben und deployt (Commit e2bb024:
-`judge.inputForListing` schreibt eine realistische Eingabe, gegen `input_schema` geprüft; sonst wird das Listing
-übersprungen). Ausgaben live 17,32 von 50 USDC.
+**Erledigt seit Checkpoint 55 (ADR-32, Checkpoint 56, Details unten):** Nicks Vertrauensfrage ist öffentlich beantwortet: `GET /v1/commitments`
+(keine Lizenzankündigung, stattdessen Fakten mit Prüfaufruf; Operator-Wallets veröffentlicht; ADR-31-Kappen als Zahlen). Reputation trennt
+„von uns bezahlt“ und „von Fremden bezahlt“ (`third_party_counterparties`, Leaderboard-Rang und T1 nur über Fremde). Desk-Rezensionen tragen
+`machine_generated: true`, serverseitig erzwungen für first_party. Sieben Übertreibungen auf allen Oberflächen korrigiert. Bounties zeigen
+`buyer.first_party`. `LICENSE` (MIT). 28 Review-Funde eingebaut. **GitHub:** punkpeye hat PR #13922 (awesome-mcp-servers) geschlossen, weil
+Remote-Server in eine eigene Liste ziehen; neuer PR **https://github.com/punkpeye/awesome-remote-mcp-servers/pull/107** (Kategorie Finance
+neben AgentWorld, Glama-Connector-Badge löst jetzt auf: Rating A, 42 Tools; CI grün: `endpoint-ok`, `has-connector`; wartet auf Merge).
 
-### NÄCHSTE AUFGABE: Vertrauens-Dokument für Agents (Nicks Sorge: „wir erreichen keine Käufer und Verkäufer wegen Vertrauen“)
+**Für Nick:** nichts zu tun; Notiz „Zur Kenntnis (Checkpoint 56)“ in `docs/LAUNCH-CHECKLIST.md` (warum keine Lizenzankündigung, was stattdessen
+steht). Anwaltsfragen dort auf fünf Punkte erweitert.
 
-Zwei Rechercheagents haben die Grundlage geliefert, vollständig in `research/trust-verifiable-2026-09-08.jsonl`
-(30 prüfbare Fakten) und `research/trust-limits-2026-09-08.jsonl` (25 rechtliche Befunde). **Kernentscheidung: eine
-geplante Treuhandlizenz wird NICHT veröffentlicht** (UWG §5 Prognose ohne Tatsachengrundlage, Leser lesen
-„BaFin-reguliert“, lädt die Aufsicht ein, MiCAR-Anbahnung einer Leistung, die wir nicht erbringen dürfen). Stattdessen:
+**Live-Zahlen (21:00 UTC):** 21 Agents, 9 aktive Listings (6 eigene), 5 abgeschlossene Live-Jobs = 17,32 USDC, alle von uns bezahlt
+(`/v1/commitments` sagt das jetzt selbst: `operator_share_of_completed_jobs_percent: 100`). Leaderboard live: astra und veriton mit
+Rangwert 0 (nur von uns bezahlt). Desk: 17,32 von 50 USDC ausgegeben, Erstkäufe 1 bezahlt, 6 übersprungen (Kappen/upfront/alt), Faucet-Wallet
+~15 Sepolia-USDC.
 
-**1. Neu bauen: `GET /v1/commitments` (JSON, öffentlich, in `packages/api/src/modules/meta/`), verlinkt aus
-Root-`docs`, llms.txt, skill.md.** Abschnitte, jede positive Aussage mit dem Aufruf, der sie prüft:
-- `what_we_are_building`: **Nicks Wunsch** — Ehrgeiz sichtbar machen („noch der Anfang, geplant ist der Umschlagplatz
-  für Agents“), klar als Absicht markiert, mit `GET /v1/stats` als Beleg, wie weit wir sind. Zulässig, weil es kein
-  reguliertes Versprechen ist.
-- `what_we_cannot_do_to_you`: Die API hält gar keinen Blockchain-Schlüssel (nur Ed25519 für Belege), Kette nur lesend
-  (3 RPC-Reads), x402-Header wird abgelehnt (`settle_it_yourself`), `pay_to` ist immer die Verkäufer-Wallet,
-  kein Admin-Weg bewegt Geld, Identität per eigenem Schlüssel (Rotation/Recovery lehnt API-Keys ab).
-- `your_record_outlives_us` (**die eigentliche Antwort auf Nicks Sorge**): jede Zahlung ist eine öffentliche
-  Base-Transaktion; jeder Beleg ist Ed25519-signiert und der Prüfschlüssel steckt als `did:key` **im Beleg selbst**,
-  verifiziert also offline ohne uns, für immer (live gegengeprüft). Dazu `GET /v1/agents/{id}/reputation/attestation`.
-  Ehrlich dazusagen, was verloren ginge: Handle, Rezensionstexte, Threads, Score, Streitakte; Hashes beweisen
-  Geldfluss, nicht Qualität. Rat: Belege herunterladen und die Plattform-DID notieren.
-- `what_we_promise`: 0 % Gebühr, jede künftige Gebühr vorher im Changelog, Export, `DELETE /v1/agents/me`,
-  Sandbox-Reputation ist wertlos und wird nie vermischt.
-- `what_we_do_not_offer` (das, was Glaubwürdigkeit schafft): keine Treuhand, keine Verwahrung, keine
-  Rückholung, keine Versicherung, kein Entschädigungsfonds, keine Rückbuchung, keine Identitätsprüfung, Panel ohne
-  Pfand, keine Lizenz und keine beantragt, keine Verfügbarkeitszusage, Sanktionsprüfung ist reiner Adressabgleich.
-- `the_operator_is_a_participant`: first_party-Kennzeichnung, getrennte Zählung in `/v1/stats`, ADR-31-Kappen als
-  Zahlen, Verbot des Eigenhandels (409 `first_party_self_dealing`), **Operator-Wallet `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`
-  veröffentlichen** (jede Bounty, jeder Erstkauf, jeder Faucet-Tropfen auf Basescan nachprüfbar, nichts fließt hinein),
-  und der Satz „ein Kauf von uns beweist, dass du liefern kannst, nicht dass jemand anderes kaufen will“.
-- `working_on` mit ehrlichem Status: Meilenstein-Jobs (rechtlich sauber, keine Lizenz nötig), Belastungsgrenzen aus
-  öffentlicher Historie (sauber), Trennung von Erstkäufen in der Reputation (**Lücke**, siehe 3.); ausdrücklich:
-  Verkäufer-Pfand im Vertrag braucht erst den Anwalt, Treuhand kommt nicht.
+**Nächste Kandidaten:** (a) PR #107 auf Merge prüfen, danach `docs/LAUNCH-CHECKLIST.md` Punkt 1 abhaken; (b) aus `working_on` des Dokuments,
+in dieser Reihenfolge: Build-Kennung in `GET /health` (klein; stärkt „running code = published code“), Meilenstein-Jobs (keine Rechtsfrage),
+Exposure-Vorschlag je Gegenpartei, Key-History für den Plattformschlüssel, Export in einem Aufruf; (c) unverändert: Agent-Postfach (MX von
+Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei; (d) Tagescheck: Discovery-Zähler (`GET /v1/admin/overview`),
+`firstbuy.skipped` in der Desk-Health (warum 6?), ob ein fremder Käufer einen fremden Verkäufer bezahlt hat (`third_party_counterparties > 0`).
 
-**2. Diese Übertreibungen in den öffentlichen Texten korrigieren (Befunde mit Datei:Zeile in der limits-Datei):**
-`meta/routes.ts:126` „the deliverable is escrowed“ (einziges verbliebenes „escrow“ im öffentlichen Text) ·
-„hires every new listing … within the hour“ (`SKILL.md:60` ×3 Kopien, `discovery/text.ts` skillMd + llms.txt-Zeile,
-`meta/routes.ts:23`) · „a buyer verdict obliges the seller to refund“ (`SKILL.md:62`, llms.txt) ·
-„Nothing provably paid is ever dropped“ (`README.md:25`, `payments/routes.ts`) · Sanktions-Aussagen ohne die
-ADR-24-Grenzen (`discovery/text.ts:153`, `README.md:5`) · „bounties 3 to 10 USDC“ ohne Budgethinweis (`SKILL.md:22`) ·
-„T3 (verified operator, later)“ in llms.txt (unfertige Funktion angekündigt). Sichere Formulierungen stehen jeweils
-im Feld `wording` der limits-Datei.
+## Stand 2026-09-08, Checkpoint 56: Vertrauensdokument, Reputations-Trennung, KI-Kennzeichnung (ADR-32; API 0.3.9, SDKs 0.3.5; 220 + 62 + 5 Tests grün)
 
-**3. Zwei echte Lücken, die das Dokument sonst schönreden würde:**
-`distinct_counterparties` trennt first_party nicht (`reviews/service.ts:171`, `listings/routes.ts:44`,
-`world/routes.ts:55`) — ein Verkäufer, den nur unsere Desk gekauft hat, sieht aus wie einer mit echter Nachfrage;
-Feld `third_party_counterparties` bauen, bevor das Dokument sagt „schau auf fremde Wallets“. Und: die Rezensionen der
-Desk sind LLM-geschrieben und nicht als maschinell gekennzeichnet (Art. 50 KI-VO, LEGAL-BRIEFING §89/119).
-
-**4. Danach:** Tests, API deployen, `smoke.ts`. Sonstige Kandidaten unverändert: Agent-Postfach (MX von Nick),
-Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei.
+- **Ausgangslage:** Nicks Sorge „wir erreichen keine Käufer und Verkäufer wegen Vertrauen“ und sein Vorschlag, eine geplante Treuhandlizenz
+  anzukündigen. Zwei Rechercheläufe (`research/trust-verifiable-2026-09-08.jsonl`, `research/trust-limits-2026-09-08.jsonl`) ergaben: keine
+  Lizenzabsicht veröffentlichen (§ 5 UWG, „BaFin-reguliert“-Lesart, Aufsicht, MiCAR-Anbahnung); stattdessen prüfbare Fakten und ehrliche Grenzen.
+- **Gebaut (ADR-32):** `GET /v1/commitments` (`modules/meta/commitments.ts`, 5 min Cache, `?env=`): `read_me_first`, `what_we_are_building`
+  (Nicks Ehrgeiz als Absicht, mit `/v1/stats` und Operator-Anteil als Zahl), `what_we_cannot_do_to_you` (7 Claims mit `verify` und `limit`),
+  `who_carries_the_risk`, `your_record_outlives_us` (Hashes auf öffentlicher Kette, Belege mit `did:key` im Dokument, was verloren ginge, Rat),
+  `what_we_promise` (mit `enforcement`), `what_we_do_not_offer` (10 Punkte inkl. Pfand negiert), `licences: {held: [], applied_for: [],
+  planned: null, supervised_by: null}`, `custody_test`, `the_operator_is_a_participant` (first_party-Agents aus der DB mit Wallet, Explorer,
+  `active_listings`, `open_bounties`, `role`; Regeln im Code; Bounty-Desk mit Budgethinweis; ADR-31-`default_caps_*` mit Link auf die laufende
+  Konfiguration `DESK_HEALTH_URL`; Anteil heute; „ein Kauf von uns beweist …“), `machine_generated_content`, `working_on` (nur `promise: none`),
+  `links`. Verlinkt aus `/`, `/docs`, llms.txt, skill.md (3 Kopien regeneriert), README, ARD/AI-Catalog, A2A-Skill, Sitemap, `/v1/payments`.
+  `platformStats()` nach `meta/stats.ts` ausgelagert.
+- **Reputation:** `first_party_counterparties`, `third_party_counterparties`, `third_party_volume_usdc` auf beiden Seiten (Partition:
+  first = distinct − third), `seller.reputation.third_party_counterparties` auf Listings, Leaderboard-Rang `volume × third_party` (Rang 0 bleibt
+  gelistet), **T1 nur über fremde Gegenparteien, Wallets und Volumen**, Attestierung trägt die Felder, fehlende Felder sind `null` (nie 0),
+  `backfillReputation()` beim Start (live: 51 Zeilen, 0 Fehler), `recomputeCounterpartiesOf()` beim Umschalten von `first_party`.
+- **Rezensionen:** Spalte `machine_generated` (Migration 0008, Altbestand der first_party-Rezensionen per UPDATE gekennzeichnet; live geprüft:
+  veritons drei Desk-Rezensionen zeigen `true`), Body-Feld, Review-Objekt, Event, MCP `review_job`, SDKs 0.3.5; **serverseitig `true` für jeden
+  first_party-Rezensenten**, egal was der Client schickt; Desk-Texte nennen den Judge.
+- **Korrekturen:** „escrowed“ (Changelog 0.1.0), „hires every new listing … within the hour“ (skill.md ×3, llms.txt, Quickstart, Changelog 0.3.8,
+  README, Desk-Notiz), „obliges the seller to refund“, „nothing provably paid is ever dropped“, Sanktionsaussagen ohne Grenzen, „3 to 10 USDC“
+  ohne Budget, „T3 (verified operator, later)“, „Trustless Agent“ als Selbstbeschreibung, „public transaction hash“ (Hashes werden den Parteien
+  offengelegt, nicht veröffentlicht), `DELETE /v1/agents/me` „irreversible“ → „deactivation, not erasure“ (Route, Hint, Admin-Route, llms.txt),
+  Gebührenhinweis überall „at least 30 days“. Bounties und Proposals zeigen `first_party`. `LICENSE` (MIT) + `license` in `packages/api/package.json`.
+- **Review (Workflow, 2 Reviewer mit getrennten Dateilisten, 342k Tokens, 10 min, 28 Funde: 5 hoch, 11 mittel, 12 niedrig;
+  `research/review-commitments-2026-09-08.jsonl`), alle eingebaut** (Liste in ADR-32). Muster hat wieder funktioniert: Funde sofort auf Platte,
+  zwei Agents, Checkpoint vor dem Start.
+- **Deploy 2026-09-08 ~20:38 UTC:** Push, API 0.3.9 auf Fly (`smoke.ts` mit zwei neuen Prüfungen PASSED; Migration + Backfill im Log),
+  `smoke:gasless` gegen die Live-Sandbox 10,0 s (Faucet-Tx `0x4347070c…f394`, Zahlung `0x64887d3c…35d2`), `smoke:judge` bestanden (0,21 USD),
+  Agents deployt (Desk-Health ok, `last_error: null`), npm `agentsouk@0.3.5`, PyPI `agentsouk 0.3.5`. Plugin/Extension 0.3.6 (Skill-Text) über
+  GitHub main.
+- **GitHub-Listen:** punkpeye schloss #13922 (awesome-mcp-servers) mit dem Hinweis auf die neue Remote-Liste; neuer PR
+  https://github.com/punkpeye/awesome-remote-mcp-servers/pull/107 („Add Agent Souk 🤖🤖🤖“, Fast-Track für Agent-PRs; Stern gesetzt, Fork
+  `nickillig3-dotcom/awesome-remote-mcp-servers`, Kategorie Finance, Marker 🔓 weil `initialize`/`register_agent` anonym gehen, Beschreibung
+  120 Zeichen, Connector-Badge `https://glama.ai/mcp/connectors/dev.agentsouk/agentsouk/badges/score.svg` = Rating A). CI: `check-submission`
+  SUCCESS, Labels `endpoint-ok`, `has-connector`. Kommentar mit Link im alten PR hinterlassen.
+- **Docs:** ADR-32 (mit Review-Nachtrag), LEGAL-BRIEFING §9.2 (fünf Anwaltsfragen), SPEC-PAYMENTS §9, DEPLOY (`DESK_HEALTH_URL`, Backfill),
+  LAUNCH-CHECKLIST (Notiz für Nick, Anwaltsfragen), Memory.
 
 ## Stand 2026-09-08, Checkpoint 55: Erstkäufer-Programm live (ADR-31; Agents 61 Tests, API 216, Judge-Rauchtest bestanden)
 
