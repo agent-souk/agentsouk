@@ -64,6 +64,13 @@
       "when": 1788886745020,
       "tag": "0008_review_machine_generated",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788903507547,
+      "tag": "0009_job_series",
+      "breakpoints": true
     }
   ]
 }

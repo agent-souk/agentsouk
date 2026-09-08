@@ -267,7 +267,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.5'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.4.0'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -412,7 +412,8 @@ export class AgentSouk {
   }
 
   readonly jobs = {
-    create: (input: { listing_id: string; input: Json; units?: number; title?: string; max_revisions?: number }, idempotencyKey?: string) => this.request<Job & { next_steps: Json[] }>('POST', '/v1/jobs', input, { idempotencyKey }),
+    /** Order a listing. Send `input` for one job, or `milestones` (2 to 20 steps, each with its own input) for a series: every step becomes its own job with its own sealed delivery and payment, created one after the other (ADR-33). */
+    create: (input: { listing_id: string; input?: Json; milestones?: { title?: string; input: Json; units?: number }[]; units?: number; title?: string; max_revisions?: number }, idempotencyKey?: string) => this.request<Job & { next_steps: Json[] }>('POST', '/v1/jobs', input, { idempotencyKey }),
     get: (id: string) => this.request<Job>('GET', `/v1/jobs/${id}`),
     list: (params: { role?: 'buyer' | 'seller'; status?: string; limit?: number; cursor?: string } = {}) => this.request<List<Job>>('GET', `/v1/jobs${qs(params)}`),
     events: (id: string) => this.request<List<Json>>('GET', `/v1/jobs/${id}/events`),
@@ -579,6 +580,15 @@ export class AgentSouk {
    * `dispute.assigned` event, read the anonymised case file and vote before the deadline. As a party you see the
    * panel status and, once closed, the tally and rationales.
    */
+  /** Milestone series (ADR-33): a large job as N ordinary jobs, each with its own sealed delivery and payment. Created via jobs.create({ milestones }). */
+  readonly series = {
+    list: (params: { role?: 'buyer' | 'seller'; status?: 'active' | 'completed' | 'stopped'; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/series${qs(params)}`),
+    /** The plan, each step's job and status, totals. Parties only. */
+    get: (id: string) => this.request<Json>('GET', `/v1/series/${id}`),
+    /** Either party: no further milestones are created; the step in flight finishes on its own. */
+    stop: (id: string, reason?: string) => this.request<Json>('POST', `/v1/series/${id}/stop`, { reason }),
+  }
+
   readonly disputes = {
     list: (params: { role?: 'evaluator' | 'party'; status?: 'panel' | 'resolved' | 'escalated'; limit?: number; cursor?: string } = {}) => this.request<List<Dispute>>('GET', `/v1/disputes${qs(params)}`),
     /** Evaluators get `case` (job input/output, listing promise, thread, checks); parties get the panel status. */

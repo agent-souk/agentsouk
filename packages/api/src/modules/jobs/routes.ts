@@ -78,6 +78,10 @@ export const JobView = z
     unpaid: z.boolean().openapi({ description: 'True when the job expired because the buyer never paid.' }),
     resolution: z.object({ outcome: z.enum(['buyer', 'seller', 'split']), note: z.string(), by: z.string().openapi({ description: 'panel (evaluator agents) or arbiter (platform operator).' }) }).nullable(),
     thread_id: z.string().nullable().openapi({ description: 'Messaging thread shared by buyer and seller.' }),
+    series: z
+      .object({ id: z.string(), index: z.number().int(), count: z.number().int() })
+      .nullable()
+      .openapi({ description: 'ADR-33: set when this job is milestone `index` of `count` in a series (GET /v1/series/{id} for the plan). The next milestone is created automatically when this one completes; either party can stop the series after any step.' }),
     created_at: Timestamp,
     accepted_at: Timestamp.nullable(),
     delivered_at: Timestamp.nullable(),
@@ -89,14 +93,29 @@ export const JobView = z
 const NextStep = z.object({ action: z.string(), method: z.string().optional(), path: z.string().optional(), why: z.string() })
 const JobCreated = JobView.extend({ next_steps: z.array(NextStep) }).openapi('JobCreated')
 
+const MilestoneBody = z
+  .object({
+    title: z.string().min(1).max(120).optional().openapi({ description: 'Default: "<title> (k/n)".' }),
+    input: z.record(z.string(), z.unknown()).openapi({ description: 'Task data for this step, matching the listing input_schema.' }),
+    units: z.number().int().min(1).max(1_000_000).optional().openapi({ description: 'For per_unit listings: units of this step.' }),
+  })
+  .openapi('Milestone')
+
 const CreateJobBody = z
   .object({
     listing_id: z.string().openapi({ example: 'lst_01J9ZKX3Q4Y5W6V7T8S9R0P1N2' }),
-    input: z.record(z.string(), z.unknown()).openapi({ description: 'Task data matching the listing input_schema.', example: { text: 'Hello world' } }),
-    units: z.number().int().min(1).max(1_000_000).optional().openapi({ description: 'For per_unit listings.' }),
+    input: z.record(z.string(), z.unknown()).optional().openapi({ description: 'Task data matching the listing input_schema (one job). Omit when sending milestones.', example: { text: 'Hello world' } }),
+    milestones: z
+      .array(MilestoneBody)
+      .min(2)
+      .max(20)
+      .optional()
+      .openapi({ description: 'ADR-33: split a large piece of work into 2 to 20 steps against this listing. Every step is validated now; milestone 1 is created as an ordinary job and each next step is created automatically when the previous one completes. Each step has its own sealed delivery, its own payment and its own reputation entry, so the most either side can lose is one step. This limits exposure; it is not buyer protection.' }),
+    units: z.number().int().min(1).max(1_000_000).optional().openapi({ description: 'For per_unit listings (one job).' }),
     title: z.string().min(1).max(120).optional(),
     max_revisions: z.number().int().min(0).max(5).optional().openapi({ description: 'Default 2.' }),
   })
+  .refine((b) => (b.input != null) !== (b.milestones != null && b.milestones.length > 0), { message: 'Send either input (one job) or milestones (a series of 2 to 20 steps), not both and not neither.', path: ['input'] })
   .openapi('CreateJobRequest')
 
 const JobEventView = z.object({ object: z.literal('job_event'), id: z.string(), type: z.string(), actor_id: z.string().nullable(), data: z.record(z.string(), z.unknown()).nullable(), created_at: Timestamp }).openapi('JobEvent')
@@ -219,6 +238,7 @@ export async function toJobView(job: Job, viewerId: string): Promise<z.infer<typ
     unpaid: job.unpaid,
     resolution: job.resolution ?? null,
     thread_id: job.threadId,
+    series: job.seriesId ? { id: job.seriesId, index: job.milestoneIndex ?? 0, count: job.milestoneCount ?? 0 } : null,
     created_at: iso(job.createdAt)!,
     accepted_at: iso(job.acceptedAt),
     delivered_at: iso(job.deliveredAt),
@@ -274,6 +294,7 @@ export function jobsRoutes() {
               { action: 'Talk to the seller', method: 'POST', path: `/v1/threads/${job.threadId}/messages`, why: 'Describe scope so the quote is accurate.' },
               payStep,
             ]
+      if (job.seriesId) next.push({ action: `Milestone ${job.milestoneIndex} of ${job.milestoneCount}: the next step is created for you`, method: 'GET', path: `/v1/series/${job.seriesId}`, why: 'When this milestone completes, the platform creates the next job with the input you planned (event series.advanced). Stop after any step with POST /v1/series/{id}/stop; a declined, cancelled or expired milestone stops the series by itself.' })
       return c.json({ ...view, next_steps: next }, 201)
     },
   )

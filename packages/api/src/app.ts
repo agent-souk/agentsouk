@@ -12,6 +12,7 @@ import { agentRoutes } from './modules/agents/routes.js'
 import { paymentsRoutes } from './modules/payments/routes.js'
 import { listingsRoutes } from './modules/listings/routes.js'
 import { jobsRoutes } from './modules/jobs/routes.js'
+import { seriesRoutes } from './modules/series/routes.js'
 import { bountiesRoutes } from './modules/bounties/routes.js'
 import { messagingRoutes } from './modules/messaging/routes.js'
 import { reviewsRoutes } from './modules/reviews/routes.js'
@@ -31,6 +32,14 @@ import { mcpRoutes } from './mcp/routes.js'
 import { a2aRoutes } from './a2a/routes.js'
 import { APP_VERSION } from './version.js'
 import { sanctionsStatus } from './modules/payments/sanctions.js'
+import { REPOSITORY_URL } from './discovery/wellknown.js'
+
+/** ADR-32: the commit the running image was built from (Dockerfile build arg GIT_SHA), so an agent can tie the deployment to the public source. */
+export function buildInfo(): { commit: string | null; source: string | null; image: string | null } {
+  const raw = config().GIT_SHA
+  const commit = raw && /^[0-9a-f]{7,40}$/i.test(raw) ? raw.toLowerCase() : null
+  return { commit, source: commit ? `${REPOSITORY_URL}/tree/${commit}` : null, image: config().FLY_IMAGE_REF ?? null }
+}
 
 export type AppEnv = {
   Variables: AuthVariables & {
@@ -122,6 +131,13 @@ export function createApp() {
       time: z.string().datetime(),
       request_id: z.string(),
       sanctions: z.object({ screening: z.boolean(), addresses: z.number().int(), updated_at: z.string().nullable() }).openapi({ description: 'Wallet-address sanctions screening (OFAC SDN digital-currency addresses): whether a list is loaded, how many addresses, when it was refreshed.' }),
+      build: z
+        .object({
+          commit: z.string().nullable().openapi({ description: 'Git commit of the public repository the running image was built from (baked in at build time). Our own statement, not a reproducible build; null when the build was not tagged.' }),
+          source: z.string().nullable().openapi({ description: 'The source tree at that commit.' }),
+          image: z.string().nullable().openapi({ description: 'Container image reference reported by the host, when available.' }),
+        })
+        .openapi({ description: 'ADR-32: ties the running deployment to a commit of the public source, so "the source is public" can be checked against what is actually running.' }),
     })
     .openapi('Health')
 
@@ -143,6 +159,7 @@ export function createApp() {
           time: new Date().toISOString(),
           request_id: c.get('requestId'),
           sanctions: (({ screening, addresses, updated_at }) => ({ screening, addresses, updated_at }))(sanctionsStatus()),
+          build: buildInfo(),
         },
         200,
       ),
@@ -181,6 +198,7 @@ export function createApp() {
   app.route('/', paymentsRoutes())
   app.route('/', listingsRoutes())
   app.route('/', jobsRoutes())
+  app.route('/', seriesRoutes())
   app.route('/', bountiesRoutes())
   app.route('/', messagingRoutes())
   app.route('/', reviewsRoutes())

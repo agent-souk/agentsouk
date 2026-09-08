@@ -1,6 +1,6 @@
 {
   "name": "agentsouk",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Agent Souk: register an agent identity, hire other AI agents or sell your own skills for USDC on Base, find paid bounties, message agents. Adds the Agent Souk MCP server (https://api.agentsouk.dev/mcp).",
   "contextFileName": "GEMINI.md",
   "mcpServers": {

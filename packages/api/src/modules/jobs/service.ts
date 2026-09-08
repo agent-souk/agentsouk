@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobEvents, jobs, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming } from '../../db/schema.js'
+import { agents, jobEvents, jobs, jobSeries, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming, type SeriesMilestone } from '../../db/schema.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
@@ -182,13 +182,13 @@ async function note(job: Job, actorId: string | null, text: string | undefined, 
   await postSystemMessage(job.threadId, systemText, data)
 }
 
-function validateInput(input: unknown, schema: Record<string, unknown> | null | undefined): Record<string, unknown> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw errors.validation('input must be a JSON object.', 'input', 'Check the listing input_schema and example_input.')
+function validateInput(input: unknown, schema: Record<string, unknown> | null | undefined, param = 'input', label = 'input'): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw errors.validation(`${label} must be a JSON object.`, param, 'Check the listing input_schema and example_input.')
   const required = Array.isArray(schema?.required) ? (schema!.required as unknown[]).filter((k): k is string => typeof k === 'string') : []
   const missing = required.filter((k) => !(k in (input as Record<string, unknown>)))
-  if (missing.length) throw errors.validation(`input is missing required field(s): ${missing.join(', ')}.`, 'input', 'The listing input_schema lists required keys; see example_input for a valid shape.', { missing })
+  if (missing.length) throw errors.validation(`${label} is missing required field(s): ${missing.join(', ')}.`, param, 'The listing input_schema lists required keys; see example_input for a valid shape.', { missing })
   const scan = scanJson(input)
-  if (scan.severity === 'high') throw errors.validation('input contains instruction-injection or credential-phishing patterns and was rejected.', 'input', 'Send plain task data; do not address the seller as a model or ask for secrets.', { code: 'content_rejected', warnings: scan.warnings })
+  if (scan.severity === 'high') throw errors.validation(`${label} contains instruction-injection or credential-phishing patterns and was rejected.`, param, 'Send plain task data; do not address the seller as a model or ask for secrets.', { code: 'content_rejected', warnings: scan.warnings })
   return input as Record<string, unknown>
 }
 
@@ -198,13 +198,124 @@ async function finalize(job: Job, listingOutcome?: 'completed' | 'failed') {
     const turnaround = job.acceptedAt && job.deliveredAt ? Math.round((job.deliveredAt - job.acceptedAt) / 1000) : undefined
     await recordListingOutcome({ listingId: job.listingId, status: listingOutcome, buyerAgentId: job.buyerAgentId, price: job.price ?? 0, turnaroundSeconds: turnaround })
   }
+  // ADR-33: a finished milestone creates the next one, a failed one stops the series; never let that break the job itself.
+  // Only terminal states count: an opened dispute also passes through here (reputation refresh) and decides nothing yet.
+  if (job.seriesId && TERMINAL.includes(job.status)) {
+    try {
+      await advanceSeries(job, listingOutcome === 'completed' ? 'completed' : 'stopped')
+    } catch (e) {
+      log.error({ err: e, job: job.id, series: job.seriesId }, 'series: advance failed')
+    }
+  }
+}
+
+// --- milestone series (ADR-33) ---------------------------------------------------------------
+
+export type SeriesRow = typeof jobSeries.$inferSelect
+export const SERIES_MIN = 2
+export const SERIES_MAX = 20
+
+function seriesEvent(s: SeriesRow, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { series_id: s.id, listing_id: s.listingId, title: s.title, buyer_id: s.buyerAgentId, seller_id: s.sellerAgentId, count: s.count, current_index: s.currentIndex, status: s.status, ...extra }
+}
+
+async function reloadSeries(id: string): Promise<SeriesRow> {
+  return (await db().query.jobSeries.findFirst({ where: eq(jobSeries.id, id) }))!
+}
+
+/** Conditional stop: only an active series flips; both parties are told why. */
+async function stopSeriesRow(s: SeriesRow, by: 'buyer' | 'seller' | 'platform', reason: string): Promise<SeriesRow> {
+  const r = await db()
+    .update(jobSeries)
+    .set({ status: 'stopped', stoppedBy: by, stoppedReason: reason.slice(0, 500), updatedAt: Date.now() })
+    .where(and(eq(jobSeries.id, s.id), eq(jobSeries.status, 'active')))
+  const after = await reloadSeries(s.id)
+  if ((r.rowsAffected ?? 0) > 0) await emitMany(after.env, [after.buyerAgentId, after.sellerAgentId], 'series.stopped', seriesEvent(after, { stopped_by: by, reason: after.stoppedReason }))
+  return after
+}
+
+/**
+ * Called from finalize() with the outcome of a milestone job. completed (incl. resolved seller/split) creates the
+ * next milestone or completes the series; anything else stops it. The current-index check makes a repeated call
+ * for the same job a no-op, so the next milestone can never be created twice.
+ */
+async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promise<void> {
+  const s = await db().query.jobSeries.findFirst({ where: eq(jobSeries.id, job.seriesId!) })
+  if (!s || s.status !== 'active') return
+  const idx = job.milestoneIndex ?? 0
+  if (idx !== s.currentIndex) return
+  if (outcome !== 'completed') {
+    await stopSeriesRow(s, 'platform', `milestone ${idx} of ${s.count} ended as ${job.status}; nothing further is created. Start a new series for the remaining work if you want to continue.`)
+    return
+  }
+  if (idx >= s.count) {
+    const r = await db()
+      .update(jobSeries)
+      .set({ status: 'completed', completedAt: Date.now(), updatedAt: Date.now() })
+      .where(and(eq(jobSeries.id, s.id), eq(jobSeries.status, 'active')))
+    if ((r.rowsAffected ?? 0) > 0) {
+      const done = await reloadSeries(s.id)
+      await emitMany(done.env, [done.buyerAgentId, done.sellerAgentId], 'series.completed', seriesEvent(done, { last_job_id: job.id }))
+    }
+    return
+  }
+  const next = s.plan[idx]
+  if (!next || next.index !== idx + 1) {
+    await stopSeriesRow(s, 'platform', `the plan has no milestone ${idx + 1}`)
+    return
+  }
+  try {
+    const listing = await getActiveListingForOrder(s.env, s.listingId)
+    const [buyer, seller] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, s.buyerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, s.sellerAgentId) })])
+    if (!buyer || buyer.status !== 'active') throw errors.state('buyer_unavailable', 'The buyer of this series is no longer active.')
+    if (!seller) throw errors.state('seller_unavailable', 'The seller of this series is no longer active.')
+    const sellerOk = await orderPreflight(s.env, buyer, listing)
+    const created = await insertJob({ env: s.env, buyer, seller: sellerOk, listing, input: next.input, units: next.units, title: next.title, maxRevisions: job.maxRevisions, series: { id: s.id, index: next.index, count: s.count } })
+    next.job_id = created.id
+    await db().update(jobSeries).set({ plan: s.plan, currentIndex: next.index, updatedAt: Date.now() }).where(eq(jobSeries.id, s.id))
+    const after = await reloadSeries(s.id)
+    await emitMany(after.env, [after.buyerAgentId, after.sellerAgentId], 'series.advanced', seriesEvent(after, { job_id: created.id, index: next.index, previous_job_id: job.id }))
+  } catch (e) {
+    const reason = e instanceof ApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e)
+    log.warn({ err: e, series: s.id }, 'series: next milestone could not be created')
+    await stopSeriesRow(s, 'platform', `milestone ${idx + 1} could not be created (${reason}). Start a new series for the remaining work once the cause is gone.`)
+  }
+}
+
+export async function getSeriesForParty(env: Env, agentId: string, id: string): Promise<{ series: SeriesRow; role: Role }> {
+  const s = await db().query.jobSeries.findFirst({ where: and(eq(jobSeries.id, id), eq(jobSeries.env, env)) })
+  const role: Role | undefined = s ? (s.buyerAgentId === agentId ? 'buyer' : s.sellerAgentId === agentId ? 'seller' : undefined) : undefined
+  if (!s || !role) throw errors.notFound('Series', id, 'GET /v1/series lists the milestone series you are part of.')
+  return { series: s, role }
+}
+
+export async function listSeries(env: Env, agentId: string, opts: { role?: Role; status?: SeriesRow['status']; limit: number; cursor?: string }): Promise<SeriesRow[]> {
+  const conds: SQL[] = [eq(jobSeries.env, env)]
+  conds.push(opts.role === 'buyer' ? eq(jobSeries.buyerAgentId, agentId) : opts.role === 'seller' ? eq(jobSeries.sellerAgentId, agentId) : or(eq(jobSeries.buyerAgentId, agentId), eq(jobSeries.sellerAgentId, agentId))!)
+  if (opts.status) conds.push(eq(jobSeries.status, opts.status))
+  if (opts.cursor) conds.push(lt(jobSeries.id, opts.cursor))
+  return db().query.jobSeries.findMany({ where: and(...conds), orderBy: [desc(jobSeries.id)], limit: opts.limit + 1 })
+}
+
+/** The milestone jobs of a series, in milestone order (for the series view). */
+export async function seriesJobs(seriesId: string): Promise<Job[]> {
+  const rows = await db().query.jobs.findMany({ where: eq(jobs.seriesId, seriesId) })
+  return rows.sort((a, b) => (a.milestoneIndex ?? 0) - (b.milestoneIndex ?? 0))
+}
+
+/** Either party ends a series after any step; the milestone job in flight is untouched and finishes on its own. */
+export async function stopSeries(env: Env, actor: Agent, id: string, reason?: string): Promise<SeriesRow> {
+  const { series, role } = await getSeriesForParty(env, actor.id, id)
+  if (series.status !== 'active') return series
+  return stopSeriesRow(series, role, `${role}: ${reason?.trim() || 'stopped'}`)
 }
 
 const money = (price: number | null | undefined) => formatUsdc(price ?? 0)
 
 // --- creation ---------------------------------------------------------------------------------
 
-export type CreateJobInput = { listing_id: string; input: unknown; units?: number; title?: string; max_revisions?: number }
+export type MilestoneInput = { title?: string; input: unknown; units?: number }
+export type CreateJobInput = { listing_id: string; input?: unknown; units?: number; title?: string; max_revisions?: number; milestones?: MilestoneInput[] }
 
 async function assertSellerCapacity(env: Env, sellerId: string, maxOpen: number) {
   const open = await db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), eq(jobs.sellerAgentId, sellerId), inArray(jobs.status, OPEN_FOR_SELLER)))
@@ -217,23 +328,36 @@ function paymentIntro(payment: PaymentTiming, price: number | null): string {
   return payment === 'upfront' ? `Payment (${money(price)}) is due right after the seller accepts, wallet-to-wallet in USDC.` : `Payment (${money(price)}) is due when the seller delivers: the delivery stays sealed until you pay, then it is revealed.`
 }
 
-export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): Promise<Job> {
-  const listing: Listing = await getActiveListingForOrder(env, input.listing_id)
+/** Checks every order must pass, whether it is one job or a milestone of a series. Returns the seller. */
+async function orderPreflight(env: Env, buyer: Agent, listing: Listing): Promise<Agent> {
   if (listing.sellerAgentId === buyer.id) throw errors.validation('You cannot order your own listing.', 'listing_id')
   const seller = await db().query.agents.findFirst({ where: eq(agents.id, listing.sellerAgentId) })
   if (!seller || seller.status !== 'active') throw errors.state('seller_unavailable', 'The seller of this listing is not active.', 'Pick another listing: GET /v1/listings?q=.')
   if (seller.walletAddress && buyer.walletAddress && sameAddress(seller.walletAddress, buyer.walletAddress)) throw errors.validation('Buyer and seller use the same wallet address; a job between them cannot be paid.', 'listing_id', 'Self-dealing does not build reputation. Use a different wallet or pick another listing.')
   assertNoFirstPartySelfDealing(env, buyer, seller)
-  const jobInput = validateInput(input.input, listing.inputSchema)
-  await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
+  return seller
+}
 
-  let units = 1
-  if (listing.pricingModel === 'per_unit') {
-    units = input.units ?? 1
-    if (!Number.isInteger(units) || units < 1) throw errors.validation('units must be an integer >= 1 for per-unit listings.', 'units')
-  }
+function unitsFor(listing: Listing, units: number | undefined, param = 'units'): number {
+  if (listing.pricingModel !== 'per_unit') return 1
+  const u = units ?? 1
+  if (!Number.isInteger(u) || u < 1) throw errors.validation('units must be an integer >= 1 for per-unit listings.', param)
+  return u
+}
+
+function priceFor(listing: Listing, units: number, param = 'units'): number | null {
   const price = listing.pricingModel === 'quote' ? null : listing.pricingModel === 'per_unit' ? listing.price! * units : listing.price!
-  if (price != null && !Number.isSafeInteger(price)) throw errors.validation('price overflow', 'units')
+  if (price != null && !Number.isSafeInteger(price)) throw errors.validation('price overflow', param)
+  return price
+}
+
+type InsertJobInput = { env: Env; buyer: Agent; seller: Agent; listing: Listing; input: Record<string, unknown>; units: number; title: string; maxRevisions: number; series?: { id: string; index: number; count: number } }
+
+/** Creates one job row with its thread, first system message, job event and notifications (one job, or one milestone). */
+async function insertJob(o: InsertJobInput): Promise<Job> {
+  const { env, listing } = o
+  await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
+  const price = priceFor(listing, o.units)
   const now = Date.now()
   const id = newId('job')
   const status: JobStatus = listing.pricingModel === 'quote' ? 'quote_requested' : 'open'
@@ -242,32 +366,73 @@ export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): 
     env,
     listingId: listing.id,
     bountyId: null,
-    buyerAgentId: buyer.id,
+    buyerAgentId: o.buyer.id,
     sellerAgentId: listing.sellerAgentId,
-    title: (input.title ?? listing.title).slice(0, 120),
-    input: jobInput,
+    title: o.title.slice(0, 120),
+    input: o.input,
     output: null,
-    units,
+    units: o.units,
     price,
     payment: listing.payment,
     status,
     revisionCount: 0,
-    maxRevisions: input.max_revisions ?? 2,
+    maxRevisions: o.maxRevisions,
     turnaroundSeconds: listing.turnaroundSeconds,
     acceptDeadlineAt: now + listing.acceptTimeoutSeconds * 1000,
     deadlineAt: null,
     reviewDeadlineAt: null,
+    seriesId: o.series?.id ?? null,
+    milestoneIndex: o.series?.index ?? null,
+    milestoneCount: o.series?.count ?? null,
     createdAt: now,
     updatedAt: now,
   }
   await db().insert(jobs).values(row)
-  const thread = await createJobThread(env, id, [buyer.id, listing.sellerAgentId])
+  const thread = await createJobThread(env, id, [o.buyer.id, listing.sellerAgentId])
   await db().update(jobs).set({ threadId: thread.id }).where(eq(jobs.id, id))
-  await postSystemMessage(thread.id, status === 'open' ? `Job created. ${paymentIntro(listing.payment, price)} Seller: accept or decline before ${new Date(row.acceptDeadlineAt!).toISOString()}.` : `Quote requested. Seller: send a quote with POST /v1/jobs/{id}/quote. ${listing.payment === 'upfront' ? 'The buyer pays after accepting the quote.' : 'The buyer pays against the sealed delivery.'}`, { job_id: id, status })
-  await logJobEvent(id, 'created', buyer.id, { price, units, listing_id: listing.id, payment: listing.payment })
+  const seriesFields = o.series ? { series_id: o.series.id, milestone_index: o.series.index, milestone_count: o.series.count } : {}
+  const seriesNote = o.series ? ` This is milestone ${o.series.index} of ${o.series.count} in series ${o.series.id} (GET /v1/series/{id} shows the whole plan; the next milestone is created when this one completes, and either party can stop the series after any step).` : ''
+  await postSystemMessage(thread.id, (status === 'open' ? `Job created. ${paymentIntro(listing.payment, price)} Seller: accept or decline before ${new Date(row.acceptDeadlineAt!).toISOString()}.` : `Quote requested. Seller: send a quote with POST /v1/jobs/{id}/quote. ${listing.payment === 'upfront' ? 'The buyer pays after accepting the quote.' : 'The buyer pays against the sealed delivery.'}`) + seriesNote, { job_id: id, status, ...seriesFields })
+  await logJobEvent(id, 'created', o.buyer.id, { price, units: o.units, listing_id: listing.id, payment: listing.payment, ...seriesFields })
   const job = await reload(id)
-  await notify(job, 'created')
+  await notify(job, 'created', seriesFields)
   return job
+}
+
+export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): Promise<Job> {
+  const listing: Listing = await getActiveListingForOrder(env, input.listing_id)
+  const seller = await orderPreflight(env, buyer, listing)
+  if (input.milestones && input.milestones.length) return createSeries(env, buyer, seller, listing, input)
+  const jobInput = validateInput(input.input, listing.inputSchema)
+  const units = unitsFor(listing, input.units)
+  return insertJob({ env, buyer, seller, listing, input: jobInput, units, title: input.title ?? listing.title, maxRevisions: input.max_revisions ?? 2 })
+}
+
+/**
+ * ADR-33: validates the whole plan up front (every milestone's input against the listing schema, units, prices),
+ * stores it, and creates milestone 1 as an ordinary job. Later milestones are created by advanceSeries().
+ */
+async function createSeries(env: Env, buyer: Agent, seller: Agent, listing: Listing, input: CreateJobInput): Promise<Job> {
+  const ms = input.milestones!
+  if (input.input !== undefined) throw errors.validation('Send either input (one job) or milestones (a series), not both.', 'input', 'A series is a list of milestones, each with its own input.')
+  if (ms.length < SERIES_MIN || ms.length > SERIES_MAX) throw errors.validation(`milestones must have between ${SERIES_MIN} and ${SERIES_MAX} steps.`, 'milestones', 'One step is an ordinary job: send input instead of milestones.')
+  const title = (input.title ?? listing.title).slice(0, 100)
+  const plan: SeriesMilestone[] = ms.map((m, i) => {
+    const param = `milestones[${i}]`
+    const units = unitsFor(listing, m.units, `${param}.units`)
+    const jobInput = validateInput(m.input, listing.inputSchema, `${param}.input`, `milestone ${i + 1} input`)
+    return { index: i + 1, title: (m.title ?? `${title} (${i + 1}/${ms.length})`).slice(0, 120), input: jobInput, units, price: priceFor(listing, units, `${param}.units`), job_id: null }
+  })
+  await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
+  const now = Date.now()
+  const id = newId('series')
+  await db().insert(jobSeries).values({ id, env, listingId: listing.id, buyerAgentId: buyer.id, sellerAgentId: seller.id, title, plan, count: plan.length, currentIndex: 1, status: 'active', createdAt: now, updatedAt: now })
+  const first = await insertJob({ env, buyer, seller, listing, input: plan[0]!.input, units: plan[0]!.units, title: plan[0]!.title, maxRevisions: input.max_revisions ?? 2, series: { id, index: 1, count: plan.length } })
+  plan[0]!.job_id = first.id
+  await db().update(jobSeries).set({ plan, updatedAt: Date.now() }).where(eq(jobSeries.id, id))
+  const s = await reloadSeries(id)
+  await emitMany(env, [buyer.id, seller.id], 'series.created', seriesEvent(s, { job_id: first.id, price_total: plan.every((p) => p.price != null) ? plan.reduce((sum, p) => sum + (p.price ?? 0), 0) : null }))
+  return first
 }
 
 // --- CONTRACT for bounties --------------------------------------------------------------------

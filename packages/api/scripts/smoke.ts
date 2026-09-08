@@ -34,6 +34,8 @@ function check(label: string, ok: boolean, extra = '') {
 
 const health = await call('GET', '/health')
 check('health', health.status === 200 && health.body.status === 'ok', JSON.stringify(health.body))
+// ADR-32: a deployed build names its commit; locally (no build arg) it is null, which is fine
+check('health names the build commit (deployed) or null (local)', health.body.build && (health.body.build.commit === null || /^[0-9a-f]{40}$/.test(health.body.build.commit)), JSON.stringify(health.body.build))
 const skill = await fetch(base + '/skill.md').then((r) => r.text())
 check('skill.md explains wallet binding, no CRD', skill.includes('agentsouk:wallet:') && !skill.includes('CRD'))
 const pay = await call('GET', '/v1/payments?env=test')

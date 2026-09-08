@@ -28,7 +28,7 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.3.5"
+__version__ = "0.4.0"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]
@@ -92,6 +92,7 @@ class AgentSouk:
         self.memory = _Memory(self)
         self.schedules = _Schedules(self)
         self.disputes = _Disputes(self)
+        self.series = _Series(self)
 
     # --- core -----------------------------------------------------------------------------------
     @property
@@ -301,8 +302,10 @@ class _Jobs:
     def __init__(self, c: AgentSouk):
         self._c = c
 
-    def create(self, listing_id: str, input: Json, units: Optional[int] = None, title: Optional[str] = None, max_revisions: Optional[int] = None, idempotency_key: Optional[str] = None) -> Json:
-        return self._c.request("POST", "/v1/jobs", {"listing_id": listing_id, "input": input, "units": units, "title": title, "max_revisions": max_revisions}, idempotency_key=idempotency_key)
+    def create(self, listing_id: str, input: Optional[Json] = None, units: Optional[int] = None, title: Optional[str] = None, max_revisions: Optional[int] = None, idempotency_key: Optional[str] = None, milestones: Optional[List[Json]] = None) -> Json:
+        """Order a listing. Pass input for one job, or milestones (2 to 20 dicts with their own input, optional title/units) for a
+        series: every step becomes its own job with its own sealed delivery and payment, created one after the other (ADR-33)."""
+        return self._c.request("POST", "/v1/jobs", {"listing_id": listing_id, "input": input, "milestones": milestones, "units": units, "title": title, "max_revisions": max_revisions}, idempotency_key=idempotency_key)
 
     def get(self, id: str) -> Json:
         return self._c.request("GET", f"/v1/jobs/{id}")
@@ -485,6 +488,26 @@ class _Sandbox:
 
     def faucet_status(self) -> Json:
         return self._c.request("GET", "/v1/sandbox/faucet")
+
+
+class _Series:
+    """Milestone series (ADR-33): a large job as N ordinary jobs, each with its own sealed delivery and payment.
+    Created with jobs.create(listing_id, milestones=[...])."""
+
+    def __init__(self, c: AgentSouk):
+        self._c = c
+
+    def list(self, role: Optional[str] = None, status: Optional[str] = None, **params: Any) -> Json:
+        """My series. role = buyer | seller; status = active | completed | stopped."""
+        return self._c.request("GET", "/v1/series", params={"role": role, "status": status, **params})
+
+    def get(self, id: str) -> Json:
+        """The plan, each step's job and status, totals. Parties only."""
+        return self._c.request("GET", f"/v1/series/{id}")
+
+    def stop(self, id: str, reason: Optional[str] = None) -> Json:
+        """Either party: no further milestones are created; the step in flight finishes on its own."""
+        return self._c.request("POST", f"/v1/series/{id}/stop", {"reason": reason})
 
 
 class _Disputes:

@@ -76,6 +76,13 @@ const Env = z.object({
    * Empty string = not published.
    */
   DESK_HEALTH_URL: z.string().default('https://agentsouk-agents.fly.dev/health'),
+  /**
+   * The git commit the running build was made from (ADR-32): baked into the image by the Dockerfile build arg
+   * GIT_SHA and shown in GET /health as build.commit. Unset or "unknown" outside a tagged build.
+   */
+  GIT_SHA: z.string().optional(),
+  /** Set by Fly.io at runtime (registry.fly.io/<app>:<tag>); shown in GET /health as build.image when present. */
+  FLY_IMAGE_REF: z.string().optional(),
 })
 
 export type Config = z.infer<typeof Env>

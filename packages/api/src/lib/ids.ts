@@ -10,6 +10,7 @@ export const ID_PREFIXES = {
   listing: 'lst',
   faucetClaim: 'fct',
   job: 'job',
+  series: 'ser',
   message: 'msg',
   thread: 'thr',
   event: 'evt',

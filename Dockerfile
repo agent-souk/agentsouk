@@ -11,7 +11,10 @@ COPY packages/sdk packages/sdk
 RUN npm run build -w packages/api
 
 FROM node:24-alpine
-ENV NODE_ENV=production PORT=8787 HOST=0.0.0.0 DATABASE_URL=file:/data/agentsouk.db
+# ADR-32: the commit this image was built from, shown in GET /health as build.commit so an agent can tie the running
+# deployment to the public source. Pass it at deploy time: --build-arg GIT_SHA=$(git rev-parse HEAD)
+ARG GIT_SHA=unknown
+ENV NODE_ENV=production PORT=8787 HOST=0.0.0.0 DATABASE_URL=file:/data/agentsouk.db GIT_SHA=$GIT_SHA
 WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules

@@ -135,6 +135,10 @@ export const jobs = sqliteTable(
     disputeReason: text('dispute_reason'),
     resolution: text('resolution', { mode: 'json' }).$type<JobResolution>(),
     threadId: text('thread_id'),
+    /** ADR-33: set when this job is one milestone of a series (job_series); 1-based index and the series length */
+    seriesId: text('series_id'),
+    milestoneIndex: integer('milestone_index'),
+    milestoneCount: integer('milestone_count'),
     createdAt: integer('created_at').notNull(),
     acceptedAt: integer('accepted_at'),
     deliveredAt: integer('delivered_at'),
@@ -147,7 +151,47 @@ export const jobs = sqliteTable(
     index('jobs_listing').on(t.listingId),
     index('jobs_status_deadlines').on(t.status, t.acceptDeadlineAt, t.reviewDeadlineAt),
     index('jobs_payment_deadline').on(t.status, t.paymentDeadlineAt),
+    index('jobs_series').on(t.seriesId),
   ],
+)
+
+// --- milestone series (ADR-33) -------------------------------------------------------------------
+// One contract as N ordinary jobs against the same listing, each with its own sealed delivery, its own on-chain
+// payment and its own reputation entry. The platform creates milestone k+1 when milestone k completes and stops
+// the series when a milestone fails or a party asks. No money mechanism is added: the most either side can lose
+// is one milestone. This limits exposure; it is not buyer protection and nobody refunds anyone.
+
+export const SERIES_STATUSES = ['active', 'completed', 'stopped'] as const
+export type SeriesStatus = (typeof SERIES_STATUSES)[number]
+/** One planned step; job_id is filled when the platform creates that step's job. */
+export type SeriesMilestone = { index: number; title: string; input: Record<string, unknown>; units: number; price: number | null; job_id: string | null }
+
+export const jobSeries = sqliteTable(
+  'job_series',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    listingId: text('listing_id').notNull(),
+    buyerAgentId: text('buyer_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    sellerAgentId: text('seller_agent_id')
+      .notNull()
+      .references(() => agents.id),
+    title: text('title').notNull(),
+    plan: text('plan', { mode: 'json' }).$type<SeriesMilestone[]>().notNull(),
+    count: integer('count').notNull(),
+    /** 1-based index of the latest milestone whose job exists */
+    currentIndex: integer('current_index').notNull().default(1),
+    status: text('status').$type<SeriesStatus>().notNull().default('active'),
+    /** buyer | seller | platform (a milestone failed or the next one could not be created) */
+    stoppedBy: text('stopped_by'),
+    stoppedReason: text('stopped_reason'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    completedAt: integer('completed_at'),
+  },
+  (t) => [index('job_series_buyer').on(t.buyerAgentId, t.status), index('job_series_seller').on(t.sellerAgentId, t.status)],
 )
 
 // --- disputes (ADR-25): evaluator panels decide disputed jobs without a human ---------------------
