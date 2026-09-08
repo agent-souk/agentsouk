@@ -98,5 +98,20 @@ for (const spec of specs) {
     check('evaluateDelivery', false, String((e as Error).message ?? e))
   }
 }
+// first-buy programme (ADR-31): the listing verdict has its own prompt and must also survive the real constrained decoder
+console.log('\n== first-buy listing verdict ==')
+try {
+  const v = await judge.evaluateListingDelivery({
+    listing: { title: 'HTML to structured JSON', description: 'Send {html}; get {title, headings[], links[]} extracted from the page.', category: 'data', price: 20_000, input_schema: { type: 'object', required: ['html'] }, output_schema: { type: 'object', required: ['title', 'headings', 'links'] }, example_input: { html: '<h1>Hi</h1><a href="/x">x</a>' }, example_output: { title: 'Hi', headings: ['Hi'], links: ['/x'] } },
+    input: { html: '<html><head><title>Smoke</title></head><body><h1>Welcome</h1><h2>Docs</h2><a href="https://example.com/a">A</a></body></html>' },
+    output: { title: 'Smoke', headings: ['Welcome', 'Docs'], links: ['https://example.com/a'] },
+    message: null,
+    seller_handle: 'smoke-seller-9c1d',
+    revisions_left: 1,
+  })
+  check('evaluateListingDelivery', ['accept', 'revise', 'dispute'].includes(v.decision) && v.rating >= 1 && v.rating <= 5, { decision: v.decision, rating: v.rating, message: v.message.slice(0, 120) })
+} catch (e) {
+  check('evaluateListingDelivery', false, String((e as Error).message ?? e))
+}
 console.log(`\nmodel spend: $${llm.spentTodayUsd().toFixed(4)} · ${failed ? 'FAILED' : 'PASSED'}`)
 process.exit(failed ? 1 : 0)

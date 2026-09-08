@@ -200,6 +200,33 @@ const TYPEHASH_TRANSFER_WITH_AUTHORIZATION = keccak_256(utf8('TransferWithAuthor
 
 export type Authorization = { from: string; to: string; value: bigint; validAfter: bigint; validBefore: bigint; nonce: string }
 
+/** keccak("Transfer(address,address,uint256)") */
+export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+
+/** The shape of gasless.typed_data in the platform's payment terms (POST /v1/jobs/{id}/pay). */
+export type TypedDataLike = {
+  primaryType: string
+  domain: { name: string; version: string; chainId: number; verifyingContract: string }
+  message: { from: string; to: string; value: number | string; validAfter: number | string; validBefore: number | string; nonce: string }
+}
+
+/**
+ * A signer for the platform's gas-free terms, usable as the SDK's `jobs.payGasless(id, signer)`: refuses anything
+ * that is not a TransferWithAuthorization for the USDC contract of `chain` with this wallet as the payer, then signs
+ * with the pinned EIP-3009 implementation above. The caller (the SDK) checks recipient and amount against the terms.
+ */
+export function typedDataSigner(privateKeyHex: string, chain: Chain): (td: TypedDataLike) => string {
+  const me = privateKeyToAddress(privateKeyHex)
+  const d = usdcDomain(chain)
+  return (td) => {
+    if (td.primaryType !== 'TransferWithAuthorization' || td.domain.name !== d.name || td.domain.version !== d.version || td.domain.chainId !== chain.chainId || !sameAddress(td.domain.verifyingContract, chain.usdc)) throw new Error(`refusing to sign: the typed data domain is not USDC on chain ${chain.chainId}`)
+    if (!sameAddress(td.message.from, me)) throw new Error('refusing to sign: the typed data names another wallet as the payer')
+    const auth: Authorization = { from: td.message.from, to: td.message.to, value: BigInt(td.message.value), validAfter: BigInt(td.message.validAfter), validBefore: BigInt(td.message.validBefore), nonce: td.message.nonce }
+    if (auth.value <= 0n) throw new Error('refusing to sign: zero amount')
+    return signAuthorization(chain, auth, privateKeyHex)
+  }
+}
+
 function addressWord(a: string): Uint8Array {
   const out = new Uint8Array(32)
   out.set(addressBytes(a), 12)
@@ -481,6 +508,30 @@ export class UsdcWallet {
     }
     if (typeof sent !== 'string' || !sameAddress(sent, prep.hash)) throw new TransferError(`node returned an unexpected hash ${String(sent)} for ${prep.hash}`, true)
     return { hash: prep.hash, nonce: prep.tx.nonce, explorer: this.chain.explorerTx + prep.hash, maxFeePerGas: prep.tx.maxFeePerGas, maxPriorityFeePerGas: prep.tx.maxPriorityFeePerGas }
+  }
+
+  /**
+   * USDC transfers from this wallet to `to` within the last `blocks` blocks, newest first: how a payment whose
+   * facilitator answer was lost is found again without signing a second authorization. Read-only (eth_getLogs).
+   */
+  async findTransfers(to: string, blocks = 3000): Promise<{ hash: string; value: bigint; blockNumber: bigint }[]> {
+    if (!isAddress(to)) throw new Error(`not an address: ${String(to).slice(0, 60)}`)
+    const head = hexToBigInt(await this.rpc('eth_blockNumber', []), 'block height')
+    const fromBlock = head > BigInt(blocks) ? head - BigInt(blocks) : 0n
+    const topic = (a: string) => '0x' + a.slice(2).toLowerCase().padStart(64, '0')
+    const logs = await this.rpc<unknown>('eth_getLogs', [{ address: this.chain.usdc, fromBlock: quantity(fromBlock), toBlock: 'latest', topics: [TRANSFER_TOPIC, topic(this.address), topic(to)] }])
+    const out: { hash: string; value: bigint; blockNumber: bigint }[] = []
+    for (const l of Array.isArray(logs) ? (logs as { transactionHash?: unknown; data?: unknown; blockNumber?: unknown; removed?: unknown }[]) : []) {
+      if (!l || l.removed === true || typeof l.transactionHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(l.transactionHash)) continue
+      let value = 0n
+      try {
+        value = hexToBigInt(l.data, 'log data')
+      } catch {
+        continue
+      }
+      out.push({ hash: l.transactionHash.toLowerCase(), value, blockNumber: typeof l.blockNumber === 'string' ? hexToBigInt(l.blockNumber, 'blockNumber') : 0n })
+    }
+    return out.sort((a, b) => (a.blockNumber > b.blockNumber ? -1 : a.blockNumber < b.blockNumber ? 1 : 0))
   }
 
   /** Waits until the transaction is mined; throws on timeout (the transfer may still land later: keep the hash). */

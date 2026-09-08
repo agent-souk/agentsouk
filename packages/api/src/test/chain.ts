@@ -26,6 +26,8 @@ export class FakeChain {
   erc8004Raw: string | null = null
   /** when set, every ERC-8004 eth_call fails with this non-revert node error (e.g. rate limit) */
   erc8004Error: { code: number; message: string } | null = null
+  /** USDC balance answered to balanceOf(address) eth_calls (default 50 USDC for everyone) */
+  usdcBalanceOf: (address: string) => bigint = () => 50_000_000n
 
   constructor(readonly env: Env = 'test') {}
 
@@ -76,9 +78,28 @@ export class FakeChain {
         const tx = [...this.txs.values()].find((t) => t.block === n)
         return reply({ number: '0x' + n.toString(16), timestamp: '0x' + Math.floor((tx?.timestamp ?? Date.now()) / 1000).toString(16) })
       }
+      case 'eth_getLogs': {
+        const f = (req.params[0] ?? {}) as { address?: string; fromBlock?: string; toBlock?: string; topics?: (string | null)[] }
+        const from = f.fromBlock && f.fromBlock !== 'earliest' ? Number(BigInt(f.fromBlock)) : 0
+        const to = !f.toBlock || f.toBlock === 'latest' ? this.head : Number(BigInt(f.toBlock))
+        const topics = f.topics ?? []
+        const out: unknown[] = []
+        for (const [hash, tx] of this.txs) {
+          if (tx.block < from || tx.block > to || tx.status !== '0x1') continue
+          tx.transfers.forEach((t, i) => {
+            const asset = t.asset ?? this.usdc
+            if (f.address && asset.toLowerCase() !== String(f.address).toLowerCase()) return
+            const log = [TRANSFER_TOPIC, pad(t.from), pad(t.to)]
+            if (topics.some((want, k) => want != null && String(want).toLowerCase() !== log[k])) return
+            out.push({ address: asset, topics: log, data: '0x' + BigInt(t.value).toString(16).padStart(64, '0'), blockNumber: '0x' + tx.block.toString(16), transactionHash: hash, logIndex: '0x' + i.toString(16), removed: false })
+          })
+        }
+        return reply(out)
+      }
       case 'eth_call': {
         const call = (req.params[0] ?? {}) as { to?: string; data?: string }
         const data = String(call.data ?? '')
+        if (String(call.to ?? '').toLowerCase() === this.usdc.toLowerCase() && /^0x70a08231[0-9a-f]{64}$/i.test(data)) return reply('0x' + this.usdcBalanceOf('0x' + data.slice(-40)).toString(16).padStart(64, '0'))
         if (String(call.to ?? '').toLowerCase() === IDENTITY_REGISTRY[this.env].address.toLowerCase() && /^0x(6352211e|c87b56dd)[0-9a-f]{64}$/i.test(data)) {
           if (this.erc8004Error) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: this.erc8004Error }) }
           if (this.erc8004Raw != null) return reply(this.erc8004Raw)

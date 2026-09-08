@@ -16,6 +16,7 @@ import { AgentSouk, type Job } from 'agentsouk'
 import { validateDocuments } from '../services/validate-json.js'
 import { safeFetch } from '../ssrf.js'
 import { bountyTag, pathValue, summaryOf, type BountySpec } from './catalog.js'
+import type { FirstBuyer } from './firstbuy.js'
 import { Judge, type CheckResult, type ProposalScore, type Triage, type Verdict } from './judge.js'
 import { formatUsdc, isAddress, sameAddress, TransferError, UsdcWallet } from './usdc.js'
 
@@ -133,6 +134,8 @@ const OWN_PATHS = [/^\/agent-souk\//i, /^\/package\/agentsouk/i, /^\/project\/ag
 export class OperatorRuntime {
   me: { id: string; handle: string; wallet_address: string | null } | null = null
   paymentsEnabled = false
+  /** the first-buy programme (ADR-31), ticked after the catalogue; shares this desk's identity, wallet and caps */
+  firstBuyer: FirstBuyer | null = null
   private ready = false
   private readonly states = new Map<string, BountyState>()
   private readonly proposalScores = new Map<string, ProposalRecord>()
@@ -228,6 +231,7 @@ export class OperatorRuntime {
           await this.save(spec.key, state).catch(() => undefined)
         }
       }
+      if (this.paymentsEnabled && this.firstBuyer) await this.firstBuyer.tick().catch((e: unknown) => this.log('first-buy tick failed', { env: this.env, error: msg(e) }))
       if (this.paymentsEnabled) await Promise.all([this.refreshSpend(), this.refreshBalances()]).catch(() => undefined)
     } finally {
       this.ticking = false
@@ -245,6 +249,7 @@ export class OperatorRuntime {
       payments_enabled: this.paymentsEnabled,
       wallet: this.wallet ? { address: this.wallet.address, usdc: this.balances ? formatUsdc(this.balances.usdc) : null, eth_wei: this.balances ? this.balances.eth.toString() : null } : null,
       spend: this.spend ? { total: formatUsdc(this.spend.total), today: formatUsdc(this.spend.today), total_budget: formatUsdc(this.config.totalBudget), daily_cap: formatUsdc(this.config.dailyCap) } : null,
+      firstbuy: this.firstBuyer ? this.firstBuyer.status() : null,
       bounties: this.catalog.map((spec) => {
         const s = this.states.get(spec.key) ?? freshState()
         return { key: spec.key, bounty_id: s.bounty_id, job_id: s.job_id, awards_paid: s.awards_paid, max_awards: spec.max_awards, paid_distinct: s.paid_distinct, pay_hash: s.pay_hash, needs_operator: s.needs_operator, last_error: s.last_error }
@@ -323,6 +328,13 @@ export class OperatorRuntime {
     const spend = await this.refreshSpend()
     if (spend.total + need > this.config.totalBudget) return `lifetime budget ${formatUsdc(this.config.totalBudget)} would be exceeded (${formatUsdc(spend.total)} spent, ${formatUsdc(committed)} committed elsewhere)`
     return null
+  }
+
+  /** Whether `amount` fits under the lifetime budget and the daily cap on top of everything already paid or in flight. */
+  async canSpend(amount: bigint): Promise<boolean> {
+    if (!this.paymentsEnabled) return false
+    const spend = await this.refreshSpend()
+    return spend.total + amount <= this.config.totalBudget && spend.today + amount <= this.config.dailyCap
   }
 
   private async refreshBalances(): Promise<{ usdc: bigint; eth: bigint }> {

@@ -17,14 +17,17 @@
  *   OPERATOR_TOTAL_BUDGET_USDC default 50 (lifetime), OPERATOR_DAILY_CAP_USDC default 20, OPERATOR_MAX_TRANSFER_USDC default 15
  *   FAUCET_SECRET              enables POST /faucet for the platform API (sandbox faucet, ADR-30): testnet USDC from the operator wallet, gas-free via the x402 facilitator
  *   FAUCET_MAX_USDC            per request, default 1; FAUCET_DAILY_CAP_USDC default 50
+ *   FIRSTBUY_ENABLED           default true: the desk hires every new outside listing once (ADR-31), paid gas-free, graded and reviewed
+ *   FIRSTBUY_MAX_USDC_LIVE/TEST  highest listing price bought (default 1 / 0.1); FIRSTBUY_DAILY_USDC_LIVE/TEST programme cap per day (default 5 / 1); FIRSTBUY_PER_SELLER default 2
  */
 import { serve } from '@hono/node-server'
 import { AgentSouk } from 'agentsouk'
 import { Llm } from './llm.js'
 import { CATALOG } from './operator/catalog.js'
 import { Judge } from './operator/judge.js'
+import { DEFAULT_FIRSTBUY, FirstBuyer } from './operator/firstbuy.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './operator/runtime.js'
-import { CHAINS, UsdcWallet } from './operator/usdc.js'
+import { CHAINS, typedDataSigner, UsdcWallet } from './operator/usdc.js'
 import { SellerRuntime, type Env } from './runner.js'
 import { createServer, type Operators, type Runtimes } from './server.js'
 import { allServices } from './services/index.js'
@@ -58,7 +61,14 @@ for (const env of ['live', 'test'] as Env[]) {
   const key = process.env[`OPERATOR_API_KEY_${env.toUpperCase()}`]
   if (!key) continue
   const wallet = operatorKey && llm.enabled ? new UsdcWallet(operatorKey, CHAINS[env], { maxPerTransfer: usdc(process.env.OPERATOR_MAX_TRANSFER_USDC, 15_000_000n), log }) : null
-  operators[env] = new OperatorRuntime(clientFor(key), wallet, new Judge(llm), CATALOG, env, log, operatorConfig)
+  const judge = new Judge(llm)
+  const op = new OperatorRuntime(clientFor(key), wallet, judge, CATALOG, env, log, operatorConfig)
+  if (wallet && operatorKey && process.env.FIRSTBUY_ENABLED !== 'false') {
+    const E = env.toUpperCase()
+    const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number(process.env.FIRSTBUY_PER_SELLER ?? DEFAULT_FIRSTBUY[env].perSeller) }
+    op.firstBuyer = new FirstBuyer(op.client, wallet, typedDataSigner(operatorKey, CHAINS[env]), judge, env, log, cfg, () => op.me, { canSpend: (a) => op.canSpend(a) })
+  }
+  operators[env] = op
 }
 
 // Sandbox faucet (ADR-30): the operator wallet on Base Sepolia gives sandbox agents testnet USDC so they can practise paying without a human.
