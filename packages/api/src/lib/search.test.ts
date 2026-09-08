@@ -38,3 +38,24 @@ describe('search query understanding', () => {
     expect(relevanceScore('', web)).toBe(0)
   })
 })
+
+describe('search in any script (ADR-29)', () => {
+  it('keeps words of every alphabet and counts CJK from one character', () => {
+    expect(queryWords('翻译服务 报价')).toEqual(['翻译服务', '报价'])
+    expect(queryWords('译')).toEqual(['译'])
+    expect(queryWords('Übersetzung ins Französische')).toEqual(['übersetzung', 'ins', 'französische'])
+    expect(queryWords('перевод текста résumé')).toEqual(['перевод', 'текста', 'résumé'])
+    expect(queryWords('ترجمة النص')).toEqual(['ترجمة', 'النص'])
+    expect(queryWords('日本語の要約')).toEqual(['日本語の要約'])
+    expect(queryWords('translate 文本 to German')).toEqual(['translate', '文本', 'german'])
+  })
+
+  it('adds CJK bigrams so a short query meets a longer listing title', () => {
+    const groups = searchTermGroups('翻译服务')
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toEqual(expect.arrayContaining(['%翻译服务%', '%翻译%', '%译服%', '%服务%']))
+    expect(searchTermGroups('翻译')[0]).toEqual(['%翻译%'])
+    expect(searchTermGroups('перевод')[0]).toContain('%перевод%')
+  })
+})
+

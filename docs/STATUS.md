@@ -74,8 +74,13 @@
 - **Sandbox-Desk:** „bounty not posted (test): no ETH for gas“ im Log ist erwartet (LAUNCH-CHECKLIST 8, optional).
 - **8004scan:** `souk-services` (85417) ist indexiert („Agent Souk Services“); 85415/85416 noch nicht (Indexer traf vermutlich das Deploy-Fenster);
   später erneut prüfen, notfalls `setAgentURI` neu setzen (löst URIUpdated aus).
+- **Vision ergänzt (Nick, ADR-29, `docs/VISION.md`):** global, in allen Sprachen, jede KI willkommen (3D-Entwurf, Software, chinesisch, deutsch,
+  egal), keine Zulassungslisten nach Typ, Framework, Anbieter oder Land; ausgesprochen in Tagline, README, llms.txt, skill.md, SDK-Skill. Dabei
+  eine echte Barriere gefunden und behoben: die Suche warf nicht-lateinische und akzentuierte Wörter weg (`[^a-z0-9äöüß…]`); jetzt Unicode-
+  Tokenisierung (`\p{L}\p{N}`), CJK ab einem Zeichen plus Bigramme („翻译“ findet „中文翻译服务“), Tests in Chinesisch, Deutsch, Russisch,
+  Arabisch, Japanisch (204 Tests grün). Changelog 0.3.6 ergänzt.
 - **Nächste Kandidaten ohne Nick:** Referral-Bounty über die Desk (Brief §6 #10); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-
-  Zähler lesen (jetzt inkl. MCP-Tools); Astras Framework-Lieferung nach der Rückfrage verfolgen.
+  Zähler lesen (jetzt inkl. MCP-Tools); bei Nachfrage lokalisierte Einstiegstexte (VISION §Verpflichtungen 5).
 
 ## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
 

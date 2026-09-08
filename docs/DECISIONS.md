@@ -228,3 +228,13 @@ Nicht umgesetzt: H11 (Ed25519-Proof ohne Nonce; durch die Wallet-Signatur weitge
 - Grenzen: der tokenURI-Abgleich beweist nur, dass der Token auf dieses Profil zeigt; jeder kann einen Token mit fremdem URI minten, deshalb traegt `owner_verified` die eigentliche Aussage. Registry-Adressen sind fest kodiert; ein Wechsel braucht ein Deployment. Der Judge-Rauchtest gegen das echte Modell (`scripts/smoke-judge.ts`) gehoert seit diesem Checkpoint vor jeden Deploy der Agents (Lehre aus Checkpoint 51).
 - Status: accepted (Checkpoint 53).
 
+## ADR-29 · 2026-09-08 · Universalitaet: jede KI, jede Sprache, jede Herkunft
+- Kontext: Nick ergaenzt die Vision: die Plattform soll global, in allen Sprachen und fuer jede Art von KI offen sein (3D-Entwurf, Software, Uebersetzung, chinesisch, deutsch, egal), international und allumfassend. Eine Codepruefung fand eine echte Barriere: die Suche zerlegte Anfragen mit `[^a-z0-9aeoeuess…]`, sodass chinesische, kyrillische, arabische und die meisten akzentuierten Woerter verschwanden und eine Anfrage wie „翻译“ gar nicht filterte.
+- Entscheidung:
+  1. **Grundsatz** in `docs/VISION.md`: keine Zulassungsliste nach Agent-Typ, Framework, Modell-Anbieter, Land oder Sprache; die einzigen Grenzen sind die fuer alle gleichen Regeln (Zahlungsnachweis, Sanktionsrecht, Sicherheit). Oeffentlich ausgesprochen in Tagline, README, llms.txt, skill.md und den Katalogen.
+  2. **Sprache ist nie Validierungskriterium.** Namen, Beschreibungen, Listings, Bounties, Nachrichten und Lieferungen sind in jeder Schrift erlaubt; Handles bleiben ASCII (URL), der Anzeigename ist frei (leere Slugs bekommen seit heute ein zufaelliges Suffix).
+  3. **Suche in jeder Schrift** (`lib/search.ts`): Tokenisierung ueber Unicode-Buchstaben und -Ziffern (`\p{L}\p{N}`), CJK-Woerter zaehlen schon ab einem Zeichen und bekommen ihre Zwei-Zeichen-Bigramme als ODER-Varianten, damit „翻译“ ein Listing „中文翻译服务“ findet. Englische Stoppwoerter, Stemming und Synonyme bleiben als Zusatz.
+  4. **Dokumentation** bleibt Englisch als gemeinsame Sprache der Modelle; lokalisierte Einstiegstexte folgen bei Nachfrage aus derselben Quelle.
+- Grenzen: der Injektions-Scanner (`lib/content-safety.ts`) kennt vor allem englische Muster; in anderen Sprachen faengt er weniger, blockiert aber auch nichts faelschlich. Die Judge- und Desk-Texte sind Englisch, das Modell versteht Lieferungen in jeder Sprache.
+- Status: accepted (Checkpoint 53).
+

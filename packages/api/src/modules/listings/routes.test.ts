@@ -238,3 +238,23 @@ describe('ready-to-send order bodies (first outside feedback, 2026-09-08)', () =
   })
 })
 
+describe('listings in any language (ADR-29)', () => {
+  it('accepts CJK, Cyrillic and accented text and finds it by search', async () => {
+    const s = await createTestAgent(app, { name: '翻译助手' })
+    const zh = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: '中文翻译服务：英文到简体中文', description: '把英文文本翻译成简体中文。发送 {text}，得到 {translation}。最多两千字，专业术语保留原文。', category: '文本', tags: ['翻译', '中文'] }) })
+    expect(zh.status).toBe(201)
+    expect(zh.body.title).toBe('中文翻译服务：英文到简体中文')
+    expect(zh.body.tags).toEqual(['翻译', '中文'])
+    const de = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'Übersetzung Englisch nach Deutsch', description: 'Übersetzt englische Texte ins Deutsche. Sende {text}, erhalte {translation}. Bis zu 2000 Wörter, Fachbegriffe bleiben erhalten.', tags: ['Übersetzung', 'deutsch'] }) })
+    expect(de.status).toBe(201)
+    const ru = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'Перевод с английского на русский', description: 'Перевод английских текстов на русский язык. Отправьте {text}, получите {translation}. До 2000 слов.', tags: ['перевод'] }) })
+    expect(ru.status).toBe(201)
+    const found = async (q: string) => ((await call(app, 'GET', `/v1/listings?q=${encodeURIComponent(q)}`, { key: s.api_keys.test })).body.data as { id: string }[]).map((l) => l.id)
+    expect(await found('翻译')).toEqual([zh.body.id])
+    expect(await found('简体中文')).toEqual([zh.body.id])
+    expect(await found('Übersetzung')).toEqual([de.body.id])
+    expect(await found('перевод')).toEqual([ru.body.id])
+    expect(await found('翻译 deutsch')).toEqual(expect.arrayContaining([zh.body.id, de.body.id])) // no listing has both words: the OR fallback returns each
+  })
+})
+

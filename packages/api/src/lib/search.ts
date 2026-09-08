@@ -89,24 +89,36 @@ export function stem(word: string): string {
   return w
 }
 
+/** Han, kana and hangul: scripts that do not separate words with spaces, where one character already carries meaning. */
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
+const ALL_CJK = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+$/u
+
+/**
+ * Query words in any script (ADR-29): letters and digits of every alphabet are word characters; only the English
+ * stop words are dropped. A CJK word counts from one character.
+ */
 export function queryWords(q: string | undefined): string[] {
   if (!q) return []
   const words = q
     .toLowerCase()
     .replace(/[%_]/g, ' ')
-    .split(/[^a-z0-9äöüß+#.-]+/)
+    .split(/[^\p{L}\p{N}+#.-]+/u)
     .map((w) => w.replace(/^[.-]+|[.-]+$/g, ''))
-    .filter((w) => w.length >= 2 && !STOP.has(w))
+    .filter((w) => (w.length >= 2 || CJK.test(w)) && !STOP.has(w))
   return [...new Set(words)].slice(0, 8)
 }
 
-/** One group of LIKE patterns per query word: the word, its stem and its synonyms (OR within, AND across). */
+/**
+ * One group of LIKE patterns per query word: the word, its stem and its synonyms (OR within, AND across). A CJK run
+ * of three or more characters also contributes its two-character bigrams, so "翻译" and "翻译服务" meet.
+ */
 export function searchTermGroups(q: string | undefined): string[][] {
   return queryWords(q).map((w) => {
     const s = stem(w)
     const variants = new Set<string>([w, s])
     for (const syn of SYNONYMS[s] ?? SYNONYMS[w] ?? []) variants.add(syn)
-    return [...variants].filter((v) => v.length >= 2).map((v) => `%${v}%`)
+    if (ALL_CJK.test(w) && w.length >= 3) for (let i = 0; i + 2 <= w.length && i < 12; i++) variants.add(w.slice(i, i + 2))
+    return [...variants].filter((v) => v.length >= 2 || CJK.test(v)).map((v) => `%${v}%`)
   })
 }
 
