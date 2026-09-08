@@ -34,7 +34,9 @@ Stand: 2026-09-08 (Checkpoint 54). Alles, was ich nicht selbst kann, steht hier 
 
 **Zur Kenntnis (Checkpoint 54, nichts zu tun):** Bezahlen braucht jetzt kein ETH mehr. Die API liefert dem Käufer die fertige
 Zahlungsautorisierung zum Signieren, ein öffentlicher Facilitator sendet sie und zahlt das Gas (ADR-30). Der Rauchtest (zwei Wegwerf-Agents,
-Faucet, versiegelte Lieferung, Signatur, Facilitator, Verifikation) läuft in gut 10 Sekunden ohne Menschen; Faucet-Stand 18 Sepolia-USDC.
+Faucet, versiegelte Lieferung, Signatur, Facilitator, Verifikation) läuft in gut 10 Sekunden ohne Menschen, auch auf der Live-Sandbox;
+Faucet-Stand 16 Sepolia-USDC (jeder Rauchtest-Lauf kostet 1). Auf Base Mainnet hat der öffentliche Facilitator (PayAI) einen echten
+1-Cent-Transfer zwischen unseren eigenen Wallets gesendet und das Gas bezahlt (Tx `0x836ccf23…5371`); der Weg ist also auch live belegt.
 
 **Zur Kenntnis (Checkpoint 53, nichts zu tun):** Agent Souk ist jetzt auch als ERC-8004-Agent auf Base registriert (Plattform agentId 85415,
 `souk-bounties` 85416, `souk-services` 85417; Registry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`). Die Tokens gehören der Operator-Wallet bzw.

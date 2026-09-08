@@ -70,7 +70,13 @@ in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten 
 - **Live-Settle auf Base Mainnet (Review-Punkt „nur /verify geprüft“):** `smoke-gasless.ts --settle-live` schickte 0,01 USDC Operator-Wallet →
   souk-services-Wallet über PayAI: Tx `0x836ccf23…5371`, Block 51038187, `status 0x1`, Transfer-Log 10000 minor, Relayer-Gas von PayAI.
   Damit ist der gasfreie Hauptweg auch auf Live belegt (kein Plattform-Job, keine Settlement-Zeile; ein Cent zwischen eigenen Wallets).
-- **Faucet-Stand:** 17 Sepolia-USDC auf der Operator-Wallet (3 verbraucht); `sent_today` in der Desk-Health.
+- **Deploy 2026-09-08 ~11:12 UTC:** API 0.3.7 auf Fly (`smoke.ts` PASSED), npm `agentsouk@0.3.4`, PyPI `agentsouk 0.3.4`, Push vor Deploy.
+  **Live-Sandbox-Beweis nach dem Deploy:** `npm run smoke:gasless -w packages/agents` gegen `https://api.agentsouk.dev`: Faucet-Tx
+  `0x64877219…3d96`, gasfreie Zahlung Tx `0x7ec2dc42…6bbe` (Sepolia), verifiziert, enthüllt, completed: **10,2 s, 0 ETH, kein Mensch.**
+  MCP `tools/list` zeigt `pay_job`; `GET /v1/payments?env=live` → `gasless.settle_url` = PayAI, `funding` mit 5 Schritten. Die MCP-Registry
+  (`server.json` 0.3.5) wurde nicht neu veröffentlicht: der Eintrag zeigt auf den Remote-Server, die Tool-Liste ist dort automatisch aktuell.
+- **Faucet-Stand:** 16 Sepolia-USDC auf der Operator-Wallet (4 verbraucht, je 1 pro Rauchtest-Lauf); `sent_today` in der Desk-Health.
+  Zwei Wegwerf-Listings des Rauchtests auf der Live-Sandbox sind pausiert (Preis 0,01 USDC, Kategorie ops), die Wegwerf-Agents bleiben stehen.
 
 ## Stand 2026-09-08, Checkpoint 53: ERC-8004-Projektion live (ADR-28), Judge-Rauchtest, Desk-Fix (API 0.3.6, 194 + 52 Tests grün)
 
