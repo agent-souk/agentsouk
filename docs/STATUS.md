@@ -2,7 +2,38 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08, nach Checkpoint 54; Baum sauber, alles deployt)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~15:30 UTC, Session-Limit bei 94 %; Baum sauber und gepusht, aber NICHT alles deployt)
+
+**Stand:** Commit `70161b4` enthält das **Erstkäufer-Programm (ADR-31, `packages/agents/src/operator/firstbuy.ts`)** plus API-Texte/Changelog
+0.3.8. Tests grün (Agents 59, API 216), `smoke:judge` bestanden (Listing-Verdict am echten Modell, 0,19 USD). **Noch nicht deployt** (weder
+Agents noch API 0.3.8, weil der Changelog das Programm ankündigt). **Vor dem Deploy die Review-Funde einbauen** (Workflow, 1 Reviewer fertig,
+der zweite starb am Session-Limit; volle Texte in `research/review-firstbuy-2026-09-08.jsonl`, 13 Funde: 3 hoch, 5 mittel):
+1. **hoch, Memory-Limit:** ein Key `operator/<env>/firstbuy` mit vollen Verdicts sprengt die 64-KB-Grenze nach ~20-40 Käufen, `skipped` wächst
+   unbegrenzt; dann wirft `save()` für immer. → kompakte Verdicts (decision, rating, 300 Zeichen, output_hash), `skipped` kappen, Historie nach
+   Alter trimmen, nie-getrimmter Index {listing_id: seller_id} für „schon gekauft“/Je-Verkäufer-Zähler (auch Fund „MAX_HISTORY vergisst Dedupe“).
+2. **hoch, in_progress ohne Lieferung:** die Plattform lässt in_progress nie verfallen; Käufer muss nach deliver_by+1h `cancel`. → in `drive()`
+   bei `in_progress` und `available_actions` enthält `cancel`: cancel + `end(..., pay_hash ? 'paid_no_redelivery' : 'no_delivery')` (cancel setzt
+   refund_due bei bezahltem Job). Sonst blockieren 3 stumme Verkäufer `maxOpen` für immer.
+3. **hoch, Chain-Recovery:** `findTransfers` matcht nur (Empfänger, Betrag) und kann den Hash eines anderen Jobs adoptieren (gleiche Wallet, gleicher
+   Preis, Bounty-Auszahlung); dann 409 `transaction_already_used` für immer, ohne needs_operator. → Transfer über den job-abgeleiteten EIP-3009-Nonce
+   identifizieren (`paymentRequired(job).gasless.typed_data.message.nonce` → USDC-`AuthorizationUsed`-Log) oder mindestens: Hashes aus
+   `st.purchases`/Desk-Ledger ausschließen, Block nach `pay_attempt_at` verlangen; im `pay_hash`-Zweig nicht-pending-Fehler als Fehlschlag zählen.
+4. mittel, Sybil: Je-Verkäufer-Kappen nur nach `seller.id`; → zusätzlich je `pay_to`-Wallet zählen, Kappe „neue Verkäufer je Tag“, live evtl.
+   Mindestalter des Kontos. 5. mittel: Discovery sieht nur die neuesten 50 Listings, keine Paginierung/Filter → mit `next_cursor` bis lookback,
+   `payment=on_delivery`, `max_price` übergeben. 6. mittel: `load()` cached den Zustand prozesslang → menschliche Korrektur im Memory wird
+   überschrieben; je Tick neu lesen (mind. vor dem Signieren). 7. mittel: `canSpend` beim Anstellen ignoriert offene Käufe und in-flight
+   Erstkauf-Transfers (nicht im Desk-Ledger) → offene Preise mitrechnen, nach `payGasless` ins Ledger schreiben; bei Kappen-Halt kurz vor pay_by
+   den Job canceln statt unbezahlt verfallen lassen. 8. mittel, Judge: `</data>` in Verkäufertext schließt den Datenblock (betrifft alle Prompts) →
+   escapen oder zufälliger Tag-Name; Listing-Text als untrusted markieren; Rubrik-Boden gegen triviale Versprechen. 9. niedrig: `expired` mit
+   pay_hash innerhalb der Gnadenfrist erst `jobs.pay` erneut versuchen. 10. niedrig: Review-Fehler nicht als reviewed markieren; ohne Verdict beim
+   Auto-Complete erst bewerten. 11. niedrig: `FIRSTBUY_PER_SELLER` mit `Number()` → NaN schaltet die Kappe ab (parseInt + Default). 12. Tests für
+   all das (stummer Verkäufer, falscher Hash, geteilte Wallet, 64 KB, Korrektur im Memory, expired in Gnadenfrist, Crash zwischen create und save).
+**Danach:** Agents deployen (`smoke:judge` erneut, wenn judge.ts angefasst), API 0.3.8 deployen, erste Erstkäufe live beobachten (Live: `veriton`
+0,02 USDC „HTML→JSON“; Sandbox: drei fremde Listings ohne example_input, die über `how_to_order.body_example` bestellt werden), STATUS
+Checkpoint 55 schreiben. **Sonst:** veriton-Security-Job `job_01M20CBN…` ist bezahlt (3,5 USDC) und in Revision 1/2 (Desk verlangt realistische
+Severity), läuft autonom. Nick 2026-09-08: Bremse bei Security-Funden bleibt, sonst freie Hand.
+
+## Übergabe davor (Checkpoint 54; Baum sauber, alles deployt)
 
 **Erster Block: Zahlen so einfach wie möglich (ADR-30, VISION §Zahlen).** Nick will keinen Agent an der Zahlung verlieren.
 1. ~~Sandbox-Faucet~~ **LIVE seit 2026-09-08 (Commit b3b45ee/a181ff5):** `POST /v1/sandbox/faucet` (Test-Key, gebundene Wallet) → die Desk
