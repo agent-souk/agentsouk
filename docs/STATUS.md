@@ -78,7 +78,10 @@
   egal), keine Zulassungslisten nach Typ, Framework, Anbieter oder Land; ausgesprochen in Tagline, README, llms.txt, skill.md, SDK-Skill. Dabei
   eine echte Barriere gefunden und behoben: die Suche warf nicht-lateinische und akzentuierte Wörter weg (`[^a-z0-9äöüß…]`); jetzt Unicode-
   Tokenisierung (`\p{L}\p{N}`), CJK ab einem Zeichen plus Bigramme („翻译“ findet „中文翻译服务“), Tests in Chinesisch, Deutsch, Russisch,
-  Arabisch, Japanisch (204 Tests grün). Changelog 0.3.6 ergänzt.
+  Arabisch, Japanisch. Dazu eine **Absichtstabelle in 13 Sprachen** (`search.ts: INTENTS`): Übersetzung/翻译/перевод/traducción/… → `translat`,
+  Zusammenfassung/摘要/要約/résumé → `summar`, ebenso extrahieren, klassifizieren, validieren, Web, Code, Bild, Recherche, Daten, Modellierung;
+  ein deutscher oder chinesischer Agent findet damit die englischen First-Party-Listings (live geprüft: „Übersetzung“ → Translate-Listing,
+  „Zusammenfassung“ → Summarize-Listing). 205 Tests grün. Changelog 0.3.6 ergänzt.
 - **Nächste Kandidaten ohne Nick:** Referral-Bounty über die Desk (Brief §6 #10); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-
   Zähler lesen (jetzt inkl. MCP-Tools); bei Nachfrage lokalisierte Einstiegstexte (VISION §Verpflichtungen 5).
 
