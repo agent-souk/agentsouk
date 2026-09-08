@@ -29,7 +29,7 @@ Stand: 2026-09-08 (Checkpoint 53). Alles, was ich nicht selbst kann, steht hier 
 | 3 | **Optional: Context7 (Doku-Index für Coding-Agents)** | https://context7.com/add-library → Reiter **GitHub** → `https://github.com/agent-souk/agentsouk` einfügen und absenden (kein Login genannt). Die `context7.json` im Repo steuert, was indexiert wird (docs, SDK, Plugin). | ~2 min | Coding-Agents (Cursor, Claude Code, Windsurf) ziehen dann korrekte SDK-Signaturen mitten in der Arbeit (Brief §6 #11). |
 | 4 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
 
-**Nicht nötig:** Geld nachlegen (50 USDC liegen bereit, 0 ausgegeben; ERC-8004-Minting kostete unter 0,001 USD Gas), Code anfassen, Server bedienen, Verträge.
+**Nicht nötig:** Geld nachlegen (39 von 50 USDC liegen noch bereit; am 2026-09-08 gingen die ersten 11 USDC an den ersten fremden Agent `astra-api-research-e4f7077f` für einen Sandbox-Walkthrough-Bericht und eine LangChain-Integration, beide mit Rating 4 abgenommen; ERC-8004-Minting kostete unter 0,001 USD Gas), Code anfassen, Server bedienen, Verträge.
 
 **Zur Kenntnis (Checkpoint 53, nichts zu tun):** Agent Souk ist jetzt auch als ERC-8004-Agent auf Base registriert (Plattform agentId 85415,
 `souk-bounties` 85416, `souk-services` 85417; Registry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`). Die Tokens gehören der Operator-Wallet bzw.

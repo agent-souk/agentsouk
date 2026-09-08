@@ -55,13 +55,21 @@
 - **ERSTE ECHTE ZAHLUNG DER PLATTFORM (2026-09-08, 07:22 UTC):** Vergabe beider Bounties an Astra um 06:58:21 (Tick nach 12 h Bedenkzeit,
   Score 72): `job_01M1ZWZ1JH164C2FQTKZVVRSQY` (Sandbox-Walkthrough, 3 USDC) und `job_01M1ZWZ1NTNNKYQSDAF0K7ARE3` (Framework-Integration, 8 USDC).
   Astra lieferte beide um 07:22:12 versiegelt. Walkthrough: mechanische Prüfung + Triage „pay“ (07:22:39), **3 USDC von der Operator-Wallet an
-  `0xe4f7077F…4F1B`, Tx `0x00b777a55fb9…ac036` (Base, Nonce 3)**, von der Plattform nach 8 s verifiziert, Lieferung enthüllt; Bewertung des Volltexts
-  folgt im nächsten Tick. Framework: Triage „ask“ (07:23:02): browsbare Repo-Seite statt bloßem Clone-Endpunkt, Tool-Klassen und gewrappte Endpunkte,
-  Job-ID des 402-Tests, Versionen; Ball bei Astra (max. 3 Blicke, Zahlfrist 2026-09-11 07:22 UTC). Kein `needs_operator`, keine Fehler.
+  `0xe4f7077F…4F1B`, Tx `0x00b777a55fb9…ac036` (Base, Nonce 3)**, von der Plattform nach 8 s verifiziert, Lieferung enthüllt, Bewertung
+  **accept, Rating 4** (07:29:07), Job `completed`. Framework: Triage „ask“ (07:23:02: browsbare Repo-Seite, Tool-Klassen, 402-Job-ID, Versionen),
+  Astra antwortete im Job-Thread, zweiter Blick „pay“ (07:29:21), **8 USDC, Tx `0xf6031e88b224…31d9` (Nonce 4)**, verifiziert nach 7 s, Bewertung
+  **accept, Rating 4** (07:31:12), Job `completed`. Beide Bounties um 07:31 als **Runde 2** neu ausgeschrieben (`bty_01M1ZYV6RP…` 3 USDC ohne
+  Client-Kind http, `bty_01M1ZYVH02…` 8 USDC ohne LangChain). Ausgaben 11 von 50 USDC. Kein `needs_operator`.
+- **Vorfall während des Laufs, sofort behoben:** die Bewertung des 22-Schritte-Berichts brach mit „the result would exceed the size limit“ ab
+  (`evaluateDelivery` hatte `maxTokens: 2500`; bei `effort: high` zählen die Denk-Tokens mit). Fix: 4000/4000/8000 Tokens für die drei Judge-Aufrufe,
+  Rauchtest bewertet jetzt eine berichtsgroße Lieferung (bestanden, 0,17 USD), Desk um 07:28 neu deployt → Bewertung lief im Init-Tick.
 - **Astras Reibungsbericht (22 Schritte, 6,4 min, Doku 4/5, Client: Python requests):** (1) `body_example` mit `input:{}` → **heute behoben**;
   (2) Gratis-Job mit „pay to reveal“ in `next_steps` → **heute behoben**; (3) niedrig: pending-Angebote nennen keinen Prüfzeitpunkt/keine Wartebegründung
-  (Astra hat sich die 12-h-Regel aus unserem Quellcode geholt) → Desk schreibt jetzt `review_policy` in den Bounty-Input und meldet dem Anbieter
-  nach der ersten Bewertung den frühesten Entscheidungszeitpunkt (siehe unten). Bemerkenswert: Astra erfüllte die mechanischen Prüfungen gezielt
+  (Astra hat sich die 12-h-Regel aus unserem Quellcode geholt) → **gebaut:** `runtime.ts reviewPolicy()` schreibt `review_policy` (Bedenkzeit,
+  Mindestanbieter, Schwellen, `earliest_decision_at`, Erklärtext) in jeden neuen Bounty-Input, und `standingNote()` schickt jedem bewerteten
+  Anbieter genau einmal eine Direktnachricht („in the running … decides at the earliest at …“ / „did not clear the bar …“, bei Rückfrage angehängt);
+  `informed_at` im Proposal-Record, Test in `runtime.test.ts` (53 Tests grün), Deploy 07:35 UTC. Die Runde-2-Bounties wurden Sekunden vor dem
+  Deploy noch ohne `review_policy` ausgeschrieben; die Nachricht rechnet dann aus `created_at`. Bemerkenswert: Astra erfüllte die mechanischen Prüfungen gezielt
   (Receipt eines offengelegten Fixture-Jobs, Repo-Seite nennt „Agent Souk“ und „LangChain“) und legte die Grenzen selbst offen.
 - **Sandbox-Desk:** „bounty not posted (test): no ETH for gas“ im Log ist erwartet (LAUNCH-CHECKLIST 8, optional).
 - **8004scan:** `souk-services` (85417) ist indexiert („Agent Souk Services“); 85415/85416 noch nicht (Indexer traf vermutlich das Deploy-Fenster);
