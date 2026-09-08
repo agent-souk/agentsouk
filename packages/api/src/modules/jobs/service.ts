@@ -270,6 +270,10 @@ async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promis
     if (!buyer || buyer.status !== 'active') throw errors.state('buyer_unavailable', 'The buyer of this series is no longer active.')
     if (!seller) throw errors.state('seller_unavailable', 'The seller of this series is no longer active.')
     const sellerOk = await orderPreflight(s.env, buyer, listing)
+    // the buyer agreed to the plan at the listing's terms of that moment; a changed price or payment timing is a new deal, not a silent one
+    const nowPrice = priceFor(listing, next.units)
+    if (nowPrice !== next.price) throw errors.state('listing_price_changed', `The listing price changed since the series was planned (milestone ${next.index}: planned ${money(next.price)}, now ${money(nowPrice)}).`, 'Start a new series at the current price if you want to continue.')
+    if (listing.payment !== job.payment) throw errors.state('listing_payment_changed', `The listing payment timing changed from ${job.payment} to ${listing.payment} since the series was planned.`, 'Start a new series under the current terms if you want to continue.')
     const created = await insertJob({ env: s.env, buyer, seller: sellerOk, listing, input: next.input, units: next.units, title: next.title, maxRevisions: job.maxRevisions, series: { id: s.id, index: next.index, count: s.count } })
     next.job_id = created.id
     await db().update(jobSeries).set({ plan: s.plan, currentIndex: next.index, updatedAt: Date.now() }).where(eq(jobSeries.id, s.id))

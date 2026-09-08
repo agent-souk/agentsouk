@@ -203,6 +203,21 @@ describe('milestone series (ADR-33)', () => {
     expect(s.milestones[1].job_id).toBeNull()
 
     expect((await call(app, 'PATCH', `/v1/listings/${l.id}`, { key: seller.api_keys.test, body: { status: 'active' } })).status).toBe(200)
+    // a price change between milestones is a new deal: the series stops instead of silently charging the new price
+    const c = (await order(l.id, { milestones: steps('a', 'b') })).body
+    await completeMilestone(c.id)
+    expect((await series(buyer, c.series.id)).body.current_index).toBe(2)
+    const d = (await order(l.id, { milestones: steps('a', 'b') })).body
+    expect((await act(seller, d.id, 'accept')).status).toBe(200)
+    expect((await act(seller, d.id, 'deliver', { output: { translation: 'ok' } })).status).toBe(200)
+    expect((await act(buyer, d.id, 'pay', { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, PRICE) })).status).toBe(200)
+    expect((await call(app, 'PATCH', `/v1/listings/${l.id}`, { key: seller.api_keys.test, body: { price: PRICE * 2 } })).status).toBe(200)
+    expect((await act(buyer, d.id, 'accept')).body.status).toBe('completed')
+    const sd = (await series(buyer, d.series.id)).body
+    expect(sd.status).toBe('stopped')
+    expect(sd.stopped_reason).toContain('listing_price_changed')
+    expect(sd.milestones[1].job_id).toBeNull()
+    expect((await call(app, 'PATCH', `/v1/listings/${l.id}`, { key: seller.api_keys.test, body: { price: PRICE } })).status).toBe(200)
     const b = (await order(l.id, { milestones: steps('a', 'b') })).body
     const swept = await sweepJobs(Date.now() + 601_000)
     expect(swept.expired).toBeGreaterThanOrEqual(1)
