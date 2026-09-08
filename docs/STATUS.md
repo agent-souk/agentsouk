@@ -2,30 +2,42 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~00:15 UTC; Baum sauber, alles deployt: API 0.4.0, SDKs 0.4.0, Plugin/Extension 0.3.7)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~01:20 UTC; Baum sauber, alles deployt: API 0.4.1, SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt seit Checkpoint 56 (Checkpoint 57, Details unten):** Meilenstein-Serien (ADR-33) live: `POST /v1/jobs` mit `milestones`
-(2 bis 20 Schritte) macht aus einem großen Auftrag N gewöhnliche Jobs mit je eigener versiegelter Lieferung, Zahlung und Reputation;
-die Plattform legt den nächsten Schritt automatisch an, stoppt bei Fehlschlag, geänderten Listing-Bedingungen oder auf Wunsch einer
-Partei (`GET/POST /v1/series…`). Kein Geldmechanismus, keine Rechtsfrage; überall mit dem Satz „begrenzt die Exposition, ist kein
-Käuferschutz“. `GET /health` nennt jetzt `build.commit` (= gepushter HEAD; Deploy nur aus sauberem Baum, Einzeiler in DEPLOY.md).
-23 Review-Funde eingebaut (1 hoch: Reservierung vor der Job-Anlage). Test-Datenbanken füllten die Platte (7.861 Dateien, 3,1 GB):
-behoben, `_resetDbForTests` räumt jetzt auf.
+**Erledigt seit Checkpoint 57 (Checkpoint 58, Details unten):** ADR-34: Exposure-Vorschlag je Verkäufer (`exposure` in der Reputation und
+Attestierung, `suggested_max_exposure_usdc` auf jedem Listing, Warnung `above_suggested_exposure` bei `POST /v1/jobs`, nie eine Verweigerung;
+Formel veröffentlicht) und Key-History (`SERVER_PREVIOUS_PUBLIC_KEYS`, retired Keys im JWKS, `/v1/receipts/verify` akzeptiert sie);
+`/v1/stats.series`. Damit sind aus `working_on` des Commitments-Dokuments nur noch „reproduzierbarer Build“ und „Export in einem Aufruf“
+übrig. **PR #107 ist gemerged:** Agent Souk steht in `punkpeye/awesome-remote-mcp-servers` (Checkliste Punkt 1 abgehakt).
 
-**Für Nick:** nichts für die Plattform. **Aber deine Platte war voll (0 Byte frei; jetzt ~1,6 GB):** 80 GB liegen im Android-Emulator von
-„Google Play Games“ (`AppData\Local\Google\Play Games\…\avd`), 48 GB in `Desktop\FTMORESEARCH`, 33 GB MetaTrader-Daten
-(`AppData\Roaming\MetaQuotes`). Ich habe davon nichts angerührt; „Google Play Games“ deinstallieren gibt 80 GB frei. Unter 1 GB frei
-scheitern Tests und Builds hier wieder.
+**Für Nick:** nichts Neues; die Platten-Notiz (Google Play Games 80 GB) aus Checkpoint 57 gilt weiter (3,4 GB frei).
 
-**Live-Zahlen (00:10 UTC):** 24 Agents, 16 aktive Listings (10 fremde; Verkäufer listen jetzt zum Kappenpreis 1 USDC), 6 abgeschlossene
-Live-Jobs = 18,32 USDC, alle von uns; Leaderboard live: astra, veriton, moneymaker mit Rangwert 0 (nur von uns bezahlt). Desk 18,32 von
-50 USDC. PR https://github.com/punkpeye/awesome-remote-mcp-servers/pull/107 offen, CI grün, kein Maintainer-Kommentar.
+**Live-Zahlen (01:00 UTC):** 28 Agents, 18 aktive Listings (12 fremde), 7 abgeschlossene Live-Jobs = 19,32 USDC, alle von uns (dritter
+Erstkauf: juan-codex-research, 1 USDC, Rating 3); noch keine Serie angelegt (`stats.series` alles 0); Desk 19,32 von 50 USDC.
 
-**Nächste Kandidaten:** (a) PR #107 auf Merge prüfen; (b) `working_on` des Dokuments: Exposure-Vorschlag je Gegenpartei (aus öffentlicher
-Historie, keine Rechtsfrage), Key-History für den Plattformschlüssel, Export in einem Aufruf; (c) Agents-Deploy bei Gelegenheit (Code unverändert,
-nur SDK 0.4.0 im Image); (d) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei;
-(e) Tagescheck: `firstbuy.skipped` in der Desk-Health, ob ein Fremder einen Fremden bezahlt hat (`third_party_counterparties > 0`), ob jemand
-eine Serie angelegt hat (`GET /v1/admin/overview` zeigt es nicht; ggf. Zähler ergänzen).
+**Nächste Kandidaten:** (a) Export in einem Aufruf (`GET /v1/agents/me/export`: Profil, Listings, Jobs mit Ein-/Ausgaben, Threads, Rezensionen,
+Settlements, Memory, signierte Belege; letzter offener `working_on`-Punkt ohne Rechtsfrage); (b) Agents-Deploy bei Gelegenheit (Code unverändert,
+SDK 0.4.1 im Image); (c) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei;
+(d) Tagescheck: `stats.series`, `third_party_counterparties > 0` irgendwo?, `firstbuy.skipped`, Discord-Rolle im MCP-Discord optional.
+
+## Stand 2026-09-09, Checkpoint 58: Exposure-Vorschlag und Key-History (ADR-34; API 0.4.1, SDKs 0.4.1; 233 + 62 + 5 Tests grün)
+
+- **Tagescheck (2026-09-09 ~00:30 UTC):** PR #107 auf `awesome-remote-mcp-servers` **gemerged** (22:45 UTC, Fast-Track), Welcome-Bot fragt optional
+  nach einem Discord-Namen. 28 Live-Agents, 18 Listings, dritter Erstkauf (juan-codex-research), Desk 19,32 USDC, Faucet 2 USDC heute, keine Fehler.
+- **Exposure (ADR-34):** `suggestedExposure()` in `reviews/service.ts`: `clamp(0,10 USDC, 0,10 + 0,5 × Fremdvolumen × (1 − Fehlerquote), 100 USDC)`,
+  Fehlerquote = `jobs_failed / (jobs_completed + jobs_failed)` (`jobs_failed` enthält Verkäufer-Abbrüche und Käuferurteile; `jobs_cancelled` ist
+  Teilmenge, nicht doppelt gezählt), offene Rückerstattung pinnt auf den Boden, Desk-Käufe zählen nicht. Sichtbar: `live/test.exposure {suggested_max_usdc,
+  display, basis, reason, method, note}` in der Reputation (und damit in der Attestierung), `seller.reputation.suggested_max_exposure_usdc` auf Listings,
+  `warnings[]` in `POST /v1/jobs` (`above_suggested_exposure`, mit Hinweis auf Meilensteine). Wortlaut überall: Vorschlag, keine Grenze, kein Versprechen
+  von Sicherheit darunter; Formel im `explain`, llms.txt, Commitments (`who_carries_the_risk.suggested_exposure`).
+- **Key-History (ADR-34):** Config `SERVER_PREVIOUS_PUBLIC_KEYS`; `allKeyJwks()` (retired Keys mit `dev.agentsouk/retired: true`) im JWKS und in der
+  HTTP-Signaturen-Directory; `keyByKid()`; `POST /v1/receipts/verify` prüft gegen den Key der gesendeten `kid` und antwortet mit `retired`. Rotationsablauf
+  in DEPLOY.md; Commitments `known_gap` → `key_history`. Tests mit generiertem Altschlüssel (gültig, manipuliert, aktuell).
+- **Sonstiges:** `GET /v1/stats.series {active, completed, stopped}`; Changelog 0.4.1; SDK-Typ `suggested_max_exposure_usdc`; Checkliste Punkt 1 erledigt.
+- **Deploy 2026-09-09 ~01:12 UTC:** Push, API 0.4.1 (`build.commit` = `07024637…d5ec` = HEAD), `smoke.ts` PASSED, `smoke:gasless` 9,9 s, Live-Prüfung:
+  veriton `exposure 0.10 USDC` (nur Desk-Zahlungen), Listing-Summary trägt das Feld, JWKS 1 Key, `verify.retired` vorhanden, `stats.series` 0/0/0,
+  `working_on` nur noch Build-Reproduzierbarkeit und Export. npm `agentsouk@0.4.1`, PyPI `agentsouk 0.4.1`. Kein Review-Workflow für diesen kleinen
+  Schritt (reine Funktion + Config); Agents nicht neu deployt.
 
 ## Stand 2026-09-09, Checkpoint 57: Meilenstein-Serien (ADR-33), Build-Kennung, Platten-Vorfall (API 0.4.0, SDKs 0.4.0; 230 + 62 + 5 Tests grün)
 

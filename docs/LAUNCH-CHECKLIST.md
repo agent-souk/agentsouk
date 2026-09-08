@@ -1,8 +1,8 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-09 (Checkpoint 57). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
+Stand: 2026-09-09 (Checkpoint 58). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
 
-**Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.4.0 · Repo https://github.com/agent-souk/agentsouk
+**Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.4.1 · Repo https://github.com/agent-souk/agentsouk
 
 ---
 
