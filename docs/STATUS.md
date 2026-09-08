@@ -2,36 +2,15 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~15:30 UTC, Session-Limit bei 94 %; Baum sauber und gepusht, aber NICHT alles deployt)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~16:20 UTC, nach Checkpoint 55; Baum sauber, alles deployt)
 
-**Stand:** Commit `70161b4` enthält das **Erstkäufer-Programm (ADR-31, `packages/agents/src/operator/firstbuy.ts`)** plus API-Texte/Changelog
-0.3.8. Tests grün (Agents 59, API 216), `smoke:judge` bestanden (Listing-Verdict am echten Modell, 0,19 USD). **Noch nicht deployt** (weder
-Agents noch API 0.3.8, weil der Changelog das Programm ankündigt). **Vor dem Deploy die Review-Funde einbauen** (Workflow, 1 Reviewer fertig,
-der zweite starb am Session-Limit; volle Texte in `research/review-firstbuy-2026-09-08.jsonl`, 13 Funde: 3 hoch, 5 mittel):
-1. **hoch, Memory-Limit:** ein Key `operator/<env>/firstbuy` mit vollen Verdicts sprengt die 64-KB-Grenze nach ~20-40 Käufen, `skipped` wächst
-   unbegrenzt; dann wirft `save()` für immer. → kompakte Verdicts (decision, rating, 300 Zeichen, output_hash), `skipped` kappen, Historie nach
-   Alter trimmen, nie-getrimmter Index {listing_id: seller_id} für „schon gekauft“/Je-Verkäufer-Zähler (auch Fund „MAX_HISTORY vergisst Dedupe“).
-2. **hoch, in_progress ohne Lieferung:** die Plattform lässt in_progress nie verfallen; Käufer muss nach deliver_by+1h `cancel`. → in `drive()`
-   bei `in_progress` und `available_actions` enthält `cancel`: cancel + `end(..., pay_hash ? 'paid_no_redelivery' : 'no_delivery')` (cancel setzt
-   refund_due bei bezahltem Job). Sonst blockieren 3 stumme Verkäufer `maxOpen` für immer.
-3. **hoch, Chain-Recovery:** `findTransfers` matcht nur (Empfänger, Betrag) und kann den Hash eines anderen Jobs adoptieren (gleiche Wallet, gleicher
-   Preis, Bounty-Auszahlung); dann 409 `transaction_already_used` für immer, ohne needs_operator. → Transfer über den job-abgeleiteten EIP-3009-Nonce
-   identifizieren (`paymentRequired(job).gasless.typed_data.message.nonce` → USDC-`AuthorizationUsed`-Log) oder mindestens: Hashes aus
-   `st.purchases`/Desk-Ledger ausschließen, Block nach `pay_attempt_at` verlangen; im `pay_hash`-Zweig nicht-pending-Fehler als Fehlschlag zählen.
-4. mittel, Sybil: Je-Verkäufer-Kappen nur nach `seller.id`; → zusätzlich je `pay_to`-Wallet zählen, Kappe „neue Verkäufer je Tag“, live evtl.
-   Mindestalter des Kontos. 5. mittel: Discovery sieht nur die neuesten 50 Listings, keine Paginierung/Filter → mit `next_cursor` bis lookback,
-   `payment=on_delivery`, `max_price` übergeben. 6. mittel: `load()` cached den Zustand prozesslang → menschliche Korrektur im Memory wird
-   überschrieben; je Tick neu lesen (mind. vor dem Signieren). 7. mittel: `canSpend` beim Anstellen ignoriert offene Käufe und in-flight
-   Erstkauf-Transfers (nicht im Desk-Ledger) → offene Preise mitrechnen, nach `payGasless` ins Ledger schreiben; bei Kappen-Halt kurz vor pay_by
-   den Job canceln statt unbezahlt verfallen lassen. 8. mittel, Judge: `</data>` in Verkäufertext schließt den Datenblock (betrifft alle Prompts) →
-   escapen oder zufälliger Tag-Name; Listing-Text als untrusted markieren; Rubrik-Boden gegen triviale Versprechen. 9. niedrig: `expired` mit
-   pay_hash innerhalb der Gnadenfrist erst `jobs.pay` erneut versuchen. 10. niedrig: Review-Fehler nicht als reviewed markieren; ohne Verdict beim
-   Auto-Complete erst bewerten. 11. niedrig: `FIRSTBUY_PER_SELLER` mit `Number()` → NaN schaltet die Kappe ab (parseInt + Default). 12. Tests für
-   all das (stummer Verkäufer, falscher Hash, geteilte Wallet, 64 KB, Korrektur im Memory, expired in Gnadenfrist, Crash zwischen create und save).
-**Danach:** Agents deployen (`smoke:judge` erneut, wenn judge.ts angefasst), API 0.3.8 deployen, erste Erstkäufe live beobachten (Live: `veriton`
-0,02 USDC „HTML→JSON“; Sandbox: drei fremde Listings ohne example_input, die über `how_to_order.body_example` bestellt werden), STATUS
-Checkpoint 55 schreiben. **Sonst:** veriton-Security-Job `job_01M20CBN…` ist bezahlt (3,5 USDC) und in Revision 1/2 (Desk verlangt realistische
-Severity), läuft autonom. Nick 2026-09-08: Bremse bei Security-Funden bleibt, sonst freie Hand.
+**Stand:** Erstkäufer-Programm (ADR-31) ist **live** (Agents-Deploy 16:10 UTC, API 0.3.8 16:11 UTC). Im Init-Tick hat die Desk sofort gekauft:
+Live `veriton` „HTML→JSON“ 0,02 USDC (`job_01M20WHWXTS10ZVKS3XJD9D3J4`); Sandbox `veriton` 0,01 USDC (`job_01M20WHXFNVW…`) und
+`moneyagent-sandbox-test` „Echo test“ 0,01 USDC (`job_01M20WHXH9XX…`); alle 6 eigenen Listings korrekt übersprungen. Jetzt müssen die fremden
+Verkäufer annehmen und liefern; die Desk zahlt dann gasfrei, bewertet, rezensiert (Tick alle 10 min). **Beobachten:**
+`https://agentsouk-agents.fly.dev/health` → `operators.<env>.firstbuy` (`open`, `recent`, `needs_operator`, `last_error`); Ergebnis in
+STATUS Checkpoint 55 nachtragen. Sonst nichts Dringendes: Security-Job von veriton ist bezahlt (3,5 USDC) und in Revision; Nick: Bremse bleibt.
+**Nächste Kandidaten:** Agent-Postfach (MX-Records von Nick), Referral-Bounty, Agentverse/AGNTCY; Desk-Auszahlungen auf Live ebenfalls gasfrei.
 
 ## Übergabe davor (Checkpoint 54; Baum sauber, alles deployt)
 
@@ -62,6 +41,28 @@ Admin-Übersicht lesen (jetzt inkl. `mcp:tool:*`). Fiat/Bank: nur über Stripe C
 **Wie deployt wird:** `docs/DEPLOY.md` §Laufender Betrieb (Push vor Deploy; Agents nur nach `npm run smoke:judge`; `flyctl` in `~/.fly/bin`).
 **Praktische Lehre dieser Sitzung:** lange Bash-Heredocs mit TypeScript-Inhalt brachen mehrfach an Quoting; Python-Skripte per Write-Tool
 in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten per `-F datei`.
+
+## Stand 2026-09-08, Checkpoint 55: Erstkäufer-Programm live (ADR-31; Agents 61 Tests, API 216, Judge-Rauchtest bestanden)
+
+- **Warum:** Tag 2: fremde Verkäufer listen (veriton, moneyagent), niemand kauft bei ihnen; die einzigen bezahlten Live-Jobs waren unsere
+  Bounties. Nick 15:45 UTC: „Bremse bleibt, mach weiter wie du denkst.“ Also wird die Desk Erstkäufer (ADR-31).
+- **Gebaut:** `packages/agents/src/operator/firstbuy.ts` (FirstBuyer, in `OperatorRuntime` eingehängt: `firstBuyer`, `canSpend`, `recordSpend`,
+  Tick nach dem Katalog, `firstbuy` in der Health), `usdc.ts` (`typedDataSigner` für die Plattform-Terms mit Domain-Prüfung,
+  `findAuthorizationUse` per USDC-`AuthorizationUsed`-Log, `findTransfers`), `judge.ts` (`evaluateListingDelivery`, `escapeUntrusted`),
+  Fake-Chain mit `balanceOf`/`eth_getLogs`/Extra-Logs, `smoke-judge` mit Listing-Verdict, Env `FIRSTBUY_*`. Regeln und Kappen: ADR-31.
+- **Review (1 Reviewer fertig, 2. starb am Session-Limit; 13 Funde, 3 hoch, alle eingebaut, `research/review-firstbuy-2026-09-08.jsonl`):**
+  Speichergrenze (kompakter Zustand < 56 KB, nie-gekürzter Index), stumme Verkäufer (Cancel nach Frist+Gnadenstunde), Nonce-basierte Recovery
+  statt Betrag/Empfänger (Köder-Test), abgelehnter Hash = Fehlschlag → Mensch, Wallet-Sybil-Kappe (nach `pay_to`, refused Jobs storniert),
+  Neue-Verkäufer-Kappe, Paginierung + Serverfilter, Ledger-Hook für in-flight Zahlungen, Cancel statt unbezahlt verfallen bei Kappen-Halt,
+  expired in Gnadenfrist, Review-Retry, Auto-Complete ohne Verdict wird nachbewertet, Env-Parsing, `</data>`-Escaping im Judge, Listing-Text
+  untrusted. Eigener Fund beim Einbau: `save()` ersetzte die Kauf-Objekte durch Kopien (Mutationen nach dem Speichern gingen verloren) →
+  Kompaktierung jetzt in place, Referenzen bleiben gültig.
+- **Live-Start 16:10 UTC:** siehe Übergabeblock oben (3 Käufe im Init-Tick: veriton live 0,02, veriton + moneyagent Sandbox je 0,01).
+- **Traffic-Zwischenstand für Nick (16:00 UTC):** 27 Registrierungen/7 Tage, 21 aktive Live-Agents (11 ohne Framework-Angabe, 6 OpenClaw,
+  2 custom, 2 unsere; die meisten sind Test-Identitäten von veriton, moneyagent, astra), MCP dominiert (1152 Zugriffe/7 Tage, 180 tools/list,
+  178 initialize), dazu 392 Root-Aufrufe, 80 agent-registration.json, 71 openapi.json, 28 skill.md. Live: 8 aktive Listings (2 fremde),
+  4 fremde Bounties offen, 4 abgeschlossene Jobs = 17,3 USDC, alle von uns bezahlt; Sandbox: 5 abgeschlossene Jobs (0,03 USDC),
+  24 stornierte (Probe-Jobs). Kein fremder Käufer hat bisher einen fremden Verkäufer bezahlt: genau die Lücke, die das Programm schließt.
 
 ## Stand 2026-09-08, Checkpoint 54: Gasfrei bezahlen ist der Hauptweg (ADR-30 2b+2c, API 0.3.7, SDKs 0.3.4; 218 + 56 Tests grün)
 
