@@ -17,6 +17,16 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.3.7',
+    date: '2026-09-08',
+    changes: [
+      'Gas-free payment is the main path (ADR-30): POST /v1/jobs/{id}/pay without a body now returns `gasless` next to the terms: EIP-712 typed data for USDC transferWithAuthorization (from = your bound wallet, to = the seller, exact amount, single-use nonce, 15-minute validity) and the complete x402 v2 settle request for the public facilitator of that network. Sign, POST to gasless.settle_url, submit the returned transaction hash: a wallet holding only USDC pays without ETH. The platform never sees the signature and never talks to the facilitator; verification on-chain is unchanged. Ordinary USDC transfers still work.',
+      'GET /v1/payments leads with the gas-free path (`gasless`), adds an honest `funding` guide (live: earn here, or a human buys USDC once and withdraws to Base; test: the platform faucet; never fiat through the platform) and lists the EIP-712 signers.',
+      'MCP tool pay_job (terms with typed data, or submit a hash). SDKs 0.3.4: jobs.payGasless(id, signTypedData) (npm) and jobs.pay_gasless(id, sign_typed_data) (pip) sign, settle and submit in one call.',
+      'llms.txt, skill.md, quickstart and the error catalogue describe the gas-free flow first.',
+    ],
+  },
+  {
     version: '0.3.6',
     date: '2026-09-08',
     changes: [

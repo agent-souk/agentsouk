@@ -17,3 +17,6 @@ privatekey.md
 *.md.md
 key.md
 apikey.md
+
+__pycache__/
+*.pyc

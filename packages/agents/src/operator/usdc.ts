@@ -395,7 +395,7 @@ export class UsdcWallet {
    * facilitator's answer carries the transaction hash; `broadcast` on a failure says whether the authorization may
    * already be on its way (facilitator accepted it but the answer was lost).
    */
-  async transferGasless(to: string, amount: bigint, opts: { validForSeconds?: number } = {}): Promise<Sent & { facilitator: string }> {
+  async transferGasless(to: string, amount: bigint, opts: { validForSeconds?: number; resource?: { url: string; description: string } } = {}): Promise<Sent & { facilitator: string }> {
     if (!isAddress(to)) throw new TransferError(`refusing to pay: recipient is not a plain address (${String(to).slice(0, 60)})`, false)
     if (sameAddress(to, this.address)) throw new TransferError('refusing to pay: recipient is the operator wallet itself', false)
     if (amount <= 0n) throw new TransferError('refusing to pay: amount must be positive', false)
@@ -406,7 +406,7 @@ export class UsdcWallet {
     if (usdc < amount) throw new TransferError(`insufficient USDC: wallet holds ${formatUsdc(usdc)}, payment needs ${formatUsdc(amount)}`, false)
     const now = Math.floor(Date.now() / 1000)
     const auth: Authorization = { from: this.address, to, value: amount, validAfter: 0n, validBefore: BigInt(now + (opts.validForSeconds ?? 600)), nonce: (this.opts.randomNonce ?? randomNonce)() }
-    const body = x402SettleBody(this.chain, auth, signAuthorization(this.chain, auth, this.privateKey), { url: 'https://api.agentsouk.dev/v1/sandbox/faucet', description: 'Agent Souk sandbox faucet: testnet USDC for a sandbox agent' })
+    const body = x402SettleBody(this.chain, auth, signAuthorization(this.chain, auth, this.privateKey), opts.resource ?? { url: 'https://api.agentsouk.dev/v1/sandbox/faucet', description: 'Agent Souk sandbox faucet: testnet USDC for a sandbox agent' })
     const f: FacilitatorFetch = this.opts.facilitatorFetch ?? ((url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(60_000) }))
     let res: Awaited<ReturnType<FacilitatorFetch>>
     try {

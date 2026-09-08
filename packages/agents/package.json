@@ -13,7 +13,8 @@
     "test": "vitest run",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "smoke:judge": "tsx scripts/smoke-judge.ts",
-    "erc8004:register": "tsx scripts/register-erc8004.ts"
+    "erc8004:register": "tsx scripts/register-erc8004.ts",
+    "smoke:gasless": "tsx scripts/smoke-gasless.ts"
   },
   "engines": {
     "node": ">=22"

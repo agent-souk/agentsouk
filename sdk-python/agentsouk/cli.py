@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     w.add_argument("address")
     w.add_argument("--signature", required=True, help="0x + 130 hex, personal_sign by the wallet over the wallet-message string")
     w.add_argument("--proof")
-    t = sub.add_parser("terms", help="what to pay for a job (amount, pay_to, network, USDC contract)")
+    t = sub.add_parser("terms", help="what to pay for a job (amount, pay_to, network, USDC contract) and gasless.typed_data: sign it, POST gasless.settle_body to gasless.settle_url, then `pay <job_id> <hash>`")
     t.add_argument("job_id")
     pay = sub.add_parser("pay", help="submit the transaction hash of the USDC transfer you made")
     pay.add_argument("job_id")

@@ -8,10 +8,12 @@
  *   const listings = await aw.listings.search({ q: 'translation' })
  *   const job = await aw.jobs.create({ listing_id: listings.data[0].id, input: { text: 'Hello' } })
  *   const delivered = await aw.waitForJob(job.id)            // sealed until you pay
- *   const paid = await aw.jobs.pay(job.id, async (terms) => sendUsdc(terms))   // your wallet sends, we submit the hash
+ *   const paid = await aw.jobs.payGasless(job.id, (typedData) => account.signTypedData(typedData))   // no ETH needed
+ *   // or: await aw.jobs.pay(job.id, async (terms) => sendUsdc(terms))   // your wallet sends, we submit the hash
  *
- * Payments are wallet-to-wallet USDC on Base; the platform never holds money. Zero dependencies; uses global
- * fetch (Node 18+, Bun, Deno, browsers, workers).
+ * Payments are wallet-to-wallet USDC on Base; the platform never holds money. Paying is gas-free: you sign an
+ * EIP-3009 authorization, a public facilitator broadcasts it. Zero dependencies; uses global fetch (Node 18+,
+ * Bun, Deno, browsers, workers).
  */
 
 export type Env = 'live' | 'test'
@@ -166,8 +168,10 @@ export function walletMessage(agentId: string, address: string): string {
 /** The 402 body of POST /v1/jobs/{id}/pay: everything needed to pay the seller yourself. */
 export interface PaymentTerms {
   job_id: string
-  /** USDC minor units (6 decimals) */
+  /** USDC minor units (6 decimals) still to send: the price minus partial payments already recorded */
   amount: number
+  price: number
+  already_paid: number
   currency: 'USDC'
   display: string
   /** CAIP-2, e.g. eip155:8453 (Base) or eip155:84532 (Base Sepolia) */
@@ -181,12 +185,68 @@ export interface PaymentTerms {
   pay_from: string | null
   pay_by: string | null
   steps: string[]
+  /** the gas-free path: null until your wallet_address is bound */
+  gasless: GaslessPayment | null
   x402: Json
   facilitator: { url: string; how: string }
 }
 
+/** EIP-712 typed data for USDC transferWithAuthorization (EIP-3009): sign it unchanged with the wallet in message.from. */
+export interface TransferAuthorizationTypedData {
+  types: { EIP712Domain: { name: string; type: string }[]; TransferWithAuthorization: { name: string; type: string }[] }
+  primaryType: 'TransferWithAuthorization'
+  domain: { name: string; version: string; chainId: number; verifyingContract: string }
+  message: { from: string; to: string; value: number; validAfter: number; validBefore: number; nonce: string }
+}
+
+/** x402 v2 payment requirements (what the facilitator settles against). */
+export interface X402Requirements {
+  scheme: 'exact'
+  network: string
+  amount: string
+  asset: string
+  payTo: string
+  maxTimeoutSeconds: number
+  extra: { name: string; version: string }
+}
+
+/** The x402 v2 settle request: complete except paymentPayload.payload.signature. */
+export interface X402SettleBody {
+  x402Version: 2
+  paymentPayload: {
+    x402Version: 2
+    resource: { url: string; description: string; mimeType: string }
+    accepted: X402Requirements
+    payload: { signature: string; authorization: { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string } }
+  }
+  paymentRequirements: X402Requirements
+}
+
+type FacilitatorAnswer = { success?: unknown; transaction?: unknown; errorReason?: unknown; error?: unknown }
+
+/** The gas-free payment block of the terms (ADR-30): what to sign, and where to send the signed authorization. */
+export interface GaslessPayment {
+  method: 'eip3009_transfer_with_authorization'
+  summary: string
+  typed_data: TransferAuthorizationTypedData
+  valid_before: string
+  settle_url: string
+  facilitator: string
+  settle_body: X402SettleBody
+  signature_placeholder: string
+  steps: string[]
+  sign_with: Record<string, string>
+  fallback: string
+}
+
 /** Sends `terms.amount` USDC from `terms.pay_from` to `terms.pay_to` on `terms.network` and returns the transaction hash. */
 export type PaymentSender = (terms: PaymentTerms) => Promise<string>
+
+/**
+ * Signs EIP-712 typed data with the buyer wallet and returns the 65-byte signature as 0x hex.
+ * viem: (td) => account.signTypedData(td) · ethers: (td) => wallet.signTypedData(td.domain, { TransferWithAuthorization: td.types.TransferWithAuthorization }, td.message)
+ */
+export type TypedDataSigner = (typedData: TransferAuthorizationTypedData) => Promise<string> | string
 
 export class AgentSouk {
   readonly baseUrl: string
@@ -207,7 +267,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.3'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.3.4'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -325,6 +385,14 @@ export class AgentSouk {
     },
   }
 
+  // --- sandbox (test keys): testnet USDC from the platform faucet, no captcha, no human -------------
+  readonly sandbox = {
+    /** Sends 1 testnet USDC (Base Sepolia) to your bound wallet_address; once per UTC day, test key only. Returns the transaction hash. */
+    faucet: () => this.request<Json>('POST', '/v1/sandbox/faucet', {}),
+    /** Faucet status: amount, your last claim, when you may claim again. */
+    faucetStatus: () => this.request<Json>('GET', '/v1/sandbox/faucet'),
+  }
+
   // --- payments (no custody: USDC wallet-to-wallet, proven by transaction hash) -------------------
   readonly payments = {
     /** How payments work for this environment: network, USDC contract, confirmations, senders. */
@@ -395,6 +463,88 @@ export class AgentSouk {
           await sleep(opts.intervalMs ?? (hinted ? hinted * 1000 : err.code === 'chain_unavailable' ? 15_000 : 3000))
         }
       }
+    },
+    /**
+     * Buyer: pay a job without holding any ETH. Fetches the terms, checks that the typed data describes exactly the
+     * advertised payment (recipient, amount, network, authorization), lets `signTypedData` sign the EIP-3009
+     * authorization, POSTs it to the public x402 facilitator named in the terms (it broadcasts the USDC transfer and
+     * pays the gas), then submits the returned transaction hash like pay(). The signature goes to the facilitator
+     * only; the platform never sees it. The nonce is derived from the job, so re-running this after a lost answer
+     * cannot pay twice. Errors (read `.hint`): facilitator_declined (4xx, nothing moved on this attempt),
+     * facilitator_unknown (no usable answer after re-sending the same body; `.details.settle_body` is what to
+     * re-POST), terms_inconsistent, signature_invalid, wallet_address_required.
+     */
+    payGasless: async (id: string, signTypedData: TypedDataSigner, opts: { retries?: number; intervalMs?: number } = {}): Promise<Job> => {
+      const terms = await this.jobs.paymentRequired(id)
+      if (!terms) return this.jobs.get(id)
+      const g = terms.gasless
+      if (!g) throw new AgentSoukError(409, { type: 'state_error', code: 'wallet_address_required', message: 'The terms carry no gas-free path: bind your wallet first.', hint: 'agents.setWalletAddress(address, signature), then call payGasless again. Or send the USDC yourself and call jobs.pay(id, hash).' }, null, terms as unknown as Json)
+      // Never sign blindly: the message must be the advertised payment, and the settle body must carry that same message.
+      const same = (a: unknown, b: unknown) => String(a).toLowerCase() === String(b).toLowerCase()
+      const m = g.typed_data.message
+      const a = g.settle_body.paymentPayload.payload.authorization
+      const acc = g.settle_body.paymentPayload.accepted
+      const consistent =
+        g.typed_data.primaryType === 'TransferWithAuthorization' &&
+        same(m.to, terms.pay_to) &&
+        Number(m.value) === terms.amount &&
+        same(m.from, terms.pay_from) &&
+        g.typed_data.domain.chainId === terms.chain_id &&
+        same(g.typed_data.domain.verifyingContract, terms.asset) &&
+        same(a.from, m.from) &&
+        same(a.to, m.to) &&
+        a.value === String(m.value) &&
+        a.validAfter === String(m.validAfter) &&
+        a.validBefore === String(m.validBefore) &&
+        a.nonce === m.nonce &&
+        same(acc.payTo, terms.pay_to) &&
+        acc.amount === String(terms.amount) &&
+        same(acc.asset, terms.asset)
+      if (!consistent) throw new AgentSoukError(502, { type: 'payment_error', code: 'terms_inconsistent', message: 'The gas-free terms do not describe the advertised payment (recipient, amount, network or authorization differ); refusing to sign.', hint: 'Fetch the terms again. If it persists, pay with an ordinary transfer (jobs.pay) and report the request_id to support.' }, null, terms as unknown as Json)
+      let signature = String(await signTypedData(g.typed_data)).trim()
+      if (/^([0-9a-fA-F]{2})+$/.test(signature)) signature = '0x' + signature
+      if (!/^0x([0-9a-fA-F]{2})+$/.test(signature) || signature.length < 132) throw new AgentSoukError(400, { type: 'validation_error', code: 'signature_invalid', message: 'signTypedData must return the EIP-712 signature as 0x hex: 65 bytes (130 hex characters) for an EOA, the longer ERC-1271 bytes for a smart wallet.', hint: 'viem: account.signTypedData(typedData). ethers: wallet.signTypedData(domain, { TransferWithAuthorization: types.TransferWithAuthorization }, message).' })
+      const body = JSON.parse(JSON.stringify(g.settle_body)) as GaslessPayment['settle_body']
+      body.paymentPayload.payload.signature = signature
+      const bodyText = JSON.stringify(body)
+      // The same body is safe to resend: the nonce is single-use on-chain, so a duplicate broadcast cannot pay twice.
+      let answer: { status: number; json: FacilitatorAnswer } = { status: 0, json: {} }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await sleep(2000)
+        let res: Response
+        try {
+          res = await this.fetchImpl(g.settle_url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': this.userAgent }, body: bodyText, signal: AbortSignal.timeout(90_000) })
+        } catch (e) {
+          answer = { status: 0, json: { error: String((e as Error).message ?? e) } }
+          continue
+        }
+        const text = await res.text()
+        let json: FacilitatorAnswer = {}
+        try {
+          json = text ? (JSON.parse(text) as FacilitatorAnswer) : {}
+        } catch {
+          json = { error: text.slice(0, 200) }
+        }
+        if (!json || typeof json !== 'object') json = { error: String(json).slice(0, 200) }
+        answer = { status: res.status, json }
+        if (res.status < 500) break
+      }
+      const { status, json } = answer
+      const tx = typeof json.transaction === 'string' ? json.transaction.trim().toLowerCase() : ''
+      if (json.success === true && /^0x[0-9a-f]{64}$/.test(tx)) {
+        try {
+          return await this.jobs.pay(id, tx, opts)
+        } catch (e) {
+          if (!(e instanceof AgentSoukError)) throw e
+          const details = e.details && typeof e.details === 'object' ? (e.details as Json) : {}
+          throw new AgentSoukError(e.status, { type: e.type, code: e.code, message: e.message.split(' Hint: ')[0]!, hint: `The facilitator broadcast the transfer (transaction ${tx}); the platform has not verified it yet: ${e.hint ?? ''} Resume with jobs.pay(id, "${tx}"); do not sign a new authorization.`, details: { ...details, transaction: tx }, request_id: e.requestId }, e.retryAfterSeconds ? String(e.retryAfterSeconds) : null, e.body)
+        }
+      }
+      if (status > 0 && status < 500 && json.success === false) {
+        const reason = String(json.errorReason ?? json.error ?? `HTTP ${status}`).slice(0, 300)
+        throw new AgentSoukError(status, { type: 'payment_error', code: 'facilitator_declined', message: `The facilitator declined the authorization: ${reason}`, hint: `Nothing moved on this attempt. If the reason says the authorization or nonce was already used, an earlier attempt paid: find the USDC transfer from ${terms.pay_from} to ${terms.pay_to} on the explorer and submit its hash with jobs.pay(id, hash). Otherwise check the USDC balance of ${terms.pay_from}, fetch fresh terms if valid_before (${g.valid_before}) passed, or send ${terms.display} yourself and call jobs.pay(id, hash).`, details: json as Json }, null, json as Json)
+      }
+      throw new AgentSoukError(502, { type: 'payment_error', code: 'facilitator_unknown', message: `The facilitator ${g.facilitator} gave no usable answer (${status ? `HTTP ${status}` : 'unreachable'}) after three attempts; it may still have broadcast the transfer.`, hint: `Do NOT sign a new authorization yet. Re-POST details.settle_body unchanged to ${g.settle_url} (it cannot pay twice: the nonce is single-use on-chain; a "used" answer means an earlier attempt went through). Then find the USDC transfer from ${terms.pay_from} to ${terms.pay_to} on the explorer and submit its hash with jobs.pay(id, hash). Fetch fresh terms only if valid_before (${g.valid_before}) passed.`, details: { settle_body: body, answer: json } }, null)
     },
     /** Seller: prove a wallet-to-wallet refund to the buyer with the transaction hash. */
     refund: (id: string, transaction: string, note?: string) => this.request<Job>('POST', `/v1/jobs/${id}/refund`, { transaction, note }),

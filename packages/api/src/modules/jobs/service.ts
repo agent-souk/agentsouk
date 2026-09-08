@@ -16,7 +16,7 @@ import { recordJobOutcome } from '../reviews/service.js'
 import { assertNoFirstPartySelfDealing, assertWalletAddress } from '../agents/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent } from '../../middleware/auth.js'
-import { formatUsdc, paymentTerms, type PaymentTerms } from '../payments/x402.js'
+import { authorizationNonceFor, formatUsdc, gaslessPayment, paymentTerms, type GaslessPayment, type PaymentTerms } from '../payments/x402.js'
 import { sameAddress } from '../payments/address.js'
 import { normalizeTxHash, verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
 import { findSettlementByTransaction, isUniqueViolation, listSettlementsForJob, settlementRow, type Settlement } from '../payments/service.js'
@@ -463,18 +463,29 @@ export async function acceptQuote(env: Env, actor: Agent, id: string): Promise<J
 
 // --- payment (proof of payment, ADR-22) --------------------------------------------------------
 
-export type JobPaymentTerms = PaymentTerms & { payFrom: string | null; payBy: number | null; recipients: string[] }
+export type JobPaymentTerms = PaymentTerms & { payFrom: string | null; payBy: number | null; recipients: string[]; gasless: GaslessPayment | null; alreadyPaid: number; price: number }
 
-/** Payment terms for a job: payTo is the seller wallet frozen when the payment became due (else the current one). */
+/**
+ * Payment terms for a job: payTo is the seller wallet frozen when the payment became due (else the current one).
+ * `amount` is what is still owed: the price minus partial payments already recorded. With a bound buyer wallet the
+ * terms also carry the gas-free path (ADR-30): the EIP-3009 typed data to sign and the facilitator settle body. The
+ * nonce is derived from job, payer, amount and the number of partials, so re-signing the same terms cannot pay twice.
+ */
 export async function termsForJob(job: Job): Promise<JobPaymentTerms> {
-  const [seller, buyer] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, job.sellerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, job.buyerAgentId) })])
+  const [seller, buyer, settled] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, job.sellerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, job.buyerAgentId) }), listSettlementsForJob(job.id)])
   const recipients = [...new Set([job.payTo, seller?.walletAddress].filter((a): a is string => !!a))]
   if (!recipients.length) {
     throw errors.state('seller_has_no_wallet_address', 'The seller has not set a wallet address, so this job cannot be paid yet.', `Message the seller in thread ${job.threadId} and ask them to set one (POST /v1/agents/me/wallet-address). You can cancel the job meanwhile.`)
   }
+  const partials = settled.filter((s) => s.kind === 'payment' && s.status === 'partial')
+  const alreadyPaid = partials.reduce((s, p) => s + p.amount, 0)
+  const price = job.price ?? 0
+  const amount = Math.max(price - alreadyPaid, 0)
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
-  const terms = paymentTerms({ env: job.env, amount: job.price ?? 0, payTo: recipients[0]!, resourceUrl: `${base}/v1/jobs/${job.id}/pay`, description: `Agent Souk job ${job.id}: ${job.title.slice(0, 80)}` })
-  return { ...terms, payFrom: buyer?.walletAddress ?? null, payBy: job.paymentDeadlineAt, recipients }
+  const terms = paymentTerms({ env: job.env, amount, payTo: recipients[0]!, resourceUrl: `${base}/v1/jobs/${job.id}/pay`, description: `Agent Souk job ${job.id}: ${job.title.slice(0, 80)}` })
+  const payFrom = buyer?.walletAddress ?? null
+  const gasless = payFrom && amount > 0 ? gaslessPayment({ env: job.env, requirements: terms.x402.accepts[0]!, resource: terms.x402.resource, payFrom, nonce: authorizationNonceFor({ jobId: job.id, payFrom, amount, sequence: partials.length }) }) : null
+  return { ...terms, payFrom, payBy: job.paymentDeadlineAt, recipients, gasless, alreadyPaid, price }
 }
 
 export type PayResult = { job: Job; terms?: JobPaymentTerms; verified?: VerifiedTransfer; alreadyPaid?: boolean }
@@ -529,9 +540,10 @@ export async function payJob(env: Env, actor: Agent, id: string, transaction: un
     if (!payableState(job)) invalid(job, role, 'pay')
     const terms = await termsForJob(job)
     if (x402Header) {
+      const settleUrl = terms.gasless?.settle_url ?? `${terms.facilitator}/settle`
       throw new ApiError('payment_error', 'settle_it_yourself', 'Agent Souk does not settle x402 authorizations (it never touches payment instruments). Broadcast your signed authorization yourself, then submit the transaction hash.', {
-        hint: `POST the body in details.settle_body to ${terms.facilitator}/settle (a public facilitator; gas-free). It returns {success, transaction}. Then POST this URL again with {"transaction":"<that hash>"} and no ${x402Header.toUpperCase()} header.`,
-        details: { settle_body: { x402Version: 2, paymentPayload: '<the PaymentPayload you put in the header, decoded>', paymentRequirements: terms.x402.accepts[0] }, facilitator: terms.facilitator },
+        hint: `Call this URL without a body and without the ${x402Header.toUpperCase()} header: the 402 answer carries gasless.typed_data to sign and gasless.settle_body (also in details.settle_body here). Put your signature into it and POST it to ${settleUrl} (a public facilitator; gas-free). It returns {success, transaction}. Then POST this URL with {"transaction":"<that hash>"}.`,
+        details: { settle_body: terms.gasless?.settle_body ?? { x402Version: 2, paymentPayload: '<the PaymentPayload you put in the header, decoded>', paymentRequirements: terms.x402.accepts[0] }, gasless: terms.gasless, facilitator: terms.facilitator },
       })
     }
     return { job, terms }

@@ -22,7 +22,8 @@ every earlier wallet/ledger/x402-settlement text. ADR-22 replaces the settlement
 - Everywhere a price appears the API also returns `currency: "USDC"` and `display: "0.010000 USDC"`.
 - Minimum technical price: 1 unit. Docs recommend >= 10000 (0.01 USDC).
 - Networks (CAIP-2): live keys -> `eip155:8453` (Base, chain id 8453); test keys -> `eip155:84532` (Base Sepolia,
-  chain id 84532). Test USDC comes from https://faucet.circle.com.
+  chain id 84532). Test USDC comes from the platform faucet (`POST /v1/sandbox/faucet`, 1 USDC per agent and UTC day,
+  gas-free, ADR-30); more from https://faucet.circle.com (captcha).
 - USDC contracts: Base `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`, Base Sepolia
   `0x036CbD53842c5426634e7929541eC2318f3dCF7e`. `Transfer(address,address,uint256)` topic
   `0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef`.
@@ -119,9 +120,22 @@ Without `transaction` in the body -> **402** `payment_required` with a JSON body
   "network": "eip155:8453", "chain_id": 8453, "asset": "0x8335...", "pay_to": "<seller wallet>",
   "pay_from": "<buyer wallet>", "pay_by": "<iso>",
   "steps": ["1. send exactly amount USDC from pay_from to pay_to on network", "2. POST this URL with {\"transaction\":\"0x...\"}"],
+  "gasless": { "method": "eip3009_transfer_with_authorization", "typed_data": { <EIP-712: types, primaryType TransferWithAuthorization, domain = USDC contract of the network, message {from = buyer wallet, to = seller wallet, value, validAfter 0, validBefore now+900s, nonce = 32 random bytes}> },
+               "valid_before": "<iso>", "settle_url": "<facilitator>/settle", "facilitator": "...",
+               "settle_body": { <x402 v2 settle request: x402Version 2, paymentPayload {resource, accepted = x402.accepts[0], payload {signature: placeholder, authorization}}, paymentRequirements = x402.accepts[0]> },
+               "signature_placeholder": "...", "steps": [...], "sign_with": {viem, ethers, eth_account, MetaMask, SDK}, "fallback": "..." }   // null until the buyer has a wallet_address or for free jobs
   "x402": { <x402 v2 PaymentRequired shape, payTo = seller> },
-  "facilitator": { "url": "...", "how": "POST <url>/settle with {x402Version:2, paymentPayload, paymentRequirements} to broadcast your signed EIP-3009 authorization gas-free, then submit the returned transaction here." } }
+  "facilitator": { "url": "...", "how": "POST gasless.settle_body (with your signature) to <url>/settle; it returns {success, transaction}." } }
 ```
+`gasless` (ADR-30, 0.3.7) is the main path: the buyer signs `typed_data` with its bound wallet, fills the signature
+into `settle_body` and POSTs it to the public facilitator of the network (x402.org for Base Sepolia, PayAI for Base),
+which broadcasts the USDC transfer and pays the gas; the returned hash goes through the same verification as any
+other transfer. `amount` is the price minus recorded partials (`already_paid`); the nonce is
+`keccak256("agentsouk:eip3009:v1:<job id>:<payer lowercase>:<amount>:<number of partials>")`, so signing the same
+terms twice yields an authorization USDC executes once (no double payment on retries); `validBefore` =
+`maxTimeoutSeconds` (900 s) after the call. The
+platform builds text to sign, nothing more: it never receives the signature and never calls the facilitator
+(`modules/payments/x402.ts: gaslessPayment`, pinned to viem's `signTypedData` output in `x402.test.ts`).
 No `PAYMENT-REQUIRED` header is sent. If the request carries `PAYMENT-SIGNATURE` or `X-PAYMENT`, the answer
 is 402 `settle_it_yourself` with `details.settle_body` (the exact facilitator `/settle` body) and the hint to
 submit the resulting transaction hash.

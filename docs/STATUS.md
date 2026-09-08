@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08, nach Checkpoint 53; Baum sauber, alles deployt)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08, nach Checkpoint 54; Baum sauber, alles deployt)
 
 **Erster Block: Zahlen so einfach wie möglich (ADR-30, VISION §Zahlen).** Nick will keinen Agent an der Zahlung verlieren.
 1. ~~Sandbox-Faucet~~ **LIVE seit 2026-09-08 (Commit b3b45ee/a181ff5):** `POST /v1/sandbox/faucet` (Test-Key, gebundene Wallet) → die Desk
@@ -13,11 +13,16 @@
    llms.txt/skill.md/quickstart. Live-Check: Wegwerf-Agent → Tx `0xab4a2a52…4dc2`, 1 USDC nach 3 s da, zweiter Claim 409. Guthaben: 20 Sepolia-USDC
    von Nick, 1 verbraucht; Desk-Health zeigt `faucet.sent_today`. Nachfüllen: LAUNCH-CHECKLIST 0. Wichtig für den Weg 2: **die x402-v2-Nutzlast
    braucht `resource` + `accepted` im `paymentPayload`** (flache Form → HTTP 500 beim Facilitator); `usdc.ts x402SettleBody` ist die Referenz.
-2. **Gasfrei bezahlen als Hauptweg:** `POST /v1/jobs/{id}/pay` ohne Body liefert zusätzlich fertige EIP-3009-Typed-Data
-   (`transferWithAuthorization`, USDC-Domain je Netz, Nonce, Frist) und die Facilitator-URL; Agent signiert, reicht beim öffentlichen
-   Facilitator ein, meldet den Hash. Doku (`/v1/payments`, skill.md, llms.txt, quickstart) und MCP-Tool `pay_job` führen diesen Weg zuerst.
-3. **Ehrliche Live-Anleitung** für Betreiber (USDC kaufen, senden; kein ETH nötig bei Gasfrei) an denselben Stellen.
-4. Danach: Agent-Postfach (Brief §8 #3; braucht MX-Records von Nick), Referral-Bounty über die Desk, Agentverse/AGNTCY.
+2. ~~Gasfrei bezahlen als Hauptweg~~ **LIVE seit 2026-09-08 (Checkpoint 54, API 0.3.7):** `POST /v1/jobs/{id}/pay` ohne Body liefert
+   `gasless` (EIP-712-Typed-Data für `TransferWithAuthorization` + fertiger x402-v2-Settle-Body + `settle_url`); der Agent signiert, POSTet
+   an den öffentlichen Facilitator, meldet den Hash. MCP-Tool `pay_job`, SDKs 0.3.4 (`jobs.payGasless` / `jobs.pay_gasless`, `sandbox.faucet`),
+   Doku führt den Weg überall zuerst. **Messlatte erfüllt:** `npm run smoke:gasless -w packages/agents` (Wegwerf-Agents, Faucet, versiegelte
+   Lieferung, Signatur, x402.org, Verifikation) lief in 10,5 s ohne ETH und ohne Menschen; PayAI (Base Mainnet) verifiziert unsere
+   Autorisierung (`--verify-live`, nichts gesettelt).
+3. ~~Ehrliche Live-Anleitung~~ **erledigt:** `GET /v1/payments` → `funding` (live: erst hier verdienen, sonst Betreiber kauft einmal USDC und
+   zieht auf Base ab; nie Fiat über uns) und `gasless` (Caveats: Facilitator ist Dritter, Fallback normaler Transfer).
+4. **Jetzt dran:** Agent-Postfach (Brief §8 #3; braucht MX-Records von Nick), Referral-Bounty über die Desk, Agentverse/AGNTCY-Projektionen;
+   optional die Desk-Auszahlungen auf Live ebenfalls gasfrei über PayAI (heute klassischer Transfer mit eigenem Gas, funktioniert).
 
 **Was sonst offen ist:** 8004scan zeigt 85417, aber 85415/85416 noch nicht (ggf. `setAgentURI` neu setzen); PR punkpeye #13922 wartet auf
 die Maintainer; Runde-2-Bounties laufen (Desk vergibt autonom, `needs_operator` nur bei Security-Funden); täglich `discovery` in der
@@ -26,6 +31,46 @@ Admin-Übersicht lesen (jetzt inkl. `mcp:tool:*`). Fiat/Bank: nur über Stripe C
 **Wie deployt wird:** `docs/DEPLOY.md` §Laufender Betrieb (Push vor Deploy; Agents nur nach `npm run smoke:judge`; `flyctl` in `~/.fly/bin`).
 **Praktische Lehre dieser Sitzung:** lange Bash-Heredocs mit TypeScript-Inhalt brachen mehrfach an Quoting; Python-Skripte per Write-Tool
 in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten per `-F datei`.
+
+## Stand 2026-09-08, Checkpoint 54: Gasfrei bezahlen ist der Hauptweg (ADR-30 2b+2c, API 0.3.7, SDKs 0.3.4; 218 + 56 Tests grün)
+
+- **Was gebaut wurde:** `modules/payments/x402.ts: gaslessPayment()` erzeugt aus den bestehenden Terms die EIP-712-Typed-Data
+  (`types` inkl. `EIP712Domain`, `primaryType TransferWithAuthorization`, Domain = USDC-Vertrag des Netzes: „USD Coin“ v2 / 8453 bzw. „USDC“ v2 /
+  84532, `message` mit Zahlen für `value/validAfter/validBefore`, damit viem, ethers, eth_account und `eth_signTypedData_v4` sie unverändert
+  nehmen; `validBefore` = jetzt + 900 s = `maxTimeoutSeconds`; Nonce 32 Zufallsbytes je Aufruf) und den kompletten x402-v2-Settle-Body
+  (`paymentPayload.accepted` = `paymentRequirements` = `x402.accepts[0]`, Signatur als Platzhalter). `termsForJob` hängt es als `gasless` an
+  (null ohne gebundene Käufer-Wallet oder bei Preis 0); die 402-Antwort führt den Weg in `steps`/`hint` zuerst. `GET /v1/payments`: `gasless`
+  (facilitator, settle_url, how, caveats) und `funding` (ehrliche Anleitung je env), Sender-Liste beginnt mit dem EIP-712-Signer.
+  MCP-Tool `pay_job` (ohne `transaction` → Terms mit Typed-Data; mit → einreichen). SDK npm 0.3.4: `jobs.payGasless(id, signTypedData)` (holt Terms,
+  signiert per Callback, POSTet Body mit Signatur an `settle_url`, reicht Hash über `jobs.pay` ein; Fehler `facilitator_declined` /
+  `facilitator_unreachable` / `signature_invalid` / `wallet_address_required` mit Hint), `sandbox.faucet()`; PyPI 0.3.4 `jobs.pay_gasless`,
+  `sandbox.faucet()`. Doku: llms.txt Schritt 5, Geld-Absatz, Quickstart §6, Fehlerkatalog, skill.md ×3, READMEs, SPEC-PAYMENTS §5, Changelog 0.3.7.
+- **Tests:** `x402.test.ts` pinnt die Typed-Data an den viem-Vektor aus `usdc.test.ts` (eigener EIP-712-Hasher im Test, Signatur identisch),
+  Settle-Body-Form, Live-Domain, frische Nonces; `jobs/routes.test.ts` prüft den `gasless`-Block im 402 (und `null` ohne Wallet);
+  `sdk.test.ts` fährt `payGasless` gegen einen Fake-Facilitator (Erfolg, Ablehnung, kaputte Signatur, keine Wallet); Python per Mock-Transport.
+- **Echte Läufe:** (1) `packages/agents/scripts/smoke-gasless.ts --verify-live`: PayAI `/verify` auf Base Mainnet antwortet `isValid: true` für eine
+  0,01-USDC-Autorisierung der Operator-Wallet (nichts gesettelt). (2) `smoke-gasless.ts --base http://127.0.0.1:8790` gegen die lokale API mit
+  dem echten Desk-Faucet: Käufer-Wallet mit 0 ETH, Faucet-Tx `0x6bdef959…508e`, Zahlung gasfrei über x402.org, Tx `0x7b5812ce…6360`
+  (Sepolia), von der API verifiziert, Lieferung enthüllt, Job completed, Verkäufer sieht das Settlement: **10,5 s Ende zu Ende.**
+- **Review (Workflow, 2 Reviewer, 328k Tokens, 7,5 min, 18 Funde: 0 hoch, 5 mittel), alle eingebaut vor dem Deploy:**
+  (1) **Nonce deterministisch** statt zufällig: `authorizationNonceFor(job, payer, amount, #partials)` (keccak); USDC führt je (Signer, Nonce)
+  genau einmal aus, also kann ein Agent, der die Terms nach einer verlorenen Antwort erneut holt und signiert, nicht doppelt zahlen (vorher:
+  frische Nonce je Aufruf → zweite gültige Überweisung). (2) **Restbetrag nach Teilzahlung:** `termsForJob` zieht erfasste Partials ab
+  (`amount` = Rest, neu `price`, `already_paid`; die Typed-Data verlangt den Rest, nicht den vollen Preis). (3) **SDK-Fehlerklassen ehrlich:**
+  nur HTTP 4xx + `success:false` ist `facilitator_declined` („nichts bewegt“); Transportfehler/5xx/kaputte Antwort → derselbe Body wird bis
+  zu 3× erneut gesendet (dank Nonce ungefährlich), dann `facilitator_unknown` mit `details.settle_body` und „nicht neu signieren“; scheitert
+  `jobs.pay` nach erfolgreichem Broadcast, trägt der Fehler `details.transaction` + „mit jobs.pay(id, hash) fortsetzen“. TS-Fetch mit 90-s-Timeout.
+  (4) **Konsistenzprüfung vor dem Signieren** (`terms_inconsistent`): Empfänger, Betrag, Absender, chainId, USDC-Vertrag, Autorisierung im
+  Settle-Body = Typed-Data-Message. (5) **Smart-Wallet-Signaturen** (ERC-1271, > 65 Bytes) passieren die SDKs; Python nimmt auch `bytes`/HexBytes.
+  (6) `settle_it_yourself` liefert `gasless` mit; OpenAPI-Schema `X402SettleBody`; eth_account-Text (`.signature.to_0x_hex()`); Python-Docstring,
+  CLI-Hilfen, SPEC-Zeile (Faucet statt circle.com), MCP-`payment_info`. Neue Tests: Nonce-Ableitung, Live-Domain im 402, eingefrorenes `pay_to`
+  in der Typed-Data, Restbetrag nach Partial, ignorierte Signatur an `/pay`, SDK-Fehlermatrix (Fake-Facilitator: 4xx, 200+false, ECONNRESET ×3,
+  503, kaputter Hash, Manipulation), Python-Tests `sdk-python/tests/test_pay_gasless.py` (5). Nicht gebaut: CLI-Signierbefehl (die CLI ist
+  dependency-frei; Hinweis im Hilfetext reicht).
+- **Live-Settle auf Base Mainnet (Review-Punkt „nur /verify geprüft“):** `smoke-gasless.ts --settle-live` schickte 0,01 USDC Operator-Wallet →
+  souk-services-Wallet über PayAI: Tx `0x836ccf23…5371`, Block 51038187, `status 0x1`, Transfer-Log 10000 minor, Relayer-Gas von PayAI.
+  Damit ist der gasfreie Hauptweg auch auf Live belegt (kein Plattform-Job, keine Settlement-Zeile; ein Cent zwischen eigenen Wallets).
+- **Faucet-Stand:** 17 Sepolia-USDC auf der Operator-Wallet (3 verbraucht); `sent_today` in der Desk-Health.
 
 ## Stand 2026-09-08, Checkpoint 53: ERC-8004-Projektion live (ADR-28), Judge-Rauchtest, Desk-Fix (API 0.3.6, 194 + 52 Tests grün)
 

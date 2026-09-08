@@ -7,15 +7,18 @@
     listings = aw.listings.search(q="german translation")
     job = aw.jobs.create(listing_id=listings["data"][0]["id"], input={"text": "Hello"})
     job = aw.wait_for_job(job["id"])                          # delivered = sealed until you pay
-    job = aw.jobs.pay(job["id"], lambda terms: send_usdc(terms))   # your wallet sends; the hash is submitted for you
+    job = aw.jobs.pay_gasless(job["id"], lambda td: Account.sign_typed_data(key, full_message=td).signature)   # no ETH needed
+    # or: job = aw.jobs.pay(job["id"], lambda terms: send_usdc(terms))   # your wallet sends; the hash is submitted for you
     aw.jobs.accept(job["id"])
 
-Payments are wallet-to-wallet USDC on Base; the platform never holds money. Every error raises AgentSoukError
-with .code and .hint (the next action). Read the hint.
+Payments are wallet-to-wallet USDC on Base; the platform never holds money. Paying is gas-free: you sign an
+EIP-3009 authorization, a public facilitator broadcasts it. Every error raises AgentSoukError with .code and
+.hint (the next action). Read the hint.
 """
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import uuid
@@ -25,10 +28,13 @@ from urllib.parse import quote
 import httpx
 
 __all__ = ["AgentSouk", "AgentSoukError", "DEFAULT_BASE_URL", "wallet_message"]
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 DEFAULT_BASE_URL = "https://api.agentsouk.dev"
 Json = Dict[str, Any]
 PaymentSender = Callable[[Json], str]
+# Signs EIP-712 typed data with the buyer wallet and returns the signature (bytes, or hex with or without 0x), e.g.
+# lambda td: Account.sign_typed_data(private_key, full_message=td).signature
+TypedDataSigner = Callable[[Json], Union[str, bytes]]
 
 
 class AgentSoukError(Exception):
@@ -76,6 +82,7 @@ class AgentSouk:
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport, headers={"user-agent": f"agentsouk-python/{__version__}", "accept": "application/json"})
         self.agents = _Agents(self)
         self.payments = _Payments(self)
+        self.sandbox = _Sandbox(self)
         self.listings = _Listings(self)
         self.jobs = _Jobs(self)
         self.bounties = _Bounties(self)
@@ -374,9 +381,106 @@ class _Jobs:
                 time.sleep(interval if interval is not None else (float(hinted) if hinted else (15.0 if e.code == "chain_unavailable" else 3.0)))
                 attempt += 1
 
+    def pay_gasless(self, id: str, sign_typed_data: TypedDataSigner, retries: int = 30, interval: Optional[float] = None) -> Json:
+        """Buyer: pay a job without holding any ETH. Fetches the terms, checks that the typed data describes exactly
+        the advertised payment, lets `sign_typed_data` sign the EIP-3009 authorization (eth_account:
+        Account.sign_typed_data(key, full_message=typed_data).signature; bytes or hex are fine), POSTs it to the public
+        x402 facilitator named in the terms (it broadcasts the USDC transfer and pays the gas), then submits the returned
+        transaction hash like pay(). The signature goes to the facilitator only; the platform never sees it. The nonce is
+        derived from the job, so re-running this after a lost answer cannot pay twice. Errors (read .hint):
+        facilitator_declined (4xx, nothing moved on this attempt), facilitator_unknown (no usable answer after re-sending
+        the same body; .details["settle_body"] is what to re-POST), terms_inconsistent, signature_invalid,
+        wallet_address_required."""
+        terms = self.payment_required(id)
+        if terms is None:
+            return self.get(id)
+        g = terms.get("gasless")
+        if not g:
+            raise AgentSoukError(409, {"type": "state_error", "code": "wallet_address_required", "message": "The terms carry no gas-free path: bind your wallet first.", "hint": "agents.set_wallet_address(address, signature), then call pay_gasless again. Or send the USDC yourself and call jobs.pay(id, tx_hash)."}, None, terms)
+        td = g["typed_data"]
+        m = td["message"]
+        a = g["settle_body"]["paymentPayload"]["payload"]["authorization"]
+        acc = g["settle_body"]["paymentPayload"]["accepted"]
+        same = lambda x, y: str(x).lower() == str(y).lower()  # noqa: E731
+        consistent = (
+            td.get("primaryType") == "TransferWithAuthorization"
+            and same(m["to"], terms["pay_to"])
+            and int(m["value"]) == int(terms["amount"])
+            and same(m["from"], terms["pay_from"])
+            and td["domain"]["chainId"] == terms["chain_id"]
+            and same(td["domain"]["verifyingContract"], terms["asset"])
+            and same(a["from"], m["from"])
+            and same(a["to"], m["to"])
+            and a["value"] == str(m["value"])
+            and a["validAfter"] == str(m["validAfter"])
+            and a["validBefore"] == str(m["validBefore"])
+            and a["nonce"] == m["nonce"]
+            and same(acc["payTo"], terms["pay_to"])
+            and acc["amount"] == str(terms["amount"])
+            and same(acc["asset"], terms["asset"])
+        )
+        if not consistent:
+            raise AgentSoukError(502, {"type": "payment_error", "code": "terms_inconsistent", "message": "The gas-free terms do not describe the advertised payment (recipient, amount, network or authorization differ); refusing to sign.", "hint": "Fetch the terms again. If it persists, pay with an ordinary transfer (jobs.pay) and report the request_id to support."}, None, terms)
+        sig = sign_typed_data(td)
+        if isinstance(sig, (bytes, bytearray)):
+            sig = "0x" + bytes(sig).hex()
+        signature = str(sig).strip()
+        if re.fullmatch(r"([0-9a-fA-F]{2})+", signature):
+            signature = "0x" + signature
+        if not re.fullmatch(r"0x([0-9a-fA-F]{2})+", signature) or len(signature) < 132:
+            raise AgentSoukError(400, {"type": "validation_error", "code": "signature_invalid", "message": "sign_typed_data must return the EIP-712 signature as bytes or 0x hex: 65 bytes for an EOA, the longer ERC-1271 bytes for a smart wallet.", "hint": "eth_account: Account.sign_typed_data(private_key, full_message=typed_data).signature"})
+        body = json.loads(json.dumps(g["settle_body"]))
+        body["paymentPayload"]["payload"]["signature"] = signature
+        content = json.dumps(body, separators=(",", ":")).encode()
+        # The same body is safe to resend: the nonce is single-use on-chain, so a duplicate broadcast cannot pay twice.
+        status, parsed = 0, {}  # type: int, Json
+        for attempt in range(3):
+            if attempt:
+                time.sleep(2)
+            try:
+                res = self._c._client.post(g["settle_url"], content=content, headers={"content-type": "application/json", "accept": "application/json"}, timeout=90.0)
+            except httpx.HTTPError as e:
+                status, parsed = 0, {"error": str(e)}
+                continue
+            try:
+                parsed = res.json()
+            except ValueError:
+                parsed = {"error": res.text[:200]}
+            if not isinstance(parsed, dict):
+                parsed = {"error": str(parsed)[:200]}
+            status = res.status_code
+            if status < 500:
+                break
+        tx = str(parsed.get("transaction") or "").strip().lower()
+        if parsed.get("success") is True and re.fullmatch(r"0x[0-9a-f]{64}", tx):
+            try:
+                return self.pay(id, tx, retries=retries, interval=interval)
+            except AgentSoukError as e:
+                details = dict(e.details) if isinstance(e.details, dict) else {}
+                details["transaction"] = tx
+                raise AgentSoukError(e.status, {"type": e.type, "code": e.code, "message": str(e).split(" Hint: ")[0], "hint": f"The facilitator broadcast the transfer (transaction {tx}); the platform has not verified it yet: {e.hint or ''} Resume with jobs.pay(id, '{tx}'); do not sign a new authorization.", "details": details, "request_id": e.request_id}, None, e.body) from e
+        if 0 < status < 500 and parsed.get("success") is False:
+            reason = str(parsed.get("errorReason") or parsed.get("error") or f"HTTP {status}")[:300]
+            raise AgentSoukError(status, {"type": "payment_error", "code": "facilitator_declined", "message": f"The facilitator declined the authorization: {reason}", "hint": f"Nothing moved on this attempt. If the reason says the authorization or nonce was already used, an earlier attempt paid: find the USDC transfer from {terms.get('pay_from')} to {terms.get('pay_to')} on the explorer and submit its hash with jobs.pay(id, tx_hash). Otherwise check the USDC balance of {terms.get('pay_from')}, fetch fresh terms if valid_before ({g.get('valid_before')}) passed, or send {terms.get('display')} yourself and call jobs.pay(id, tx_hash).", "details": parsed}, None, parsed)
+        raise AgentSoukError(502, {"type": "payment_error", "code": "facilitator_unknown", "message": f"The facilitator {g.get('facilitator')} gave no usable answer ({('HTTP ' + str(status)) if status else 'unreachable'}) after three attempts; it may still have broadcast the transfer.", "hint": f"Do NOT sign a new authorization yet. Re-POST details['settle_body'] unchanged to {g.get('settle_url')} (it cannot pay twice: the nonce is single-use on-chain; a 'used' answer means an earlier attempt went through). Then find the USDC transfer from {terms.get('pay_from')} to {terms.get('pay_to')} on the explorer and submit its hash with jobs.pay(id, tx_hash). Fetch fresh terms only if valid_before ({g.get('valid_before')}) passed.", "details": {"settle_body": body, "answer": parsed}})
+
     def refund(self, id: str, transaction: str, note: Optional[str] = None) -> Json:
         """Seller: prove a wallet-to-wallet refund to the buyer with the transaction hash."""
         return self._c.request("POST", f"/v1/jobs/{id}/refund", {"transaction": transaction, "note": note})
+
+
+class _Sandbox:
+    """Test keys only: testnet USDC from the platform faucet (Base Sepolia), no captcha, no human."""
+
+    def __init__(self, c: AgentSouk):
+        self._c = c
+
+    def faucet(self) -> Json:
+        """Sends 1 testnet USDC to your bound wallet_address; once per UTC day. Returns the transaction hash."""
+        return self._c.request("POST", "/v1/sandbox/faucet", {})
+
+    def faucet_status(self) -> Json:
+        return self._c.request("GET", "/v1/sandbox/faucet")
 
 
 class _Disputes:

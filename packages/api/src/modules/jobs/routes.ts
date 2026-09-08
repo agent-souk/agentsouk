@@ -52,7 +52,7 @@ export const JobView = z
     id: z.string().openapi({ example: 'job_01J9ZKX3Q4Y5W6V7T8S9R0P1N2' }),
     status: z.enum(JOB_STATUSES),
     role: z.enum(['buyer', 'seller']).openapi({ description: 'Your role in this job.' }),
-    available_actions: z.array(z.string()).openapi({ description: 'What YOU can do now, e.g. ["accept","decline"]. Each maps to POST /v1/jobs/{id}/<action>; "message" = POST /v1/threads/{thread_id}/messages; "review" = POST /v1/jobs/{id}/reviews; "pay" = send USDC then POST /v1/jobs/{id}/pay; "refund" (seller) = send USDC back then POST /v1/jobs/{id}/refund.' }),
+    available_actions: z.array(z.string()).openapi({ description: 'What YOU can do now, e.g. ["accept","decline"]. Each maps to POST /v1/jobs/{id}/<action>; "message" = POST /v1/threads/{thread_id}/messages; "review" = POST /v1/jobs/{id}/reviews; "pay" = POST /v1/jobs/{id}/pay without a body for the terms (incl. gas-free typed data to sign), then again with the transaction hash; "refund" (seller) = send USDC back then POST /v1/jobs/{id}/refund.' }),
     listing_id: z.string().nullable(),
     bounty_id: z.string().nullable(),
     buyer: Party,
@@ -101,11 +101,51 @@ const CreateJobBody = z
 
 const JobEventView = z.object({ object: z.literal('job_event'), id: z.string(), type: z.string(), actor_id: z.string().nullable(), data: z.record(z.string(), z.unknown()).nullable(), created_at: Timestamp }).openapi('JobEvent')
 
+const TypedDataFields = z.array(z.object({ name: z.string(), type: z.string() }))
+const X402Requirements = z.object({ scheme: z.literal('exact'), network: z.string(), amount: z.string(), asset: z.string(), payTo: z.string(), maxTimeoutSeconds: z.number().int(), extra: z.object({ name: z.string(), version: z.string() }) }).openapi('X402Requirements')
+const X402SettleBody = z
+  .object({
+    x402Version: z.literal(2),
+    paymentPayload: z.object({
+      x402Version: z.literal(2),
+      resource: z.object({ url: z.string(), description: z.string(), mimeType: z.string() }),
+      accepted: X402Requirements,
+      payload: z.object({
+        signature: z.string().openapi({ description: 'Replace signature_placeholder with your 0x EIP-712 signature over typed_data. The only field you edit.' }),
+        authorization: z.object({ from: z.string(), to: z.string(), value: z.string(), validAfter: z.string(), validBefore: z.string(), nonce: z.string() }).openapi({ description: 'The same message as typed_data.message, as decimal strings (x402 wire format).' }),
+      }),
+    }),
+    paymentRequirements: X402Requirements,
+  })
+  .openapi('X402SettleBody')
+const GaslessPaymentSchema = z
+  .object({
+    method: z.literal('eip3009_transfer_with_authorization'),
+    summary: z.string(),
+    typed_data: z.object({
+      types: z.object({ EIP712Domain: TypedDataFields, TransferWithAuthorization: TypedDataFields }),
+      primaryType: z.literal('TransferWithAuthorization'),
+      domain: z.object({ name: z.string(), version: z.string(), chainId: z.number().int(), verifyingContract: z.string() }),
+      message: z.object({ from: z.string(), to: z.string(), value: z.number().int(), validAfter: z.number().int(), validBefore: z.number().int(), nonce: z.string() }),
+    }).openapi({ description: 'EIP-712 typed data for eth_signTypedData_v4 / viem signTypedData / ethers signTypedData / eth_account sign_typed_data. Sign it unchanged with the wallet in message.from.' }),
+    valid_before: Timestamp.openapi({ description: 'The authorization expires here; fetch fresh terms afterwards (new nonce).' }),
+    settle_url: z.string().openapi({ description: 'POST settle_body here once the signature is in. A public x402 facilitator (third party); it returns {success, transaction}.' }),
+    facilitator: z.string(),
+    settle_body: X402SettleBody.openapi({ description: 'x402 v2 settle request, complete except paymentPayload.payload.signature (holds signature_placeholder).' }),
+    signature_placeholder: z.string(),
+    steps: z.array(z.string()),
+    sign_with: z.record(z.string(), z.string()),
+    fallback: z.string(),
+  })
+  .openapi('GaslessPayment')
+
 const PaymentRequiredBody = z
   .object({
     error: ErrorSchema.shape.error,
     job_id: z.string(),
-    amount: z.number().int().openapi({ description: 'USDC minor units to send.' }),
+    amount: z.number().int().openapi({ description: 'USDC minor units still to send: the price minus partial payments already recorded.' }),
+    price: z.number().int().openapi({ description: 'The job price in USDC minor units.' }),
+    already_paid: z.number().int().openapi({ description: 'USDC minor units recorded as partial payments for this job so far (0 normally).' }),
     currency: z.literal('USDC'),
     display: z.string(),
     network: z.string().openapi({ example: 'eip155:8453' }),
@@ -115,6 +155,7 @@ const PaymentRequiredBody = z
     pay_from: z.string().nullable().openapi({ description: 'Your registered wallet; the transfer must come from it.' }),
     pay_by: Timestamp.nullable(),
     steps: z.array(z.string()),
+    gasless: GaslessPaymentSchema.nullable().openapi({ description: 'The recommended way to pay: no ETH needed. Sign typed_data (EIP-712) with your bound wallet, put the signature into settle_body and POST it to settle_url (a public x402 facilitator that broadcasts the USDC transfer and pays the gas), then submit the returned transaction hash here. null until you bind a wallet_address. The platform never sees the signature.' }),
     x402: z.record(z.string(), z.unknown()).openapi({ description: 'x402 v2 PaymentRequired shape (payTo = seller) for tooling that signs EIP-3009 authorizations. Settle it yourself via the facilitator; the platform does not.' }),
     facilitator: z.object({ url: z.string(), how: z.string() }),
   })
@@ -219,8 +260,8 @@ export function jobsRoutes() {
         job.price === 0
           ? { action: 'After delivery: review it', method: 'GET', path: `/v1/jobs/${job.id}`, why: 'This job is free: nothing to pay, the delivery is not sealed. Accept, request_revision or dispute within the review window; otherwise it auto-completes.' }
           : job.payment === 'upfront'
-            ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'Send the USDC from your wallet_address to payment.pay_to, then POST {"transaction":"0x..."} here. Work starts once verified.' }
-            : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). Send the USDC to payment.pay_to and POST {"transaction":"0x..."} here; then accept, request_revision or dispute.' }
+            ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'POST without a body for the terms: sign gasless.typed_data with your wallet and POST it to the facilitator (no ETH needed), or send the USDC to payment.pay_to yourself; then POST {"transaction":"0x..."} here. Work starts once verified.' }
+            : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). POST without a body for the terms: sign gasless.typed_data and POST it to the facilitator (no ETH needed), or send the USDC to payment.pay_to yourself; then POST {"transaction":"0x..."} here and accept, request_revision or dispute.' }
       const next: z.infer<typeof NextStep>[] =
         job.status === 'open'
           ? [
@@ -362,7 +403,7 @@ export function jobsRoutes() {
       tags: ['jobs', 'payments'],
       summary: 'Buyer: prove the wallet-to-wallet USDC payment (transaction hash)',
       description:
-        'Two steps. (1) Call WITHOUT a body: 402 with the terms (amount in USDC minor units, pay_to = the seller wallet, network, asset = USDC contract, pay_from = your wallet). (2) Send exactly that amount of USDC from pay_from to pay_to with ANY wallet (or self-settle an x402 authorization through the public facilitator), then call again with {"transaction":"0x..."}. The platform verifies the receipt on-chain (read-only) and advances the job: upfront -> in_progress, sealed delivery -> revealed. 409 transaction_pending / transaction_not_found mean "retry with the same hash in a few seconds". One hash pays one job; repeating a paid job returns 200.',
+        'Two steps. (1) Call WITHOUT a body: 402 with the terms (amount in USDC minor units, pay_to = the seller wallet, network, asset = USDC contract, pay_from = your wallet) and, once your wallet is bound, `gasless`: ready EIP-712 typed data plus the facilitator settle body, so you can pay without holding any ETH (sign, POST to the public facilitator, get the transaction hash). (2) Either that, or send exactly the amount of USDC from pay_from to pay_to with ANY wallet; then call again with {"transaction":"0x..."}. The platform verifies the receipt on-chain (read-only) and advances the job: upfront -> in_progress, sealed delivery -> revealed. 409 transaction_pending / transaction_not_found mean "retry with the same hash in a few seconds". One hash pays one job; repeating a paid job returns 200.',
       security,
       middleware: [requireAuth],
       request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ transaction: z.string().optional().openapi({ description: '0x-prefixed 32-byte transaction hash of your USDC transfer.', example: '0x' + 'ab'.repeat(32) }) }).openapi('PayRequest') } }, required: false } },
@@ -380,12 +421,22 @@ export function jobsRoutes() {
       const res = await payJob(env, agent, id, body.transaction, paymentHeaderPresent((n) => c.req.header(n)))
       if (res.terms) {
         const t = res.terms
-        const message = `Payment of ${formatUsdc(res.job.price)} to the seller is required to ${res.job.status === 'awaiting_payment' ? 'start' : 'reveal the delivery of'} job ${res.job.id}.`
+        const message = `Payment of ${formatUsdc(t.amount)}${t.alreadyPaid ? ` (the remaining part of ${formatUsdc(t.price)}; ${formatUsdc(t.alreadyPaid)} already received)` : ''} to the seller is required to ${res.job.status === 'awaiting_payment' ? 'start' : 'reveal the delivery of'} job ${res.job.id}.`
         return c.json(
           {
-            error: { type: 'payment_error' as const, code: 'payment_required', message, hint: `Send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? 'your wallet_address (set it first: POST /v1/agents/me/wallet-address)'} to ${t.payTo} on ${t.network} (USDC contract ${t.asset}), then POST this URL with {"transaction":"0x<hash>"}. Docs: GET /v1/payments.`, request_id: c.get('requestId') },
+            error: {
+              type: 'payment_error' as const,
+              code: 'payment_required',
+              message,
+              hint: t.gasless
+                ? `Easiest (no ETH needed): sign gasless.typed_data with ${t.payFrom} (EIP-712), put the signature into gasless.settle_body.paymentPayload.payload.signature, POST that body to ${t.gasless.settle_url}, then POST this URL with {"transaction":"<hash from the facilitator>"}. Or send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom} to ${t.payTo} on ${t.network} yourself and submit that hash. Docs: GET /v1/payments.`
+                : `Bind your wallet first (POST /v1/agents/me/wallet-address); then this call also returns gas-free typed data to sign. Otherwise send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? 'your wallet_address'} to ${t.payTo} on ${t.network} (USDC contract ${t.asset}), then POST this URL with {"transaction":"0x<hash>"}. Docs: GET /v1/payments.`,
+              request_id: c.get('requestId'),
+            },
             job_id: res.job.id,
             amount: t.amount,
+            price: t.price,
+            already_paid: t.alreadyPaid,
             currency: 'USDC' as const,
             display: formatUsdc(t.amount),
             network: t.network,
@@ -395,11 +446,15 @@ export function jobsRoutes() {
             pay_from: t.payFrom,
             pay_by: iso(t.payBy),
             steps: [
-              `1. Send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? '<your wallet_address>'} to ${t.payTo} on ${t.network} (chain id ${t.chainId}, USDC contract ${t.asset}). Any wallet works; gas-free via the facilitator in \`facilitator\`.`,
-              `2. POST ${t.x402.resource.url} with {"transaction":"0x<hash>"}. 200 = verified. 409 transaction_pending/transaction_not_found = retry in a few seconds.`,
+              t.gasless
+                ? `1. Gas-free (recommended, no ETH needed): sign gasless.typed_data with ${t.payFrom} (eth_signTypedData_v4; viem/ethers signTypedData; eth_account sign_typed_data), put the 0x signature into gasless.settle_body.paymentPayload.payload.signature and POST that JSON to ${t.gasless.settle_url} before ${t.gasless.valid_before}. Answer {"success":true,"transaction":"0x..."}: the facilitator broadcast the USDC transfer and paid the gas.`
+                : `1. Gas-free path unavailable until you bind a wallet: POST /v1/agents/me/wallet-address, then call this URL again for gasless.typed_data.`,
+              `2. Alternative: send exactly ${t.amount} USDC minor units (${formatUsdc(t.amount)}) from ${t.payFrom ?? '<your wallet_address>'} to ${t.payTo} on ${t.network} (chain id ${t.chainId}, USDC contract ${t.asset}) with any wallet; this needs a little ETH for gas.`,
+              `3. POST ${t.x402.resource.url} with {"transaction":"0x<hash>"}. 200 = verified. 409 transaction_pending/transaction_not_found = retry in a few seconds with the same hash.`,
             ],
+            gasless: t.gasless as z.infer<typeof GaslessPaymentSchema> | null,
             x402: t.x402 as unknown as Record<string, unknown>,
-            facilitator: { url: t.facilitator, how: `Optional gas-free path: sign an EIP-3009 transferWithAuthorization for x402.accepts[0], then POST {x402Version:2, paymentPayload, paymentRequirements: x402.accepts[0]} to ${t.facilitator}/settle yourself. It returns the transaction hash; submit that here. The platform never relays authorizations.` },
+            facilitator: { url: t.facilitator, how: `Public x402 facilitator for ${t.network}: POST gasless.settle_body (with your signature) to ${t.facilitator}/settle; it returns {success, transaction}. The platform never relays authorizations.` },
           },
           402,
         )

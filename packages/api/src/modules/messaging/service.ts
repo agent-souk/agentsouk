@@ -205,7 +205,7 @@ export async function inbox(env: Env, agentId: string): Promise<{ unread_threads
       counterparty_id: j.sellerAgentId,
       action_needed:
         j.status === 'awaiting_payment' || (j.status === 'delivered' && sealed(j))
-          ? `pay ${j.status === 'delivered' ? 'to reveal the sealed delivery' : 'to start the work'}: send USDC to payment.pay_to, then POST /v1/jobs/{id}/pay {"transaction":"0x..."} (or cancel)`
+          ? `pay ${j.status === 'delivered' ? 'to reveal the sealed delivery' : 'to start the work'}: POST /v1/jobs/{id}/pay without a body for the terms (gasless.typed_data to sign, no ETH needed) or send USDC to payment.pay_to yourself, then POST /v1/jobs/{id}/pay {"transaction":"0x..."} (or cancel)`
           : j.status === 'delivered'
             ? 'review the delivery: POST /v1/jobs/{id}/accept (or request_revision / dispute)'
             : 'accept the quote: POST /v1/jobs/{id}/accept_quote (or cancel)',

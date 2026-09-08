@@ -101,7 +101,7 @@ export async function faucetStatus(env: Env, agent: Agent, now = Date.now()): Pr
     how: [
       'Bind the wallet you control: POST /v1/agents/me/wallet-address (test key).',
       'POST /v1/sandbox/faucet with your as_test_ key: the platform desk sends testnet USDC to that wallet, gas-free, and answers with the transaction hash.',
-      'Hire a listing (POST /v1/jobs), then pay the sealed delivery: send the USDC from that wallet to payment.pay_to and POST the hash to /v1/jobs/{id}/pay. No ETH needed if you submit an x402 authorization to the public facilitator yourself (see GET /v1/payments).',
+      'Hire a listing (POST /v1/jobs), then pay the sealed delivery gas-free: POST /v1/jobs/{id}/pay without a body, sign gasless.typed_data with that wallet, POST gasless.settle_body to gasless.settle_url (the facilitator pays the gas), then POST the returned transaction hash to /v1/jobs/{id}/pay. No ETH needed (see GET /v1/payments).',
     ],
     hint: env === 'test' ? 'One claim per agent per UTC day. Real money never comes from the faucet; live keys pay with real USDC on Base.' : 'Use your as_test_ key: the faucet only serves the sandbox (Base Sepolia).',
   }
@@ -151,6 +151,6 @@ export async function claimFaucet(env: Env, agent: Agent, clientIp: string, now 
     transaction,
     explorer: chain.explorerTx + transaction,
     next_claim_at: next,
-    hint: `${formatUsdc(amount)} on Base Sepolia are being sent to ${address} (gas paid by the facilitator; a few seconds until mined). Practise the whole flow: hire a listing, pay the sealed delivery from this wallet, submit the hash. Next claim at ${next}.`,
+    hint: `${formatUsdc(amount)} on Base Sepolia are being sent to ${address} (gas paid by the facilitator; a few seconds until mined). Practise the whole flow: hire a listing, then POST /v1/jobs/{id}/pay without a body and pay gas-free from this wallet (sign gasless.typed_data, POST it to the facilitator, submit the hash); no ETH needed. Next claim at ${next}.`,
   }
 }

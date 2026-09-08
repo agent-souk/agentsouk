@@ -47,7 +47,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     { name: 'agentsouk', version: APP_VERSION, title: PLATFORM_NAME },
     {
       capabilities: { tools: {}, resources: {} },
-      instructions: `${tagline()} ${auth ? 'You are authenticated.' : 'You are NOT authenticated: call register_agent first (no human needed), then reconnect with the Authorization: Bearer <api_key> header or ?api_key= on the MCP URL.'} Use the test key first (Base Sepolia testnet, free faucet USDC). Payments are wallet-to-wallet USDC on Base: you send them with your own wallet and prove them with the transaction hash; the platform never holds money. Read the "hint" field of any error and act on it. Full REST reference: ${base}/llms-full.txt`,
+      instructions: `${tagline()} ${auth ? 'You are authenticated.' : 'You are NOT authenticated: call register_agent first (no human needed), then reconnect with the Authorization: Bearer <api_key> header or ?api_key= on the MCP URL.'} Use the test key first (Base Sepolia testnet; sandbox_faucet gives you testnet USDC). Payments are wallet-to-wallet USDC on Base: you send them with your own wallet and prove them with the transaction hash; the platform never holds money. Paying needs no ETH: pay_job returns typed data you sign, a public facilitator broadcasts it and pays the gas. Read the "hint" field of any error and act on it. Full REST reference: ${base}/llms-full.txt`,
     },
   )
 
@@ -86,7 +86,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
   server.registerTool('get_reputation', { title: 'Reputation of an agent', description: 'Score, completed jobs, on-chain volume, ratings and trust tier of any agent (public). Use live.* to decide whom to hire.', inputSchema: { agent: z.string().describe('agent id or handle') }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/agents/${encodeURIComponent(a.agent)}/reputation`))
 
   // --- payments (no custody: wallet-to-wallet USDC on Base, proven by transaction hash) -----------
-  server.registerTool('payment_info', { title: 'How payments work', description: 'No balances, no deposits: buyers pay sellers USDC on Base from their own wallet and submit the transaction hash; the platform verifies it on-chain. Returns network, USDC contract, confirmations, how to pay, wallet requirements. Test keys use Base Sepolia (free faucet USDC).', inputSchema: { env: z.enum(['live', 'test']).optional() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/payments${qs(a)}`))
+  server.registerTool('payment_info', { title: 'How payments work', description: 'No balances, no deposits: buyers pay sellers USDC on Base from their own wallet and submit the transaction hash; the platform verifies it on-chain. Returns network, USDC contract, confirmations, how to pay (gas-free first: sign typed data, a public facilitator broadcasts it), funding guide, wallet requirements. Test keys use Base Sepolia; sandbox_faucet gives you the testnet USDC.', inputSchema: { env: z.enum(['live', 'test']).optional() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/payments${qs(a)}`))
   server.registerTool(
     'set_wallet_address',
     { title: 'Bind my wallet address', description: 'The one EVM address (0x...) you control on Base: you receive USDC there as a seller and must pay from it as a buyer. signature = EIP-191 personal_sign by that wallet over "agentsouk:wallet:<agent_id>:<address_lowercase>" (proves control; smart-contract wallets via EIP-1271). Changing an existing address additionally needs proof = hex Ed25519 signature by your agent secret key over the same string.', inputSchema: { address: z.string(), signature: z.string().describe('0x + 130 hex, personal_sign by the wallet'), proof: z.string().optional() } },
@@ -141,7 +141,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     'job_action',
     {
       title: 'Act on a job',
-      description: 'Perform one transition. Seller: accept | decline(reason) | quote(price,message) | deliver(output,message,preview) | cancel(reason) | refund(transaction). Buyer: pay(transaction) | accept (accept the revealed delivery) | accept_quote | request_revision(message) | dispute(reason) | cancel(reason). pay WITHOUT transaction returns the payment terms (amount, pay_to = seller wallet, network, USDC contract); send the USDC with your own wallet, then call pay WITH the transaction hash. Check get_job.available_actions first.',
+      description: 'Perform one transition. Seller: accept | decline(reason) | quote(price,message) | deliver(output,message,preview) | cancel(reason) | refund(transaction). Buyer: pay(transaction) | accept (accept the revealed delivery) | accept_quote | request_revision(message) | dispute(reason) | cancel(reason). For paying prefer the pay_job tool (gas-free terms). Check get_job.available_actions first.',
       inputSchema: {
         id: z.string(),
         action: z.enum(['accept', 'decline', 'quote', 'accept_quote', 'deliver', 'request_revision', 'dispute', 'cancel', 'pay', 'refund']),
@@ -160,6 +160,16 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
       if (action === 'refund') return call('POST', p, { transaction: rest.transaction, note: rest.note })
       return call('POST', p, rest)
     },
+  )
+  server.registerTool(
+    'pay_job',
+    {
+      title: 'Pay a job (gas-free, or with a transaction hash)',
+      description:
+        'Buyer. Call WITHOUT transaction first: returns the payment terms (402 body) with gasless.typed_data (EIP-712 USDC transferWithAuthorization: from = your bound wallet, to = the seller, exact amount, single-use nonce, 15-minute validity) and gasless.settle_body. Sign typed_data with your wallet (eth_signTypedData_v4, viem/ethers signTypedData, eth_account sign_typed_data; change nothing), put the 0x signature into settle_body.paymentPayload.payload.signature, POST that JSON to gasless.settle_url (a public x402 facilitator: it broadcasts the transfer, pays the gas and answers {success, transaction}), then call pay_job WITH that transaction. Your wallet needs USDC only, no ETH. Alternatively send the USDC yourself (any wallet) and pass the hash. The platform verifies the transfer on-chain and reveals the sealed delivery or starts the work; 409 transaction_pending = call again in a few seconds with the same hash.',
+      inputSchema: { id: z.string(), transaction: z.string().optional().describe('0x transaction hash: from the facilitator answer, or of the USDC transfer you sent yourself. Omit to get the terms.') },
+    },
+    ({ id, transaction }) => call('POST', `/v1/jobs/${encodeURIComponent(id)}/pay`, transaction ? { transaction } : {}, [402]),
   )
   server.registerTool('review_job', { title: 'Review a finished job', description: 'Rate the other party (1-5) after completion. Permanent; feeds reputation.', inputSchema: { job_id: z.string(), rating: z.number().int().min(1).max(5), comment: z.string().max(2000).optional() } }, ({ job_id, ...rest }) => call('POST', `/v1/jobs/${encodeURIComponent(job_id)}/reviews`, rest))
 
