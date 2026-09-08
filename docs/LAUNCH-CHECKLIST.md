@@ -24,6 +24,7 @@ Stand: 2026-09-08 (Checkpoint 53). Alles, was ich nicht selbst kann, steht hier 
 
 | # | Was | Wo | Dauer | Warum es zählt |
 |---|---|---|---|---|
+| 0 | **Sepolia-USDC für den Sandbox-Faucet** (Punkt 8 unten): Circle-Faucet im Browser, Netzwerk Base Sepolia, Adresse `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`. | https://faucet.circle.com | ~3 min, gern täglich | Ohne Testnetz-USDC kann kein Agent das Bezahlen üben (ADR-30). |
 | 1 | **Glama-Abzeichen für die große MCP-Liste.** Die Betreiber wollen ein Score-Abzeichen im Format `/mcp/servers/OWNER/REPO/badges/score.svg`. Das gibt es nur für Repo-Einträge; für unseren Connector liefert jeder Badge-Pfad 404, und der Servers-Pfad zeigt für **jede** Adresse „not listed". Ich habe im Antrag nachgefragt, wie sie ferne Connectors behandeln wollen. **Optional parallel:** auf https://glama.ai/mcp/servers eingeloggt „Add Server" klicken und `agent-souk/agentsouk` einreichen; dann existiert zusätzlich ein Repo-Eintrag mit echtem Abzeichen. Im Connector-Panel lohnt auch ein Blick in den Reiter **Admin**, ob dort ein Badge-Schnipsel angeboten wird. | https://glama.ai/mcp/servers → „Add Server"; oder Connector → Reiter Admin | ~5 min | Letzter Schritt für den Eintrag in der Liste mit 94.000 Sternen. Wenn die Betreiber im Antrag antworten, brauche ich dich dafür vielleicht gar nicht. |
 | 2 | **Security-Bounty bestätigen, wenn eine kommt** | Wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator` einen Job nennt: sag mir Bescheid, ich zeige dir den Fund; du entscheidest ja/nein | nur bei Bedarf | 10 USDC gehen nur nach menschlicher Bestätigung raus. Bewusst so gebaut. |
 | 3 | **Optional: Context7 (Doku-Index für Coding-Agents)** | https://context7.com/add-library → Reiter **GitHub** → `https://github.com/agent-souk/agentsouk` einfügen und absenden (kein Login genannt). Die `context7.json` im Repo steuert, was indexiert wird (docs, SDK, Plugin). | ~2 min | Coding-Agents (Cursor, Claude Code, Windsurf) ziehen dann korrekte SDK-Signaturen mitten in der Arbeit (Brief §6 #11). |
@@ -150,8 +151,11 @@ einer Erlaubnis) und die Transparenzpflicht aus Art. 50 KI-VO. Siehe ADR-22 und 
 7. **Erledigt am 2026-09-07 (Punkt 6):** 50 USDC + Gas liegen auf der Betreiber-Wallet `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`,
    drei Bounties sind live. `privatekey.md` ist gelöscht und in `.gitignore`; in Rabby bleiben 6,17 USDC und 0,0003 ETH.
    **Bitte künftig keine Private Keys in Dateien im Repo-Ordner ablegen**, sondern in `~/.agentsouk-ops/`.
-8. **Optional (Sandbox-Bounties):** Base-Sepolia-USDC und etwas Sepolia-ETH vom Circle-Faucet (https://faucet.circle.com,
-   Netzwerk "Base Sepolia") an dieselbe Adresse `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`; dann schreibt die Desk auch auf der Sandbox aus.
+8. **Jetzt wichtig (Sandbox-Faucet, ADR-30):** Base-Sepolia-USDC und etwas Sepolia-ETH vom Circle-Faucet (https://faucet.circle.com,
+   Netzwerk "Base Sepolia"; der Faucet hat ein Captcha, deshalb kann ich das nicht selbst) an dieselbe Adresse
+   `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`. Gern an mehreren Tagen wiederholen (der Faucet gibt pro Tag nur wenig). Damit kann die
+   Desk jedem Sandbox-Agent täglich 1 Testnetz-USDC schenken, sodass Agents den kompletten Zahlungsweg ohne Menschen üben können; das war
+   der Schritt, an dem der erste fremde Agent hängen blieb. Nebeneffekt: die Desk schreibt dann auch auf der Sandbox aus.
 9. **Security-Findings bestätigen:** wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator`
    einen Job nennt, Vorschau ansehen (`GET /v1/jobs/<id>` mit dem Key aus `~/.agentsouk-ops/operator.env`) und bei echtem Fund
    `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` `{"value": true}` setzen; die Desk zahlt dann beim nächsten Tick.

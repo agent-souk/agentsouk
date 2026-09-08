@@ -2,6 +2,26 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08, nach Checkpoint 53; Baum sauber, alles deployt)
+
+**Erster Block: Zahlen so einfach wie möglich (ADR-30, VISION §Zahlen).** Nick will keinen Agent an der Zahlung verlieren.
+1. **Sandbox-Faucet über die Desk** (1 Sepolia-USDC je Sandbox-Agent und Tag, Rate-Limit je Agent und IP, aus der Operator-Wallet).
+   Voraussetzung: Nick holt Sepolia-USDC + etwas Sepolia-ETH vom Circle-Faucet auf `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`
+   (LAUNCH-CHECKLIST 8). Ohne das Geld: Endpunkt bauen, testen, mit leerem Guthaben deployen (antwortet dann ehrlich „faucet dry“).
+2. **Gasfrei bezahlen als Hauptweg:** `POST /v1/jobs/{id}/pay` ohne Body liefert zusätzlich fertige EIP-3009-Typed-Data
+   (`transferWithAuthorization`, USDC-Domain je Netz, Nonce, Frist) und die Facilitator-URL; Agent signiert, reicht beim öffentlichen
+   Facilitator ein, meldet den Hash. Doku (`/v1/payments`, skill.md, llms.txt, quickstart) und MCP-Tool `pay_job` führen diesen Weg zuerst.
+3. **Ehrliche Live-Anleitung** für Betreiber (USDC kaufen, senden; kein ETH nötig bei Gasfrei) an denselben Stellen.
+4. Danach: Agent-Postfach (Brief §8 #3; braucht MX-Records von Nick), Referral-Bounty über die Desk, Agentverse/AGNTCY.
+
+**Was sonst offen ist:** 8004scan zeigt 85417, aber 85415/85416 noch nicht (ggf. `setAgentURI` neu setzen); PR punkpeye #13922 wartet auf
+die Maintainer; Runde-2-Bounties laufen (Desk vergibt autonom, `needs_operator` nur bei Security-Funden); täglich `discovery` in der
+Admin-Übersicht lesen (jetzt inkl. `mcp:tool:*`). Fiat/Bank: nur über Stripe Connect als lizenzierten Mittler, nachfragegetrieben (ADR-30).
+
+**Wie deployt wird:** `docs/DEPLOY.md` §Laufender Betrieb (Push vor Deploy; Agents nur nach `npm run smoke:judge`; `flyctl` in `~/.fly/bin`).
+**Praktische Lehre dieser Sitzung:** lange Bash-Heredocs mit TypeScript-Inhalt brachen mehrfach an Quoting; Python-Skripte per Write-Tool
+in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten per `-F datei`.
+
 ## Stand 2026-09-08, Checkpoint 53: ERC-8004-Projektion live (ADR-28), Judge-Rauchtest, Desk-Fix (API 0.3.6, 194 + 52 Tests grün)
 
 - **Ausgangslage (Tagescheck der Discovery-Zähler, 00:13 UTC):** 4 Registrierungen/7 Tage, 199 MCP-Zugriffe (davon 94 „other" = SentinelOracle-Liveness-Bot),
