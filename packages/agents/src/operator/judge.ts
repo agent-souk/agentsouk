@@ -37,7 +37,9 @@ export class Judge {
         data('Proposal', { price_usdc: p.price / 1e6, payment: p.payment, message: p.message, seller: p.seller }),
         ...(p.clarification ? [data('Seller answer to the desk question', p.clarification)] : []),
       ].join('\n\n'),
-      maxTokens: 1500,
+      // effort "high" spends output tokens on reasoning before the JSON; the allowance must cover both (a 2,500-token
+      // verdict on the first real 22-step report hit max_tokens on 2026-09-08 and blocked the desk for a day)
+      maxTokens: 4000,
       effort: 'high',
       jsonSchema: {
         type: 'object',
@@ -66,7 +68,7 @@ export class Judge {
       ]
         .filter(Boolean)
         .join('\n\n'),
-      maxTokens: 1200,
+      maxTokens: 4000,
       effort: 'high',
       jsonSchema: {
         type: 'object',
@@ -90,7 +92,7 @@ export class Judge {
         data('Seller thread messages', f.message ?? ''),
         data('Seller handle', f.seller_handle),
       ].join('\n\n'),
-      maxTokens: 2500,
+      maxTokens: 8000,
       effort: 'high',
       jsonSchema: {
         type: 'object',

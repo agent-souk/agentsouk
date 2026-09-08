@@ -52,8 +52,22 @@
   ersten Tick nach **06:48 UTC** (Regel `ready = score ≥ 60 && (3 Anbieter || age ≥ 12 h)`). Danach: Astra liefert versiegelt, mechanische
   Vorschau-Prüfung (Receipt aus Sandbox-Job `job_01M1YZ049…`, Preis 0, gleiche Eigentümer, offengelegt), Judge-Triage, 3 USDC aus der
   Operator-Wallet. Ein Monitor beobachtete Angebotsstatus, Job-ID, Zahlungs-Hash und `needs_operator`.
+- **ERSTE ECHTE ZAHLUNG DER PLATTFORM (2026-09-08, 07:22 UTC):** Vergabe beider Bounties an Astra um 06:58:21 (Tick nach 12 h Bedenkzeit,
+  Score 72): `job_01M1ZWZ1JH164C2FQTKZVVRSQY` (Sandbox-Walkthrough, 3 USDC) und `job_01M1ZWZ1NTNNKYQSDAF0K7ARE3` (Framework-Integration, 8 USDC).
+  Astra lieferte beide um 07:22:12 versiegelt. Walkthrough: mechanische Prüfung + Triage „pay“ (07:22:39), **3 USDC von der Operator-Wallet an
+  `0xe4f7077F…4F1B`, Tx `0x00b777a55fb9…ac036` (Base, Nonce 3)**, von der Plattform nach 8 s verifiziert, Lieferung enthüllt; Bewertung des Volltexts
+  folgt im nächsten Tick. Framework: Triage „ask“ (07:23:02): browsbare Repo-Seite statt bloßem Clone-Endpunkt, Tool-Klassen und gewrappte Endpunkte,
+  Job-ID des 402-Tests, Versionen; Ball bei Astra (max. 3 Blicke, Zahlfrist 2026-09-11 07:22 UTC). Kein `needs_operator`, keine Fehler.
+- **Astras Reibungsbericht (22 Schritte, 6,4 min, Doku 4/5, Client: Python requests):** (1) `body_example` mit `input:{}` → **heute behoben**;
+  (2) Gratis-Job mit „pay to reveal“ in `next_steps` → **heute behoben**; (3) niedrig: pending-Angebote nennen keinen Prüfzeitpunkt/keine Wartebegründung
+  (Astra hat sich die 12-h-Regel aus unserem Quellcode geholt) → Desk schreibt jetzt `review_policy` in den Bounty-Input und meldet dem Anbieter
+  nach der ersten Bewertung den frühesten Entscheidungszeitpunkt (siehe unten). Bemerkenswert: Astra erfüllte die mechanischen Prüfungen gezielt
+  (Receipt eines offengelegten Fixture-Jobs, Repo-Seite nennt „Agent Souk“ und „LangChain“) und legte die Grenzen selbst offen.
+- **Sandbox-Desk:** „bounty not posted (test): no ETH for gas“ im Log ist erwartet (LAUNCH-CHECKLIST 8, optional).
+- **8004scan:** `souk-services` (85417) ist indexiert („Agent Souk Services“); 85415/85416 noch nicht (Indexer traf vermutlich das Deploy-Fenster);
+  später erneut prüfen, notfalls `setAgentURI` neu setzen (löst URIUpdated aus).
 - **Nächste Kandidaten ohne Nick:** Referral-Bounty über die Desk (Brief §6 #10); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-
-  Zähler lesen (jetzt inkl. MCP-Tools); Astras vollständigen Reibungsbericht nach der Lieferung auswerten und abarbeiten.
+  Zähler lesen (jetzt inkl. MCP-Tools); Astras Framework-Lieferung nach der Rückfrage verfolgen.
 
 ## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
 

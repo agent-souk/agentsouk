@@ -48,7 +48,25 @@ function fixtures(spec: BountySpec): { proposal: ProposalFacts; preview: Preview
   return {
     proposal: { price: Math.round(spec.budget_max * 0.8), payment: 'on_delivery', message: `I will run the ${spec.title.toLowerCase()} using plain HTTP with python-requests, covering registration, wallet binding, one listing, one job as seller, one as buyer, a bounty proposal, inbox and events, and the 402 terms. Delivery in 2 days.`, seller: { handle: 'smoke-seller-3f2a', trust_tier: 0, reputation: { score: null, completed_jobs: 0 } } },
     preview: { preview, message: 'Delivered. Preview carries the counts and the signed receipt of job job_01SMOKE.', seller_handle: 'smoke-seller-3f2a', paid_distinct: [], paid_summaries: [], previous: [] },
-    delivery: { output: { ...preview, steps: [{ action: 'register', endpoint_or_tool: 'POST /v1/agents', ok: true, note: '201' }], friction: [{ where: 'GET /v1/payments', what: 'network not named in the 402 body', severity: 'medium', suggestion: 'add network to the 402 terms' }], bugs: [], docs_rating: 4, minutes: 55 }, message: null, seller_handle: 'smoke-seller-3f2a', checks: [{ check: 'schema', ok: true, detail: 'output matches deliverable_schema' }], revisions_left: 1 },
+    // sized like the first real report (22 steps, 3 frictions with request ids): the verdict must fit the token allowance
+    delivery: {
+      output: {
+        ...preview,
+        steps: Array.from({ length: 22 }, (_, i) => ({ action: `step ${i + 1}: ${['register', 'read profile', 'bind wallet', 'list listings', 'create listing', 'create job', 'accept', 'deliver', 'receipt', 'pay terms', 'inbox', 'events', 'cancel', 'patch listing', 'search bounties', 'propose', 'read thread', 'message', 'feed', 'leaderboard', 'memory', 'schedule'][i]}`, endpoint_or_tool: ['POST /v1/agents', 'GET /v1/agents/me', 'POST /v1/agents/me/wallet-address', 'GET /v1/listings', 'POST /v1/listings', 'POST /v1/jobs', 'POST /v1/jobs/{id}/accept', 'POST /v1/jobs/{id}/deliver', 'GET /v1/jobs/{id}/receipt', 'POST /v1/jobs/{id}/pay', 'GET /v1/inbox', 'GET /v1/events', 'POST /v1/jobs/{id}/cancel', 'PATCH /v1/listings/{id}', 'GET /v1/bounties', 'POST /v1/bounties/{id}/proposals', 'GET /v1/threads/{id}/messages', 'POST /v1/threads/{id}/messages', 'GET /v1/feed', 'GET /v1/leaderboard', 'PUT /v1/memory/{key}', 'POST /v1/schedules'][i], ok: i !== 9, note: i === 9 ? 'HTTP 402 with terms: amount 10000, pay_to 0xc059..., network eip155:84532, asset 0x036C...; no Sepolia USDC available so the job was cancelled afterwards (request_id req_01SMOKE9)' : `HTTP ${i === 0 || i === 4 || i === 5 ? 201 : 200} in ${120 + i * 7} ms, response shape as documented (request_id req_01SMOKE${i})` })),
+        friction: [
+          { where: 'POST /v1/listings response how_to_order.body_example', what: 'For a listing with input_schema.required=[text] and no example_input the ready-to-send body contained input:{}; following it produced 400 invalid_request missing=[text] (request_id req_01SMOKEA).', severity: 'medium', suggestion: 'Only label an order example ready-to-send if it validates against input_schema, or generate typed placeholders for required fields.' },
+          { where: 'POST /v1/jobs next_steps for a zero-price on_delivery listing', what: 'Creation of a free job returned payment.status=none but next_steps still said "After delivery: pay to reveal it" and instructed a USDC transfer; the actual delivery was unsealed and completed without payment.', severity: 'medium', suggestion: 'Gate the pay-to-reveal entry on price>0 and tell the buyer to review the unsealed delivery instead.' },
+          { where: 'GET /v1/bounties/{id}/proposals', what: 'A pending proposal carries created_at and price but no earliest review time or waiting reason; the 12-hour consideration window is only discoverable from the operator source code.', severity: 'low', suggestion: 'Return earliest_review_at and waiting_reason alongside pending proposals.' },
+        ],
+        bugs: [{ where: 'POST /v1/listings response how_to_order.body_example', what: 'ready-to-send body omits required input fields', severity: 'medium', suggestion: 'validate the example against input_schema' }],
+        docs_rating: 4,
+        minutes: 6.4,
+      },
+      message: 'Delivered. The receipt is from a disclosed same-owner zero-price sandbox fixture job; no on-chain transaction is claimed.',
+      seller_handle: 'smoke-seller-3f2a',
+      checks: [{ check: 'schema', ok: true, detail: 'output matches deliverable_schema' }, { check: 'receipt', ok: true, detail: 'valid platform receipt for job job_01SMOKE (test, completed), agent is a party' }],
+      revisions_left: 1,
+    },
   }
 }
 
