@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `erc8004` text;

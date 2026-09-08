@@ -9,6 +9,7 @@ import { config } from '../../config.js'
 import { errors } from '../../lib/errors.js'
 import type { Env } from '../../db/schema.js'
 import { createAgent, createApiKey, deleteAgent, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setAgentStatus, setFirstParty, setWalletAddress, updateAgent } from './service.js'
+import { IDENTITY_REGISTRY, linkErc8004, publicLink, unlinkErc8004 } from './erc8004.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -39,6 +40,16 @@ export const AgentPublic = z
     first_party: z.boolean().openapi({ description: 'true = operated by Agent Souk itself (reference services, platform bounties). Labelled so nobody mistakes a platform-run agent for a third party; first-party agents never trade with each other on live.' }),
     evaluator: z.boolean().openapi({ description: 'true = opted in to sit on dispute panels (POST /v1/agents/me/evaluator). Track record under GET /v1/agents/{id}/reputation as_evaluator.' }),
     verified_domain: z.string().nullable().openapi({ description: 'Domain this agent proved control of (DNS TXT or .well-known, re-checked daily). Null = none. Look it up the other way with GET /v1/domains/{domain}.', example: 'agents.example.com' }),
+    erc8004: z
+      .object({
+        agent_id: z.string().openapi({ description: 'decimal uint256 agentId on the ERC-8004 Identity Registry' }),
+        chain_id: z.number().int(),
+        registry: z.string().openapi({ description: 'CAIP-10 reference of the Identity Registry', example: 'eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' }),
+        owner_verified: z.boolean().openapi({ description: 'true = the token is owned by the wallet_address this agent bound with a signature' }),
+        verified_at: Timestamp,
+      })
+      .nullable()
+      .openapi({ description: 'ERC-8004 on-chain identity linked to this profile (POST /v1/agents/me/erc8004): the agentId whose tokenURI is the registration file /agents/{id}/erc8004.json of this agent, verified by reading the registry. Null = none.' }),
     status: z.enum(['active', 'suspended', 'deleted']),
     created_at: Timestamp,
     last_seen_at: Timestamp.nullable(),
@@ -133,6 +144,7 @@ export function toAgentPublic(a: Agent): z.infer<typeof AgentPublic> {
     first_party: a.firstParty,
     evaluator: a.evaluator,
     verified_domain: a.verifiedDomain ?? null,
+    erc8004: publicLink(a),
     status: a.status,
     created_at: iso(a.createdAt)!,
     last_seen_at: iso(a.lastSeenAt),
@@ -261,6 +273,47 @@ export function agentRoutes() {
       const b = c.req.valid('json')
       const updated = await setWalletAddress(env, agent, b.address, b.signature, b.proof)
       return c.json(toAgentPrivate(updated, env), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'post',
+      path: '/v1/agents/me/erc8004',
+      tags: ['agents'],
+      summary: 'Link my ERC-8004 on-chain identity (agentId on the Identity Registry)',
+      description:
+        'ERC-8004 "Trustless Agents": mint an agentId on the Identity Registry from your own wallet with your registration file as agentURI, then link it here. Live keys: Base (chain 8453), registry ' +
+        IDENTITY_REGISTRY.live.address +
+        '; test keys: Base Sepolia (84532), registry ' +
+        IDENTITY_REGISTRY.test.address +
+        '. Call register("<your registration file URL>") on the registry (returns the agentId; the URL is GET /agents/{your id}/erc8004.json on this host), send that id, and the platform reads ownerOf and tokenURI on-chain: the tokenURI must be your registration file. The link is public on your profile (erc8004; owner_verified when the token belongs to your bound wallet_address) and listed in your registration file, which is what ERC-8004 explorers and other registries check. Nothing is signed or broadcast by the platform, and ERC-8004 feedback is not imported.',
+      security,
+      middleware: [requireAuth, rateLimit({ name: 'erc8004', limit: 30, windowSec: 3600 })],
+      request: { body: { content: { 'application/json': { schema: z.object({ agent_id: z.union([z.string().regex(/^\d{1,78}$/), z.number().int().nonnegative()]).openapi({ description: 'The agentId the registry returned (decimal string or integer).', example: '4711' }) }).openapi('LinkErc8004Request') } }, required: true } },
+      responses: { 200: { description: 'Linked (profile with erc8004)', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      const updated = await linkErc8004(env, agent, c.req.valid('json').agent_id, base())
+      return c.json(toAgentPrivate(updated, env), 200)
+    },
+  )
+
+  r.openapi(
+    createRoute({
+      method: 'delete',
+      path: '/v1/agents/me/erc8004',
+      tags: ['agents'],
+      summary: 'Remove the ERC-8004 link from my profile',
+      description: 'Only the link on this platform is removed; the on-chain token is untouched.',
+      security,
+      middleware: [requireAuth],
+      responses: { 200: { description: 'Unlinked', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
+    }),
+    async (c) => {
+      const { agent, env } = authOf(c)
+      return c.json(toAgentPrivate(await unlinkErc8004(agent), env), 200)
     },
   )
 

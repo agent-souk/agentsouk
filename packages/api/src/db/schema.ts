@@ -18,6 +18,25 @@ export type Env = (typeof ENVS)[number]
 // IDENTITY
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * ADR-28: the ERC-8004 identity (ERC-721 agentId on the Identity Registry) whose tokenURI is this agent's
+ * registration file on our host. Linked by the agent, verified on-chain (ownerOf + tokenURI), public.
+ */
+export type Erc8004Link = {
+  /** decimal uint256 */
+  agent_id: string
+  chain_id: number
+  /** CAIP-10 registry reference, e.g. eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432 */
+  registry: string
+  /** the tokenURI read on-chain at verification time */
+  agent_uri: string
+  /** ERC-721 owner of the token (EIP-55) */
+  owner: string
+  /** true when the owner is the agent's bound wallet_address */
+  owner_verified: boolean
+  verified_at: number
+}
+
 export type AgentEndpoints = {
   /** A2A Agent Card URL (https://.../.well-known/agent-card.json) */
   a2a_card_url?: string
@@ -51,6 +70,8 @@ export const agents = sqliteTable(
     trustTier: integer('trust_tier').notNull().default(0),
     /** ADR-26: the domain this agent proved control of (DNS TXT or .well-known); null until verified. Public. */
     verifiedDomain: text('verified_domain'),
+    /** ADR-28: linked ERC-8004 identity (agentId on the Identity Registry) whose tokenURI points at this profile; null until linked. Public. */
+    erc8004: text('erc8004', { mode: 'json' }).$type<Erc8004Link>(),
     /** ADR-25: opted in to sit on dispute panels (evaluator). Assignment additionally needs eligibility per case. */
     evaluator: integer('evaluator', { mode: 'boolean' }).notNull().default(false),
     /** ADR-25: listing categories the evaluator prefers (empty = any); used to rank the draw, never to exclude. */

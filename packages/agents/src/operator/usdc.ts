@@ -104,6 +104,70 @@ export function encodeBalanceOf(owner: string): Uint8Array {
   return concatBytes(hexToBytes('70a08231'), word)
 }
 
+// --- ERC-8004 Identity Registry (ADR-28) ------------------------------------------------------------------------
+
+/** github.com/erc-8004/erc-8004-contracts; checked on-chain 2026-09-08 (name() = "AgentIdentity", symbol AGENT). */
+export const ERC8004_IDENTITY_REGISTRY: Record<'live' | 'test', string> = {
+  live: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
+  test: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+}
+const utf8 = (s: string) => new TextEncoder().encode(s)
+const selector = (signature: string) => keccak_256(utf8(signature)).slice(0, 4)
+/** keccak("Registered(uint256,string,address)") */
+export const ERC8004_REGISTERED_TOPIC = '0x' + bytesToHex(keccak_256(utf8('Registered(uint256,string,address)')))
+
+/** ABI-encodes one dynamic `string` argument (offset word, length word, padded bytes). */
+function encodeStringArg(value: string): Uint8Array {
+  const bytes = utf8(value)
+  const padded = new Uint8Array(Math.ceil(bytes.length / 32) * 32)
+  padded.set(bytes)
+  return concatBytes(bigintToBytes32(32n), bigintToBytes32(BigInt(bytes.length)), padded)
+}
+
+/** calldata for register(string agentURI) on the Identity Registry: mints an agentId owned by the sender. */
+export function encodeRegister(agentUri: string): Uint8Array {
+  if (!agentUri || agentUri.length > 2048 || !/^https:\/\//.test(agentUri)) throw new Error('agentURI must be an https URL of at most 2048 characters')
+  return concatBytes(selector('register(string)'), encodeStringArg(agentUri))
+}
+
+/** calldata for tokenURI(uint256) */
+export function encodeTokenUri(agentId: bigint): Uint8Array {
+  return concatBytes(selector('tokenURI(uint256)'), bigintToBytes32(agentId))
+}
+
+/** calldata for ownerOf(uint256) */
+export function encodeOwnerOf(agentId: bigint): Uint8Array {
+  return concatBytes(selector('ownerOf(uint256)'), bigintToBytes32(agentId))
+}
+
+/** Decodes a single ABI `string` return value ("0x…"); undefined when malformed. */
+export function decodeStringResult(result: unknown): string | undefined {
+  if (typeof result !== 'string' || !/^0x[0-9a-fA-F]*$/.test(result) || result.length < 2 + 128) return undefined
+  const h = result.slice(2)
+  const offset = Number(BigInt('0x' + h.slice(0, 64)))
+  const len = Number(BigInt('0x' + h.slice(64, 128)))
+  if (offset !== 32 || !Number.isSafeInteger(len) || len > 8192 || h.length < 128 + len * 2) return undefined
+  return new TextDecoder().decode(hexToBytes(h.slice(128, 128 + len * 2)))
+}
+
+export type ReceiptLog = { address?: string; topics?: string[]; data?: string }
+
+/** The agentId minted by a register() transaction: the Registered event emitted by the registry. */
+export function parseRegisteredAgentId(logs: ReceiptLog[] | undefined, registry: string): bigint | undefined {
+  for (const l of logs ?? []) {
+    if (!l || typeof l.address !== 'string' || !sameAddress(l.address, registry) || !Array.isArray(l.topics)) continue
+    if (String(l.topics[0] ?? '').toLowerCase() !== ERC8004_REGISTERED_TOPIC || !/^0x[0-9a-fA-F]{64}$/.test(String(l.topics[1] ?? ''))) continue
+    return BigInt(String(l.topics[1]))
+  }
+  return undefined
+}
+
+function bigintToBytes32(v: bigint): Uint8Array {
+  const out = new Uint8Array(32)
+  out.set(bigintToBytes(v), 32 - bigintToBytes(v).length)
+  return out
+}
+
 export type UnsignedTx = { chainId: number; nonce: number; maxPriorityFeePerGas: bigint; maxFeePerGas: bigint; gasLimit: bigint; to: string; value: bigint; data: Uint8Array }
 
 function txFields(tx: UnsignedTx): RlpItem[] {
@@ -136,7 +200,7 @@ export type WalletOptions = {
   log?: (msg: string, extra?: Record<string, unknown>) => void
 }
 
-export type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint }
+export type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; logs: ReceiptLog[] }
 export type Sent = { hash: string; nonce: number; explorer: string; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
 
 /**
@@ -228,6 +292,27 @@ export class UsdcWallet {
     return r
   }
 
+  /**
+   * Calls a contract function with no value (e.g. ERC-8004 register(agentURI)). Same nonce/fee/gas discipline as a
+   * transfer; `minGas` is the floor for the gas limit. Only used by operator scripts, never by the desk at runtime.
+   */
+  async call(to: string, data: Uint8Array, minGas = 100_000n): Promise<Sent> {
+    if (!isAddress(to)) throw new TransferError(`refusing to call: target is not a plain address (${String(to).slice(0, 60)})`, false)
+    if (!data.length) throw new TransferError('refusing to call: empty calldata', false)
+    const eth = await this.pre(() => this.ethBalance())
+    if (eth === 0n) throw new TransferError('no ETH for gas on the wallet', false)
+    const r = await this.send(to, 0n, data, minGas, eth)
+    this.opts.log?.('contract call sent', { to, selector: hex(data.slice(0, 4)), hash: r.hash, nonce: r.nonce, chain_id: this.chain.chainId })
+    return r
+  }
+
+  /** Read-only eth_call; returns the raw 0x result. */
+  async view(to: string, data: Uint8Array): Promise<string> {
+    const r = await this.rpc<string>('eth_call', [{ to, data: hex(data) }, 'latest'])
+    if (typeof r !== 'string') throw new Error('eth_call: malformed result')
+    return r
+  }
+
   get maxPriorityFeePerGas(): bigint {
     return this.opts.maxPriorityFeePerGas ?? 500_000_000n // 0.5 gwei (Base tips are ~0.001 gwei)
   }
@@ -292,8 +377,8 @@ export class UsdcWallet {
     const sleep = this.opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
     const started = Date.now()
     for (;;) {
-      const r = await this.rpc<{ status?: string; blockNumber?: string } | null>('eth_getTransactionReceipt', [hash])
-      if (r && r.blockNumber) return { status: hexToBigInt(r.status ?? '0x0', 'status') === 1n ? 'success' : 'reverted', blockNumber: hexToBigInt(r.blockNumber, 'blockNumber') }
+      const r = await this.rpc<{ status?: string; blockNumber?: string; logs?: ReceiptLog[] } | null>('eth_getTransactionReceipt', [hash])
+      if (r && r.blockNumber) return { status: hexToBigInt(r.status ?? '0x0', 'status') === 1n ? 'success' : 'reverted', blockNumber: hexToBigInt(r.blockNumber, 'blockNumber'), logs: Array.isArray(r.logs) ? r.logs : [] }
       if (Date.now() - started > timeoutMs) throw new Error(`transaction ${hash} not mined after ${timeoutMs} ms`)
       await sleep(intervalMs)
     }

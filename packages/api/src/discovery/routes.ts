@@ -3,6 +3,7 @@ import type { AppEnv } from '../app.js'
 import { config } from '../config.js'
 import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
 import { getAgentByIdOrHandle } from '../modules/agents/service.js'
+import { platformRegistrationFile, registrationFile } from '../modules/agents/erc8004.js'
 import { errors } from '../lib/errors.js'
 import { agentCard, errorsMd, llmsTxt, quickstartMd, skillMd, PLATFORM_NAME, tagline } from './text.js'
 import { agentDescriptions, aiCatalog, ardManifest, glamaConnector, mcpServerCard, mcpWellKnown, GLAMA_CLAIM } from './wellknown.js'
@@ -34,6 +35,7 @@ export const SITEMAP_PATHS: [path: string, changefreq: 'hourly' | 'daily' | 'wee
   ['/.well-known/ard.json', 'weekly'],
   ['/.well-known/ai-catalog.json', 'weekly'],
   ['/.well-known/jwks.json', 'weekly'],
+  ['/.well-known/agent-registration.json', 'weekly'],
   ['/v1/changelog', 'weekly'],
   ['/v1/payments', 'weekly'],
   ['/v1/stats', 'hourly'],
@@ -69,15 +71,15 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       description: tagline(),
       start: { method: 'POST', path: '/v1/agents', body: { name: '<your name>', description: '<what you do>' } },
       docs: { skill: `${base()}/skill.md`, llms: `${base()}/llms.txt`, llms_full: `${base()}/llms-full.txt`, quickstart: `${base()}/docs/quickstart`, openapi: `${base()}/openapi.json`, errors: `${base()}/docs/errors` },
-      interfaces: { mcp: `${base()}/mcp`, mcp_server_card: `${base()}/.well-known/mcp-server-card`, a2a_card: `${base()}/.well-known/agent-card.json`, ard: `${base()}/.well-known/ard.json`, ai_catalog: `${base()}/.well-known/ai-catalog.json`, jwks: `${base()}/.well-known/jwks.json` },
+      interfaces: { mcp: `${base()}/mcp`, mcp_server_card: `${base()}/.well-known/mcp-server-card`, a2a_card: `${base()}/.well-known/agent-card.json`, ard: `${base()}/.well-known/ard.json`, ai_catalog: `${base()}/.well-known/ai-catalog.json`, jwks: `${base()}/.well-known/jwks.json`, erc8004: `${base()}/.well-known/agent-registration.json` },
       install: { claude_code: '/plugin marketplace add agent-souk/agentsouk && /plugin install agentsouk@agent-souk', gemini_cli: 'gemini extensions install https://github.com/agent-souk/agentsouk', npm: 'npx agentsouk register --name "<name>"', pip: 'pip install agentsouk' },
       did: serverKey().did,
     })
   })
 
   // Machine-readable catalogues of this host (strategic brief §6 #13). JSON, CORS-open, cacheable.
-  const catalog = (c: { body: (b: string, status?: 200, headers?: Record<string, string>) => Response }, body: unknown, type = 'application/json; charset=utf-8') =>
-    c.body(JSON.stringify(body, null, 2), 200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type', ...discoveryHeaders() })
+  const catalog = (c: { body: (b: string, status?: 200, headers?: Record<string, string>) => Response }, body: unknown, type = 'application/json; charset=utf-8', maxAge = 3600) =>
+    c.body(JSON.stringify(body, null, 2), 200, { 'Content-Type': type, 'Cache-Control': `public, max-age=${maxAge}`, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type', ...discoveryHeaders() })
   r.get('/.well-known/mcp-server-card', (c) => catalog(c, mcpServerCard(base())))
   r.get('/.well-known/mcp/server-card.json', (c) => c.redirect('/.well-known/mcp-server-card', 301))
   r.get('/mcp/server-card', (c) => c.redirect('/.well-known/mcp-server-card', 301))
@@ -88,6 +90,8 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
   // Glama's HTTP ownership challenge for the connector listing; must stay published to keep the listing verified.
   r.get('/.well-known/glama.json', (c) => catalog(c, glamaConnector(config().GLAMA_CLAIM ?? GLAMA_CLAIM)))
   r.get('/.well-known/openapi.json', (c) => c.redirect('/openapi.json', 301))
+  // ERC-8004 (ADR-28): the platform as a Trustless Agent (also the EIP's domain-verification file), 5 min cache so a newly minted id shows up quickly.
+  r.get('/.well-known/agent-registration.json', (c) => catalog(c, platformRegistrationFile(base(), serverKey().did), 'application/json; charset=utf-8', 300))
 
   // IndexNow key file (Bing, Yandex, Naver, Seznam verify URL submissions against it). Only when a key is configured.
   // Falls through (next) when the name is not the key, so /llms-full.txt and future .txt files keep working.
@@ -188,6 +192,12 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
       software_version: APP_VERSION,
       did: a.did,
     })
+  })
+  // ERC-8004 registration file of one agent: what an agentURI on the Identity Registry points at (ADR-28).
+  r.get('/agents/:id/erc8004.json', async (c) => {
+    const a = await getAgentByIdOrHandle(c.req.param('id'))
+    if (!a || a.status === 'deleted') throw errors.notFound('Agent', c.req.param('id'))
+    return catalog(c, registrationFile(a, base()), 'application/json; charset=utf-8', 300)
   })
   r.get('/agents/:id/did.json', async (c) => {
     const a = await getAgentByIdOrHandle(c.req.param('id'))

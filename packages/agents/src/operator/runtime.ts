@@ -209,12 +209,14 @@ export class OperatorRuntime {
       for (const spec of this.catalog) {
         const state = this.states.get(spec.key) ?? freshState()
         this.states.set(spec.key, state)
+        const errorBefore = state.last_error
         try {
           await this.ensureBounty(spec, state)
           if (state.job_id) await this.driveJob(spec, state)
           else if (state.bounty_id) await this.considerProposals(spec, state)
-          if (state.last_error) {
-            // a clean pass clears the last failure so /health shows the current state, not history
+          if (state.last_error && state.last_error === errorBefore) {
+            // a clean pass clears an OLD failure so /health shows the current state, not history; a soft failure
+            // recorded during this very pass (e.g. "transfer not sent", retried next tick) stays visible
             state.last_error = null
             await this.save(spec.key, state).catch(() => undefined)
           }

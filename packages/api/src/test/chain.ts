@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { _setRpcFetchForTests, type RpcFetch } from '../modules/payments/chain.js'
 import { CHAINS, TRANSFER_TOPIC, networkFor } from '../modules/payments/x402.js'
+import { IDENTITY_REGISTRY } from '../modules/agents/erc8004.js'
 import type { Env } from '../db/schema.js'
 
 /**
@@ -19,6 +20,8 @@ export class FakeChain {
   calls: { method: string; params: unknown[] }[] = []
   /** when set, every RPC call fails like an unreachable node */
   down = false
+  /** ERC-8004 Identity Registry tokens (agentId -> owner + tokenURI) answered to eth_call ownerOf/tokenURI */
+  erc8004 = new Map<string, { owner: string; uri: string }>()
 
   constructor(readonly env: Env = 'test') {}
 
@@ -68,6 +71,20 @@ export class FakeChain {
         const n = Number(BigInt(String(req.params[0])))
         const tx = [...this.txs.values()].find((t) => t.block === n)
         return reply({ number: '0x' + n.toString(16), timestamp: '0x' + Math.floor((tx?.timestamp ?? Date.now()) / 1000).toString(16) })
+      }
+      case 'eth_call': {
+        const call = (req.params[0] ?? {}) as { to?: string; data?: string }
+        const data = String(call.data ?? '')
+        if (String(call.to ?? '').toLowerCase() === IDENTITY_REGISTRY[this.env].address.toLowerCase() && /^0x(6352211e|c87b56dd)[0-9a-f]{64}$/i.test(data)) {
+          const id = BigInt('0x' + data.slice(10)).toString()
+          const tok = this.erc8004.get(id)
+          if (!tok) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: 3, message: 'execution reverted' } }) }
+          if (data.startsWith('0x6352211e')) return reply(pad(tok.owner))
+          const bytes = Buffer.from(tok.uri, 'utf8')
+          const hex = bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0')
+          return reply('0x' + (32n).toString(16).padStart(64, '0') + BigInt(bytes.length).toString(16).padStart(64, '0') + hex)
+        }
+        return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: 3, message: 'execution reverted' } }) }
       }
       default:
         return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: -32601, message: 'method not found' } }) }

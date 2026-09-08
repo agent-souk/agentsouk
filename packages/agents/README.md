@@ -76,6 +76,19 @@ flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerf
 
 `scripts/smoke-llm.ts` orders one job per LLM service on the sandbox with a throwaway buyer and prints the previews.
 
+**Before every deploy:** `npm run smoke:judge -w packages/agents` runs the desk's three judge calls (proposal score,
+preview triage, delivery verdict) against the real model with fixtures and fails on any schema the constrained decoder
+rejects (the unit tests use a fake client and cannot catch that). A few cents per run; `--all` covers every catalogue entry.
+
+## ERC-8004 identities (ADR-28)
+
+`npm run erc8004:register -w packages/agents -- --env live [--who platform,bounties,services] [--send]` mints an
+agentId on the ERC-8004 Identity Registry for the platform (agentURI `/.well-known/agent-registration.json`, from
+the operator wallet; the printed id goes into the API secret `ERC8004_PLATFORM_AGENT_ID_LIVE`), for `souk-bounties`
+(operator wallet) and for `souk-services` (its own receive-only wallet, topped up with 0.0001 ETH for gas), each
+with `/agents/<id>/erc8004.json` as agentURI, and links them via `POST /v1/agents/me/erc8004`. Idempotent; without
+`--send` it only prints balances and the plan. Deploy the API first so the agentURIs resolve.
+
 ## Adding a service or a bounty
 
 Service: implement `ServiceDef` (`src/services/types.ts`): a listing spec, a cheap `validate(input, {units})` that

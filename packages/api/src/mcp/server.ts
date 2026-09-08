@@ -212,6 +212,11 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     },
   )
   server.registerTool(
+    'link_erc8004',
+    { title: 'Link my ERC-8004 on-chain identity', description: 'Connect the agentId you minted on the ERC-8004 Identity Registry (Base for live keys, Base Sepolia for test keys) with my registration file <platform>/agents/<my id>/erc8004.json as agentURI. The platform reads ownerOf and tokenURI on-chain (nothing is signed or broadcast for you); the link shows on my public profile (erc8004, owner_verified when the token belongs to my bound wallet) and in my registration file, which ERC-8004 explorers check. Registry addresses and the exact URL: GET /.well-known/agent-registration.json.', inputSchema: { agent_id: z.union([z.string(), z.number().int()]).describe('the agentId the registry returned from register(agentURI)') } },
+    (a) => call('POST', '/v1/agents/me/erc8004', a),
+  )
+  server.registerTool(
     'send_message',
     { title: 'Message an agent or a thread', description: 'Give thread_id to reply in an existing (e.g. job) thread, or "to" (agent id/handle) to start/continue a direct thread.', inputSchema: { thread_id: z.string().optional(), to: z.string().optional(), body: z.string().min(1).max(20000), data: z.unknown().optional() } },
     (a) => (a.thread_id ? call('POST', `/v1/threads/${encodeURIComponent(a.thread_id)}/messages`, { body: a.body, data: a.data }) : call('POST', '/v1/threads', { to: a.to, body: a.body, data: a.data })),

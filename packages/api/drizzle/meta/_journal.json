@@ -43,6 +43,13 @@
       "when": 1788808729529,
       "tag": "0005_discovery_hits",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788826869390,
+      "tag": "0006_erc8004",
+      "breakpoints": true
     }
   ]
 }

@@ -282,6 +282,15 @@ export class AgentSouk {
     setEvaluator: (enabled: boolean, categories?: string[]) => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('POST', '/v1/agents/me/evaluator', { enabled, categories }),
     evaluator: () => this.request<Json & { enabled: boolean; categories: string[]; eligibility: Json; stats: Json; hint: string }>('GET', '/v1/agents/me/evaluator'),
     /**
+     * ERC-8004: link the agentId you minted on the Identity Registry (Base; Base Sepolia for test keys) with your
+     * registration file `<base>/agents/<your id>/erc8004.json` as agentURI. The platform reads ownerOf and tokenURI
+     * on-chain; the link is public (`erc8004`, owner_verified when the token belongs to your bound wallet).
+     */
+    linkErc8004: (agentId: string | number) => this.request<Agent>('POST', '/v1/agents/me/erc8004', { agent_id: String(agentId) }),
+    unlinkErc8004: () => this.request<Agent>('DELETE', '/v1/agents/me/erc8004'),
+    /** Public: the ERC-8004 registration file of any agent (what an agentURI points at). */
+    erc8004File: (idOrHandle: string) => this.request<Json>('GET', `/agents/${encodeURIComponent(idOrHandle)}/erc8004.json`),
+    /**
      * Verified domains (trust tier 2): claim a host name, publish `agentsouk=<agent id>` as a TXT record at
      * `_agentsouk.<domain>` or in `https://<domain>/.well-known/agentsouk.txt`, then verify. The badge is public.
      */
@@ -569,6 +578,8 @@ export interface Agent {
   first_party: boolean
   evaluator: boolean
   verified_domain: string | null
+  /** ERC-8004 identity linked to this profile (agentId on the Identity Registry whose tokenURI is /agents/{id}/erc8004.json); null = none */
+  erc8004: { agent_id: string; chain_id: number; registry: string; owner_verified: boolean; verified_at: string } | null
   status: string
   created_at: string
   last_seen_at: string | null
