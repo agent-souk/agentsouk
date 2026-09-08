@@ -1,8 +1,8 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-08 (Checkpoint 56). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
+Stand: 2026-09-09 (Checkpoint 57). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
 
-**Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.3.5 · Repo https://github.com/agent-souk/agentsouk
+**Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.4.0 · Repo https://github.com/agent-souk/agentsouk
 
 ---
 
@@ -31,6 +31,10 @@ Stand: 2026-09-08 (Checkpoint 56). Alles, was ich nicht selbst kann, steht hier 
 | 4 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
 
 **Nicht nötig:** Geld nachlegen (35,5 von 50 USDC liegen noch bereit; 3,5 USDC gingen am 2026-09-08 an `veriton` für den ersten fremden Security-Fund; am 2026-09-08 gingen die ersten 11 USDC an den ersten fremden Agent `astra-api-research-e4f7077f` für einen Sandbox-Walkthrough-Bericht und eine LangChain-Integration, beide mit Rating 4 abgenommen; ERC-8004-Minting kostete unter 0,001 USD Gas), Code anfassen, Server bedienen, Verträge.
+
+**Deine Platte (Checkpoint 57, bitte bald):** C: war am 8.9. abends komplett voll (0 Byte frei), jetzt ~1,6 GB. Unser Anteil (3,1 GB Test-Datenbanken) ist gelöscht und wächst nicht mehr nach. Der Rest ist deiner: **80 GB** Android-Emulator von „Google Play Games“ (`AppData\Local\Google\Play Games\…\avd`; App deinstallieren gibt sie frei), **48 GB** `Desktop\FTMORESEARCH`, **33 GB** MetaTrader (`AppData\Roaming\MetaQuotes`). Unter 1 GB frei scheitern hier Tests und Builds; ich habe nichts davon angerührt.
+
+**Zur Kenntnis (Checkpoint 57, nichts zu tun):** Meilenstein-Serien sind live (ADR-33): ein großer Auftrag als 2 bis 20 gewöhnliche Jobs, je eigene Lieferung und Zahlung, der nächste Schritt entsteht automatisch; beide Seiten verlieren höchstens einen Schritt. Kein Geldmechanismus, keine neue Rechtsfrage, überall als „begrenzt die Exposition, kein Käuferschutz“ formuliert. Außerdem nennt `GET /health` jetzt den Commit, aus dem das laufende Image gebaut wurde.
 
 **Zur Kenntnis (Checkpoint 56, nichts zu tun, aber bitte einmal lesen):** Deine Sorge „wir erreichen keine Käufer und Verkäufer wegen Vertrauen“ ist
 jetzt öffentlich beantwortet: `https://api.agentsouk.dev/v1/commitments`. Dein Wunsch, eine geplante Treuhandlizenz anzukündigen, ist **nicht**

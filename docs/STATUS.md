@@ -2,29 +2,59 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~21:00 UTC; Baum sauber, alles deployt: API 0.3.9, SDKs 0.3.5, Plugin/Extension 0.3.6)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~00:15 UTC; Baum sauber, alles deployt: API 0.4.0, SDKs 0.4.0, Plugin/Extension 0.3.7)
 
-**Erledigt seit Checkpoint 55 (ADR-32, Checkpoint 56, Details unten):** Nicks Vertrauensfrage ist öffentlich beantwortet: `GET /v1/commitments`
-(keine Lizenzankündigung, stattdessen Fakten mit Prüfaufruf; Operator-Wallets veröffentlicht; ADR-31-Kappen als Zahlen). Reputation trennt
-„von uns bezahlt“ und „von Fremden bezahlt“ (`third_party_counterparties`, Leaderboard-Rang und T1 nur über Fremde). Desk-Rezensionen tragen
-`machine_generated: true`, serverseitig erzwungen für first_party. Sieben Übertreibungen auf allen Oberflächen korrigiert. Bounties zeigen
-`buyer.first_party`. `LICENSE` (MIT). 28 Review-Funde eingebaut. **GitHub:** punkpeye hat PR #13922 (awesome-mcp-servers) geschlossen, weil
-Remote-Server in eine eigene Liste ziehen; neuer PR **https://github.com/punkpeye/awesome-remote-mcp-servers/pull/107** (Kategorie Finance
-neben AgentWorld, Glama-Connector-Badge löst jetzt auf: Rating A, 42 Tools; CI grün: `endpoint-ok`, `has-connector`; wartet auf Merge).
+**Erledigt seit Checkpoint 56 (Checkpoint 57, Details unten):** Meilenstein-Serien (ADR-33) live: `POST /v1/jobs` mit `milestones`
+(2 bis 20 Schritte) macht aus einem großen Auftrag N gewöhnliche Jobs mit je eigener versiegelter Lieferung, Zahlung und Reputation;
+die Plattform legt den nächsten Schritt automatisch an, stoppt bei Fehlschlag, geänderten Listing-Bedingungen oder auf Wunsch einer
+Partei (`GET/POST /v1/series…`). Kein Geldmechanismus, keine Rechtsfrage; überall mit dem Satz „begrenzt die Exposition, ist kein
+Käuferschutz“. `GET /health` nennt jetzt `build.commit` (= gepushter HEAD; Deploy nur aus sauberem Baum, Einzeiler in DEPLOY.md).
+23 Review-Funde eingebaut (1 hoch: Reservierung vor der Job-Anlage). Test-Datenbanken füllten die Platte (7.861 Dateien, 3,1 GB):
+behoben, `_resetDbForTests` räumt jetzt auf.
 
-**Für Nick:** nichts zu tun; Notiz „Zur Kenntnis (Checkpoint 56)“ in `docs/LAUNCH-CHECKLIST.md` (warum keine Lizenzankündigung, was stattdessen
-steht). Anwaltsfragen dort auf fünf Punkte erweitert.
+**Für Nick:** nichts für die Plattform. **Aber deine Platte war voll (0 Byte frei; jetzt ~1,6 GB):** 80 GB liegen im Android-Emulator von
+„Google Play Games“ (`AppData\Local\Google\Play Games\…\avd`), 48 GB in `Desktop\FTMORESEARCH`, 33 GB MetaTrader-Daten
+(`AppData\Roaming\MetaQuotes`). Ich habe davon nichts angerührt; „Google Play Games“ deinstallieren gibt 80 GB frei. Unter 1 GB frei
+scheitern Tests und Builds hier wieder.
 
-**Live-Zahlen (21:00 UTC):** 21 Agents, 9 aktive Listings (6 eigene), 5 abgeschlossene Live-Jobs = 17,32 USDC, alle von uns bezahlt
-(`/v1/commitments` sagt das jetzt selbst: `operator_share_of_completed_jobs_percent: 100`). Leaderboard live: astra und veriton mit
-Rangwert 0 (nur von uns bezahlt). Desk: 17,32 von 50 USDC ausgegeben, Erstkäufe 1 bezahlt, 6 übersprungen (Kappen/upfront/alt), Faucet-Wallet
-~15 Sepolia-USDC.
+**Live-Zahlen (00:10 UTC):** 24 Agents, 16 aktive Listings (10 fremde; Verkäufer listen jetzt zum Kappenpreis 1 USDC), 6 abgeschlossene
+Live-Jobs = 18,32 USDC, alle von uns; Leaderboard live: astra, veriton, moneymaker mit Rangwert 0 (nur von uns bezahlt). Desk 18,32 von
+50 USDC. PR https://github.com/punkpeye/awesome-remote-mcp-servers/pull/107 offen, CI grün, kein Maintainer-Kommentar.
 
-**Nächste Kandidaten:** (a) PR #107 auf Merge prüfen, danach `docs/LAUNCH-CHECKLIST.md` Punkt 1 abhaken; (b) aus `working_on` des Dokuments,
-in dieser Reihenfolge: Build-Kennung in `GET /health` (klein; stärkt „running code = published code“), Meilenstein-Jobs (keine Rechtsfrage),
-Exposure-Vorschlag je Gegenpartei, Key-History für den Plattformschlüssel, Export in einem Aufruf; (c) unverändert: Agent-Postfach (MX von
-Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei; (d) Tagescheck: Discovery-Zähler (`GET /v1/admin/overview`),
-`firstbuy.skipped` in der Desk-Health (warum 6?), ob ein fremder Käufer einen fremden Verkäufer bezahlt hat (`third_party_counterparties > 0`).
+**Nächste Kandidaten:** (a) PR #107 auf Merge prüfen; (b) `working_on` des Dokuments: Exposure-Vorschlag je Gegenpartei (aus öffentlicher
+Historie, keine Rechtsfrage), Key-History für den Plattformschlüssel, Export in einem Aufruf; (c) Agents-Deploy bei Gelegenheit (Code unverändert,
+nur SDK 0.4.0 im Image); (d) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei;
+(e) Tagescheck: `firstbuy.skipped` in der Desk-Health, ob ein Fremder einen Fremden bezahlt hat (`third_party_counterparties > 0`), ob jemand
+eine Serie angelegt hat (`GET /v1/admin/overview` zeigt es nicht; ggf. Zähler ergänzen).
+
+## Stand 2026-09-09, Checkpoint 57: Meilenstein-Serien (ADR-33), Build-Kennung, Platten-Vorfall (API 0.4.0, SDKs 0.4.0; 230 + 62 + 5 Tests grün)
+
+- **Tagescheck (2026-09-08 ~21:30 UTC):** 24 Live-Agents (+3), 13→16 aktive Listings, ein weiterer Erstkauf (moneymaker, 1 USDC, Rating 3 mit
+  Begründung), 34 Registrierungen/7 Tage, MCP dominiert (1446 Zugriffe), keine Streitfälle, keine offenen Rückerstattungen. Verkäufer listen
+  zum Kappenpreis (1 USDC); die Kappen (2 je Verkäufer, 5 USDC/Tag) greifen.
+- **Build-Kennung (ADR-32-Nachtrag):** Dockerfile `ARG GIT_SHA`, Config `GIT_SHA`/`FLY_IMAGE_REF`, `GET /health.build {commit, source, image}`
+  (nur volle 40-Hex-SHA; Beschreibung „unsere Aussage, kein Beweis“), Deploy-Einzeiler nur aus sauberem gepushtem Baum (DEPLOY.md), Rauchtest prüft
+  das Feld. Live: `build.commit` = `6e84425f…6346` = HEAD.
+- **Meilenstein-Serien (ADR-33), gebaut:** Tabelle `job_series` (Plan als JSON, `terms` eingefroren, `count`, `current_index`, `status`,
+  `stopped_by/reason`; Migration 0009), Jobs mit `series_id/milestone_index/milestone_count`; Service in `jobs/service.ts` (`orderPreflight`,
+  `insertJob`, `createSeries`, `advanceSeries` aus `finalize()` nur bei terminalen Zuständen, `stopSeries`); Routen `modules/series/routes.ts`
+  (`GET /v1/series` leicht ohne Inputs, `GET /v1/series/{id}`, `POST /v1/series/{id}/stop`); Job-View `series`; Events `series.*`; MCP
+  `create_job.milestones` + `series_action`; SDKs `jobs.create({milestones})`, `series.get/list/stop`; Doku (skill.md ×3 regeneriert, llms.txt,
+  README, Commitments `who_carries_the_risk.milestones`, Changelog 0.4.0, ADR-33). Kappen 64 KB je Schritt, 256 KB je Plan.
+- **Review (Workflow, 2 Reviewer, 259k Tokens, 7 min, 23 Funde: 1 hoch, 8 mittel, 14 niedrig; `research/review-series-2026-09-09.jsonl`), alle
+  eingebaut:** Reservierung vor der Anlage (bedingtes Update auf `current_index`, Job-ID vorab; verwaiste Jobs storniert die Plattform ohne
+  Reputationsmarke), Stopp-Rennen geschlossen, ehrlicher Grund bei abgelaufen-unbezahlt (auch in der Sweep-Notiz), `how_it_works` je Zahlungsweg,
+  Serienzeile wird gelöscht, wenn Schritt 1 scheitert, eingefrorene Bedingungen + Schema-Neuprüfung (`listing_price/payment/terms/schema_changed`),
+  Käufer-Hinweis „der Verkäufer sieht alle Inputs ab Schritt 1“, Events benannt, MCP-Beschreibung „genau eines von input/milestones“, `series_action`
+  verlangt id, `stopped_by` Enum, `paid_total` ehrlich, Build-Regex 40 Hex, DEPLOY-Wächter, SDK-Kommentar. Tests jetzt 10 in `series/routes.test.ts`
+  (u. a. upfront-Serie, Quote-Serie, Preis-/Zahlungs-/Bedingungswechsel, voller Verkäufer, Paginierung, Größenkappe, Bounty ohne Serie).
+- **Platten-Vorfall:** `SQLITE_FULL` mitten in der Suite: C: hatte 0 Byte frei. Ursache bei uns: `%TEMP%\agentsouk-tests` mit 7.861 Test-DBs
+  (3,1 GB) seit dem 6.9.; gelöscht, `_resetDbForTests` löscht jetzt die Vorgängerdatei (best effort, Windows sperrt kurz) und Dateien älter als
+  30 min. Hauptverbraucher sind Nicks eigene: Google Play Games 80 GB, FTMORESEARCH 48 GB, MetaQuotes 33 GB (Checkliste). Lehre: Suiten von API und
+  Agents nie parallel starten (gleiche SQLite-Dateien), und vor langen Läufen `df` prüfen.
+- **Deploy 2026-09-09 ~00:08 UTC:** Push, API 0.4.0 (`--build-arg GIT_SHA`), `smoke.ts` PASSED (Build-Feld, Commitments, Split), `smoke:gasless`
+  10,3 s, OpenAPI mit `/v1/series*`, Changelog 0.4.0, Commitments ohne den Meilenstein-Punkt in `working_on`. npm `agentsouk@0.4.0`, PyPI
+  `agentsouk 0.4.0`. Agents nicht neu deployt (Code unverändert).
 
 ## Stand 2026-09-08, Checkpoint 56: Vertrauensdokument, Reputations-Trennung, KI-Kennzeichnung (ADR-32; API 0.3.9, SDKs 0.3.5; 220 + 62 + 5 Tests grün)
 
