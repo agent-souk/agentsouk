@@ -79,16 +79,63 @@ let inflight: Promise<void> | null = null
 
 const dayOf = (now: number) => new Date(now).toISOString().slice(0, 10)
 
-/** Count one request. Cheap and synchronous; called from the request middleware for every response. Only 2xx are reads (redirect aliases would double-count). */
-export function recordHit(method: string, path: string, ua: string | undefined | null, status: number, now = Date.now(), internal = false) {
-  if (internal || status < 200 || status >= 300) return
-  const surface = surfaceOf(method, path)
-  if (!surface) return
+function count(surface: string, ua: string | undefined | null, now: number) {
   const cls = classifyUserAgent(ua)
   const key = `${dayOf(now)} ${surface} ${cls}`
   pending.set(key, (pending.get(key) ?? 0) + 1)
   const raw = (ua ?? '').replace(/[^\x20-\x7e]/g, '').slice(0, 200)
   if (raw) recent.set(`${cls}|${surface}`, { at: new Date(now).toISOString(), ua: raw, ua_class: cls, surface })
+}
+
+/** Count one request. Cheap and synchronous; called from the request middleware for every response. Only 2xx are reads (redirect aliases would double-count). */
+export function recordHit(method: string, path: string, ua: string | undefined | null, status: number, now = Date.now(), internal = false) {
+  if (internal || status < 200 || status >= 300) return
+  const surface = surfaceOf(method, path)
+  if (!surface) return
+  count(surface, ua, now)
+}
+
+/** JSON-RPC methods an MCP client can send; anything else (and notifications) is not worth a row. */
+const MCP_METHODS = new Set(['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'resources/templates/list', 'prompts/list', 'prompts/get', 'completion/complete', 'logging/setLevel'])
+
+/**
+ * One JSON-RPC call on /mcp, so the funnel inside MCP is visible: which methods clients send, which tools they call,
+ * and which tool calls fail (register_agent errors = agents that tried and could not get in). Surfaces:
+ * `mcp:<method>`, `mcp:tool:<name>`, `mcp:tool-error:<name>`; tool names outside the registered shape collapse to
+ * `unknown` so a client cannot invent rows.
+ */
+export function recordMcpCall(rpcMethod: unknown, toolName: unknown, ua: string | undefined | null, isError: boolean, now = Date.now()) {
+  if (typeof rpcMethod !== 'string' || rpcMethod.startsWith('notifications/')) return
+  if (!MCP_METHODS.has(rpcMethod)) return count('mcp:other', ua, now)
+  if (rpcMethod !== 'tools/call') return count(`mcp:${rpcMethod}`, ua, now)
+  const name = typeof toolName === 'string' && /^[a-z0-9_]{1,40}$/.test(toolName) ? toolName : 'unknown'
+  count(`mcp:tool${isError ? '-error' : ''}:${name}`, ua, now)
+}
+
+export type McpCall = { id: unknown; method: unknown; name: unknown }
+
+/** The JSON-RPC calls in an MCP POST body (single or batch); [] when the body is not JSON-RPC. Never throws. */
+export function mcpCallsOf(body: unknown): McpCall[] {
+  const msgs = Array.isArray(body) ? body.slice(0, 50) : [body]
+  const out: McpCall[] = []
+  for (const m of msgs) {
+    if (!m || typeof m !== 'object' || typeof (m as { method?: unknown }).method !== 'string') continue
+    const params = (m as { params?: unknown }).params
+    out.push({ id: (m as { id?: unknown }).id, method: (m as { method: string }).method, name: params && typeof params === 'object' ? (params as { name?: unknown }).name : undefined })
+  }
+  return out
+}
+
+/** Which JSON-RPC ids in an MCP response carry an error (a JSON-RPC error, or a tool result with isError). */
+export function mcpErrorIds(body: unknown): Set<string> {
+  const out = new Set<string>()
+  const msgs = Array.isArray(body) ? body : [body]
+  for (const m of msgs) {
+    if (!m || typeof m !== 'object') continue
+    const r = m as { id?: unknown; error?: unknown; result?: { isError?: unknown } }
+    if (r.error !== undefined || r.result?.isError === true) out.add(String(r.id))
+  }
+  return out
 }
 
 type Upsert = (row: { day: string; surface: string; uaClass: UaClass; count: number; updatedAt: number }) => Promise<void>

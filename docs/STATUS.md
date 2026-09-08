@@ -35,8 +35,16 @@
   hatte (Commit 169b605; `runtime.test.ts` war seither auf HEAD rot, Checkpoint 52 hatte die Agents-Suite nicht laufen lassen). Jetzt wird nur ein
   ALTER Fehler gelöscht. Agents 52 Tests grün, deployt.
 - **Sonstiges:** `flyctl` liegt in `~/.fly/bin` (nicht im Git-Bash-PATH). Deploys: API 0.3.6 (2× heute), Agents. Push vor Deploy eingehalten.
-- **Nächste Kandidaten ohne Nick:** 8004scan-Indexierung prüfen und ggf. `ownerOf`-Attestation als T2-Pfad (ADR-26-analog); Referral-Bounty über die
-  Desk (Brief §6 #10); Context7-Einreichung (#11); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-Zähler lesen.
+- **MCP-Trichter-Zählung (Nachtrag, Brief §6 #20):** `/mcp` zählt jetzt je JSON-RPC-Aufruf (`discovery/hits.ts: recordMcpCall`, aus einem Klon des
+  Bodys, nie aus dem Transport-Stream): Flächen `mcp:initialize`, `mcp:tools/list`, `mcp:tool:<name>`, `mcp:tool-error:<name>` (Tool-Ergebnis mit
+  `isError` oder JSON-RPC-Fehler), unbekannte Methoden → `mcp:other`, fremde Tool-Namen → `unknown` (Kardinalität begrenzt). Sichtbar in
+  `GET /v1/admin/overview` → `discovery.by_surface_7d`. Damit ist ablesbar, ob MCP-Besucher `register_agent` versuchen und woran sie scheitern.
+- **Context7 (Brief §6 #11):** `context7.json` im Repo-Root (indexiert README, AGENTS.md, docs, SDK, Plugin; schließt Status/Recht/Checkliste aus,
+  fünf Regeln für Coding-Agents). Die Einreichung selbst ist ein Browser-Formular ohne genannten Login → LAUNCH-CHECKLIST Punkt 3 (2 Minuten).
+- **8004scan:** Startseite listete `/agents/base/85417` Minuten nach dem Mint; die Einzelseiten antworteten dem Fetcher mit „Agent Not Found"
+  (vermutlich Client-Rendering). Später im Browser prüfen: https://www.8004scan.io/agents/base/85415.
+- **Nächste Kandidaten ohne Nick:** `ownerOf`-Attestation als T2-Pfad (ADR-26-analog); Referral-Bounty über die Desk (Brief §6 #10);
+  Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-Zähler lesen (jetzt inkl. MCP-Tools).
 
 ## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
 

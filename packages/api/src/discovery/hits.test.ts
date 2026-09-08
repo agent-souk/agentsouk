@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { freshApp } from '../test/setup.js'
 import type { App } from '../app.js'
 import { _setConfigForTests } from '../config.js'
-import { _resetHits, _setUpsertForTests, classifyUserAgent, discoverySummary, flushHits, recordHit, surfaceOf } from './hits.js'
+import { _resetHits, _setUpsertForTests, classifyUserAgent, discoverySummary, flushHits, mcpCallsOf, mcpErrorIds, recordHit, recordMcpCall, surfaceOf } from './hits.js'
 
 let app: App
 beforeEach(async () => {
@@ -162,3 +162,53 @@ describe('discovery instrumentation', () => {
     expect((await app.request('/llms-full.txt')).status).toBe(200)
   })
 })
+
+describe('mcp call instrumentation', () => {
+  it('bounds surfaces: known methods, registered-shaped tool names, error split, notifications ignored', async () => {
+    recordMcpCall('initialize', undefined, 'node', false)
+    recordMcpCall('tools/list', undefined, 'node', false)
+    recordMcpCall('tools/call', 'register_agent', 'node', false)
+    recordMcpCall('tools/call', 'register_agent', 'node', true)
+    recordMcpCall('tools/call', 'Drop Table; --', 'node', false)
+    recordMcpCall('tools/call', 'x'.repeat(41), 'node', true)
+    recordMcpCall('notifications/initialized', undefined, 'node', false)
+    recordMcpCall('made/up', undefined, 'node', false)
+    recordMcpCall(42, undefined, 'node', false)
+    const s = await discoverySummary()
+    expect(s.by_surface_7d).toMatchObject({ 'mcp:initialize': 1, 'mcp:tools/list': 1, 'mcp:tool:register_agent': 1, 'mcp:tool-error:register_agent': 1, 'mcp:tool:unknown': 1, 'mcp:tool-error:unknown': 1, 'mcp:other': 1 })
+    expect(Object.keys(s.by_surface_7d).some((k) => k.includes('Drop') || k.includes('notifications') || k.includes('made'))).toBe(false)
+  })
+
+  it('parses single and batch JSON-RPC bodies and error ids without throwing on garbage', () => {
+    expect(mcpCallsOf({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'whoami' } })).toEqual([{ id: 1, method: 'tools/call', name: 'whoami' }])
+    expect(mcpCallsOf([{ id: 'a', method: 'tools/list' }, { id: 'b', method: 'ping', params: 'nope' }, 'junk', null, { id: 'c' }])).toEqual([{ id: 'a', method: 'tools/list', name: undefined }, { id: 'b', method: 'ping', name: undefined }])
+    expect(mcpCallsOf(null)).toEqual([])
+    expect(mcpCallsOf('text')).toEqual([])
+    expect(mcpCallsOf(Array.from({ length: 80 }, (_, i) => ({ id: i, method: 'ping' })))).toHaveLength(50)
+    const errs = mcpErrorIds([{ id: 1, result: { isError: true } }, { id: 2, result: { isError: false } }, { id: 3, error: { code: -32601 } }, { id: 4, result: {} }, 'x'])
+    expect([...errs].sort()).toEqual(['1', '3'])
+    expect(mcpErrorIds(null).size).toBe(0)
+  })
+
+  it('counts real MCP traffic through the route: method, tool, and failed tool calls', async () => {
+    const rpc = (body: unknown, key?: string) =>
+      app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', 'user-agent': 'python-httpx/0.28', ...(key ? { authorization: `Bearer ${key}` } : {}) }, body: JSON.stringify(body) })
+    expect((await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } })).status).toBe(200)
+    expect((await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' })).status).toBe(200)
+    const reg = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'register_agent', arguments: { name: 'Counted Bot' } } })
+    expect(reg.status).toBe(200)
+    const unauth = await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'whoami', arguments: {} } })
+    expect(((await unauth.json()) as any).result.isError).toBe(true)
+    const missing = await rpc({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'no_such_tool', arguments: {} } })
+    expect(missing.status).toBe(200)
+    const s = await discoverySummary()
+    expect(find(s.last_7_days, 'mcp:initialize', 'python')).toBe(1)
+    expect(find(s.last_7_days, 'mcp:tools/list', 'python')).toBe(1)
+    expect(find(s.last_7_days, 'mcp:tool:register_agent', 'python')).toBe(1)
+    expect(find(s.last_7_days, 'mcp:tool-error:whoami', 'python')).toBe(1)
+    expect(find(s.last_7_days, 'mcp:tool-error:no_such_tool', 'python')).toBe(1)
+    expect(find(s.last_7_days, 'mcp', 'python')).toBe(5) // the generic surface still counts every POST /mcp
+    expect(s.registrations_7d).toBe(1) // register_agent's POST /v1/agents sub-request counts as a registration
+  })
+})
+
