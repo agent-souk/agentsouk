@@ -330,6 +330,12 @@ export class OperatorRuntime {
     return null
   }
 
+  /** A transfer another part of the desk broadcast (first-buy programme): counts against the caps from now on. */
+  async recordSpend(e: { job_id: string; amount: string; hash: string; at: string }): Promise<void> {
+    await this.appendLedger(e)
+    this.spend = null
+  }
+
   /** Whether `amount` fits under the lifetime budget and the daily cap on top of everything already paid or in flight. */
   async canSpend(amount: bigint): Promise<boolean> {
     if (!this.paymentsEnabled) return false

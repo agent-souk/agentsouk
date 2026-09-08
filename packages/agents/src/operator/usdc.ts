@@ -202,6 +202,8 @@ export type Authorization = { from: string; to: string; value: bigint; validAfte
 
 /** keccak("Transfer(address,address,uint256)") */
 export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+/** keccak("AuthorizationUsed(address,bytes32)"): USDC emits it for every executed EIP-3009 authorization (authorizer, nonce indexed). */
+export const AUTHORIZATION_USED_TOPIC = '0x' + bytesToHex(keccak_256(utf8('AuthorizationUsed(address,bytes32)')))
 
 /** The shape of gasless.typed_data in the platform's payment terms (POST /v1/jobs/{id}/pay). */
 export type TypedDataLike = {
@@ -532,6 +534,23 @@ export class UsdcWallet {
       out.push({ hash: l.transactionHash.toLowerCase(), value, blockNumber: typeof l.blockNumber === 'string' ? hexToBigInt(l.blockNumber, 'blockNumber') : 0n })
     }
     return out.sort((a, b) => (a.blockNumber > b.blockNumber ? -1 : a.blockNumber < b.blockNumber ? 1 : 0))
+  }
+
+  /**
+   * The transaction in which this wallet's EIP-3009 authorization with `nonce` was executed, or null. Exact: the
+   * nonce is single-use per signer, so this is how a payment whose facilitator answer was lost is found again
+   * without confusing it with any other transfer to the same recipient.
+   */
+  async findAuthorizationUse(nonce: string, blocks = 5000): Promise<string | null> {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(nonce)) throw new Error('nonce must be 0x + 64 hex characters')
+    const head = hexToBigInt(await this.rpc('eth_blockNumber', []), 'block height')
+    const fromBlock = head > BigInt(blocks) ? head - BigInt(blocks) : 0n
+    const topic = (a: string) => '0x' + a.slice(2).toLowerCase().padStart(64, '0')
+    const logs = await this.rpc<unknown>('eth_getLogs', [{ address: this.chain.usdc, fromBlock: quantity(fromBlock), toBlock: 'latest', topics: [AUTHORIZATION_USED_TOPIC, topic(this.address), nonce.toLowerCase()] }])
+    for (const l of Array.isArray(logs) ? (logs as { transactionHash?: unknown; removed?: unknown }[]) : []) {
+      if (l && l.removed !== true && typeof l.transactionHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(l.transactionHash)) return l.transactionHash.toLowerCase()
+    }
+    return null
   }
 
   /** Waits until the transaction is mined; throws on timeout (the transfer may still land later: keep the hash). */

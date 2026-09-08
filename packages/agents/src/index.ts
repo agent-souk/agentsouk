@@ -65,8 +65,10 @@ for (const env of ['live', 'test'] as Env[]) {
   const op = new OperatorRuntime(clientFor(key), wallet, judge, CATALOG, env, log, operatorConfig)
   if (wallet && operatorKey && process.env.FIRSTBUY_ENABLED !== 'false') {
     const E = env.toUpperCase()
-    const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number(process.env.FIRSTBUY_PER_SELLER ?? DEFAULT_FIRSTBUY[env].perSeller) }
-    op.firstBuyer = new FirstBuyer(op.client, wallet, typedDataSigner(operatorKey, CHAINS[env]), judge, env, log, cfg, () => op.me, { canSpend: (a) => op.canSpend(a) })
+    const perSeller = Number.parseInt(process.env.FIRSTBUY_PER_SELLER ?? '', 10)
+    const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number.isInteger(perSeller) && perSeller >= 0 ? perSeller : DEFAULT_FIRSTBUY[env].perSeller }
+    if (cfg.maxPrice <= 0n || cfg.dailyCap <= 0n) cfg.enabled = false
+    op.firstBuyer = new FirstBuyer(op.client, wallet, typedDataSigner(operatorKey, CHAINS[env]), judge, env, log, cfg, () => op.me, { canSpend: (a) => op.canSpend(a), recordSpend: (e) => op.recordSpend(e) })
   }
   operators[env] = op
 }

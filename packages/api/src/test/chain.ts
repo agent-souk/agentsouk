@@ -10,7 +10,8 @@ import type { Env } from '../db/schema.js'
  */
 
 export type FakeTransfer = { from: string; to: string; value: number | bigint; asset?: string }
-type Tx = { block: number; status: '0x1' | '0x0'; transfers: FakeTransfer[]; timestamp: number }
+export type FakeLog = { address: string; topics: string[]; data?: string }
+type Tx = { block: number; status: '0x1' | '0x0'; transfers: FakeTransfer[]; timestamp: number; logs?: FakeLog[] }
 
 const pad = (addr: string) => '0x' + addr.toLowerCase().replace(/^0x/, '').padStart(64, '0')
 
@@ -36,17 +37,17 @@ export class FakeChain {
   }
 
   /** Mines a transaction with the given transfers. Returns the hash. By default it has exactly the required confirmations (1 on test). */
-  mine(transfers: FakeTransfer[], opts: { status?: '0x1' | '0x0'; timestamp?: number; confirmations?: number } = {}): string {
+  mine(transfers: FakeTransfer[], opts: { status?: '0x1' | '0x0'; timestamp?: number; confirmations?: number; logs?: FakeLog[] } = {}): string {
     const hash = '0x' + randomBytes(32).toString('hex')
     this.head += 1
     const block = this.head
-    this.txs.set(hash, { block, status: opts.status ?? '0x1', transfers, timestamp: opts.timestamp ?? Date.now() })
+    this.txs.set(hash, { block, status: opts.status ?? '0x1', transfers, timestamp: opts.timestamp ?? Date.now(), logs: opts.logs })
     if (opts.confirmations != null) this.head = block + opts.confirmations - 1
     return hash
   }
 
   /** A plain USDC transfer from -> to. */
-  pay(from: string, to: string, value: number | bigint, opts: { status?: '0x1' | '0x0'; timestamp?: number; confirmations?: number; asset?: string } = {}): string {
+  pay(from: string, to: string, value: number | bigint, opts: { status?: '0x1' | '0x0'; timestamp?: number; confirmations?: number; asset?: string; logs?: FakeLog[] } = {}): string {
     return this.mine([{ from, to, value, asset: opts.asset }], opts)
   }
 
@@ -93,6 +94,12 @@ export class FakeChain {
             if (topics.some((want, k) => want != null && String(want).toLowerCase() !== log[k])) return
             out.push({ address: asset, topics: log, data: '0x' + BigInt(t.value).toString(16).padStart(64, '0'), blockNumber: '0x' + tx.block.toString(16), transactionHash: hash, logIndex: '0x' + i.toString(16), removed: false })
           })
+          for (const [i, l] of (tx.logs ?? []).entries()) {
+            if (f.address && l.address.toLowerCase() !== String(f.address).toLowerCase()) continue
+            const lower = l.topics.map((t) => t.toLowerCase())
+            if (topics.some((want, k) => want != null && String(want).toLowerCase() !== lower[k])) continue
+            out.push({ address: l.address, topics: l.topics, data: l.data ?? '0x', blockNumber: '0x' + tx.block.toString(16), transactionHash: hash, logIndex: '0x' + (tx.transfers.length + i).toString(16), removed: false })
+          }
         }
         return reply(out)
       }
