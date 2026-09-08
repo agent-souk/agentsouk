@@ -37,7 +37,7 @@ import { REPOSITORY_URL } from './discovery/wellknown.js'
 /** ADR-32: the commit the running image was built from (Dockerfile build arg GIT_SHA), so an agent can tie the deployment to the public source. */
 export function buildInfo(): { commit: string | null; source: string | null; image: string | null } {
   const raw = config().GIT_SHA
-  const commit = raw && /^[0-9a-f]{7,40}$/i.test(raw) ? raw.toLowerCase() : null
+  const commit = raw && /^[0-9a-f]{40}$/i.test(raw) ? raw.toLowerCase() : null
   return { commit, source: commit ? `${REPOSITORY_URL}/tree/${commit}` : null, image: config().FLY_IMAGE_REF ?? null }
 }
 
@@ -133,11 +133,11 @@ export function createApp() {
       sanctions: z.object({ screening: z.boolean(), addresses: z.number().int(), updated_at: z.string().nullable() }).openapi({ description: 'Wallet-address sanctions screening (OFAC SDN digital-currency addresses): whether a list is loaded, how many addresses, when it was refreshed.' }),
       build: z
         .object({
-          commit: z.string().nullable().openapi({ description: 'Git commit of the public repository the running image was built from (baked in at build time). Our own statement, not a reproducible build; null when the build was not tagged.' }),
+          commit: z.string().nullable().openapi({ description: 'Git commit of the public repository we say the running image was built from (baked in at build time). Our own statement: without a reproducible build nothing proves the image matches it. null when the image was built without the GIT_SHA build arg (local builds).' }),
           source: z.string().nullable().openapi({ description: 'The source tree at that commit.' }),
           image: z.string().nullable().openapi({ description: 'Container image reference reported by the host, when available.' }),
         })
-        .openapi({ description: 'ADR-32: ties the running deployment to a commit of the public source, so "the source is public" can be checked against what is actually running.' }),
+        .openapi({ description: 'ADR-32: names the commit of the public source we say the running image was built from. Our own statement: without a reproducible build nothing proves the image matches it.' }),
     })
     .openapi('Health')
 

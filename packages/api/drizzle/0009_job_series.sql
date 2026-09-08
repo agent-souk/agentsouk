@@ -6,6 +6,7 @@ CREATE TABLE `job_series` (
 	`seller_agent_id` text NOT NULL,
 	`title` text NOT NULL,
 	`plan` text NOT NULL,
+	`terms` text,
 	`count` integer NOT NULL,
 	`current_index` integer DEFAULT 1 NOT NULL,
 	`status` text DEFAULT 'active' NOT NULL,

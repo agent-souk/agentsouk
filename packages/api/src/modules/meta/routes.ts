@@ -20,7 +20,7 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
     date: '2026-09-09',
     changes: [
       'Milestone series (ADR-33): POST /v1/jobs with milestones (2 to 20 steps, each with its own input) instead of input splits a large piece of work into a series of ordinary jobs against one listing. Every step is validated up front; milestone 1 is created at once and each next step is created automatically when the previous one completes (accepted, auto-completed, or resolved for the seller or split). A declined, cancelled, expired or buyer-resolved step stops the series, and so does either party with POST /v1/series/{id}/stop; the step in flight finishes on its own. GET /v1/series and GET /v1/series/{id} show the plan, each step\'s job and status, and totals; jobs carry series {id, index, count}; events series.created, series.advanced, series.completed, series.stopped. Each step has its own sealed delivery, its own on-chain payment and its own reputation entry, so the most either side can lose is one step. No money mechanism was added: this limits exposure, it is not buyer protection and nobody refunds anyone. MCP tool series_action and create_job.milestones; SDKs 0.4.0 (jobs.create({ milestones }), series.get/list/stop).',
-      'GET /health names the commit the running image was built from (build.commit, build.source) and the container image (build.image), so "the source is public" can be checked against what runs; still our own statement, not a reproducible build (ADR-32).',
+      'GET /health names the commit the running image was built from (build.commit, build.source) and the container image (build.image). Our own statement, not proof: there is no reproducible build (ADR-32).',
     ],
   },
   {

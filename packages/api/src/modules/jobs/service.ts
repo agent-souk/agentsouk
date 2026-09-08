@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobEvents, jobs, jobSeries, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming, type SeriesMilestone } from '../../db/schema.js'
+import { agents, jobEvents, jobs, jobSeries, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming, type SeriesMilestone, type SeriesTerms } from '../../db/schema.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
@@ -214,6 +214,9 @@ async function finalize(job: Job, listingOutcome?: 'completed' | 'failed') {
 export type SeriesRow = typeof jobSeries.$inferSelect
 export const SERIES_MIN = 2
 export const SERIES_MAX = 20
+/** A milestone input is a task description, not a payload: 64 KB per step, 256 KB per plan (the plan is stored with the series). */
+export const SERIES_MAX_INPUT_BYTES = 64 * 1024
+export const SERIES_MAX_PLAN_BYTES = 256 * 1024
 
 function seriesEvent(s: SeriesRow, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { series_id: s.id, listing_id: s.listingId, title: s.title, buyer_id: s.buyerAgentId, seller_id: s.sellerAgentId, count: s.count, current_index: s.currentIndex, status: s.status, ...extra }
@@ -235,9 +238,28 @@ async function stopSeriesRow(s: SeriesRow, by: 'buyer' | 'seller' | 'platform', 
 }
 
 /**
- * Called from finalize() with the outcome of a milestone job. completed (incl. resolved seller/split) creates the
- * next milestone or completes the series; anything else stops it. The current-index check makes a repeated call
- * for the same job a no-op, so the next milestone can never be created twice.
+ * A milestone job whose creation failed half-way (row inserted, thread or notification failed) or that was created in
+ * the same instant as a stop: cancelled by the platform with no mark on either party (cancelKind null).
+ */
+async function cancelOrphanMilestone(jobId: string, reason = 'platform: the milestone could not be created cleanly; nothing is owed'): Promise<Job | null> {
+  const row = await db().query.jobs.findFirst({ where: eq(jobs.id, jobId) })
+  if (!row) return null
+  const flipped = await setJobIf(jobId, ['open', 'quote_requested'], { status: 'cancelled', cancelReason: reason, cancelKind: null, reviewDeadlineAt: null })
+  if (!flipped) return row
+  await logJobEvent(jobId, 'cancelled', null, { reason, by: 'platform' })
+  await note(flipped, null, undefined, `Cancelled by the platform: ${reason}.`, { job_id: jobId, status: 'cancelled' })
+  await notify(flipped, 'cancelled', { by: 'platform', reason })
+  await recordJobOutcome(flipped)
+  return flipped
+}
+
+/**
+ * Called from finalize() with the outcome of a terminal milestone job. completed (incl. resolved seller/split)
+ * creates the next milestone or completes the series; anything else stops it.
+ * Reserve first, insert second: the next job id and current_index are written to the series with a conditional
+ * update (status still active, current_index still this step) BEFORE the job row exists, so a repeated or
+ * concurrent call cannot create a second job, and a stop that lands first wins. If the job insert then fails or a
+ * stop landed meanwhile, the fresh job is cancelled by the platform.
  */
 async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promise<void> {
   const s = await db().query.jobSeries.findFirst({ where: eq(jobSeries.id, job.seriesId!) })
@@ -245,7 +267,11 @@ async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promis
   const idx = job.milestoneIndex ?? 0
   if (idx !== s.currentIndex) return
   if (outcome !== 'completed') {
-    await stopSeriesRow(s, 'platform', `milestone ${idx} of ${s.count} ended as ${job.status}; nothing further is created. Start a new series for the remaining work if you want to continue.`)
+    const reason =
+      job.status === 'expired' && job.unpaid
+        ? `milestone ${idx} of ${s.count} expired unpaid; a payment in the grace period revives that job, not the series. Start a new series for the remaining steps if you want to continue.`
+        : `milestone ${idx} of ${s.count} ended as ${job.status}; nothing further is created. Start a new series for the remaining work if you want to continue.`
+    await stopSeriesRow(s, 'platform', reason)
     return
   }
   if (idx >= s.count) {
@@ -264,26 +290,59 @@ async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promis
     await stopSeriesRow(s, 'platform', `the plan has no milestone ${idx + 1}`)
     return
   }
+  // 1. every check an order must pass, plus: the listing still matches the terms the buyer planned under
+  let listing: Listing
+  let buyer: Agent
+  let seller: Agent
   try {
-    const listing = await getActiveListingForOrder(s.env, s.listingId)
-    const [buyer, seller] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, s.buyerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, s.sellerAgentId) })])
-    if (!buyer || buyer.status !== 'active') throw errors.state('buyer_unavailable', 'The buyer of this series is no longer active.')
-    if (!seller) throw errors.state('seller_unavailable', 'The seller of this series is no longer active.')
-    const sellerOk = await orderPreflight(s.env, buyer, listing)
-    // the buyer agreed to the plan at the listing's terms of that moment; a changed price or payment timing is a new deal, not a silent one
+    listing = await getActiveListingForOrder(s.env, s.listingId)
+    const [b, sl] = await Promise.all([db().query.agents.findFirst({ where: eq(agents.id, s.buyerAgentId) }), db().query.agents.findFirst({ where: eq(agents.id, s.sellerAgentId) })])
+    if (!b || b.status !== 'active') throw errors.state('buyer_unavailable', 'The buyer of this series is no longer active.')
+    if (!sl) throw errors.state('seller_unavailable', 'The seller of this series is no longer active.')
+    buyer = b
+    seller = await orderPreflight(s.env, buyer, listing)
+    const terms: SeriesTerms = s.terms ?? { payment: job.payment, turnaround_seconds: job.turnaroundSeconds, accept_timeout_seconds: listing.acceptTimeoutSeconds, max_revisions: job.maxRevisions }
     const nowPrice = priceFor(listing, next.units)
     if (nowPrice !== next.price) throw errors.state('listing_price_changed', `The listing price changed since the series was planned (milestone ${next.index}: planned ${money(next.price)}, now ${money(nowPrice)}).`, 'Start a new series at the current price if you want to continue.')
-    if (listing.payment !== job.payment) throw errors.state('listing_payment_changed', `The listing payment timing changed from ${job.payment} to ${listing.payment} since the series was planned.`, 'Start a new series under the current terms if you want to continue.')
-    const created = await insertJob({ env: s.env, buyer, seller: sellerOk, listing, input: next.input, units: next.units, title: next.title, maxRevisions: job.maxRevisions, series: { id: s.id, index: next.index, count: s.count } })
-    next.job_id = created.id
-    await db().update(jobSeries).set({ plan: s.plan, currentIndex: next.index, updatedAt: Date.now() }).where(eq(jobSeries.id, s.id))
-    const after = await reloadSeries(s.id)
-    await emitMany(after.env, [after.buyerAgentId, after.sellerAgentId], 'series.advanced', seriesEvent(after, { job_id: created.id, index: next.index, previous_job_id: job.id }))
+    if (listing.payment !== terms.payment) throw errors.state('listing_payment_changed', `The listing payment timing changed from ${terms.payment} to ${listing.payment} since the series was planned.`, 'Start a new series under the current terms if you want to continue.')
+    if (listing.turnaroundSeconds !== terms.turnaround_seconds || listing.acceptTimeoutSeconds !== terms.accept_timeout_seconds) throw errors.state('listing_terms_changed', `The listing turnaround or accept timeout changed since the series was planned (turnaround ${terms.turnaround_seconds}s -> ${listing.turnaroundSeconds}s, accept timeout ${terms.accept_timeout_seconds}s -> ${listing.acceptTimeoutSeconds}s).`, 'Start a new series under the current terms if you want to continue.')
+    try {
+      validateInput(next.input, listing.inputSchema, `milestones[${idx}].input`, `milestone ${next.index} input`)
+    } catch (e) {
+      throw errors.state('listing_schema_changed', `The listing input_schema changed since the series was planned; the planned input for milestone ${next.index} no longer fits (${e instanceof Error ? e.message : String(e)}).`, 'Start a new series with inputs that match the current schema.')
+    }
+    await assertSellerCapacity(s.env, listing.sellerAgentId, listing.maxOpenJobs)
   } catch (e) {
     const reason = e instanceof ApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e)
-    log.warn({ err: e, series: s.id }, 'series: next milestone could not be created')
+    log.warn({ err: e, series: s.id }, 'series: next milestone cannot be created')
     await stopSeriesRow(s, 'platform', `milestone ${idx + 1} could not be created (${reason}). Start a new series for the remaining work once the cause is gone.`)
+    return
   }
+  // 2. reserve: the series knows the next job before it exists; a stop or a second advance loses here
+  const nextId = newId('job')
+  next.job_id = nextId
+  const reserved = await db()
+    .update(jobSeries)
+    .set({ plan: s.plan, currentIndex: next.index, updatedAt: Date.now() })
+    .where(and(eq(jobSeries.id, s.id), eq(jobSeries.status, 'active'), eq(jobSeries.currentIndex, idx)))
+  if ((reserved.rowsAffected ?? 0) === 0) return
+  // 3. insert; on failure or a stop that landed meanwhile, the fresh job is cancelled by the platform
+  let created: Job
+  try {
+    created = await insertJob({ id: nextId, env: s.env, buyer, seller, listing, input: next.input, units: next.units, title: next.title, maxRevisions: s.terms?.max_revisions ?? job.maxRevisions, series: { id: s.id, index: next.index, count: s.count } })
+  } catch (e) {
+    const reason = e instanceof ApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e)
+    log.warn({ err: e, series: s.id, job: nextId }, 'series: next milestone insert failed')
+    await cancelOrphanMilestone(nextId)
+    await stopSeriesRow(await reloadSeries(s.id), 'platform', `milestone ${next.index} could not be created (${reason}). Start a new series for the remaining work once the cause is gone.`)
+    return
+  }
+  const after = await reloadSeries(s.id)
+  if (after.status !== 'active') {
+    await cancelOrphanMilestone(created.id, 'platform: the series was stopped while this milestone was being created; nothing is owed')
+    return
+  }
+  await emitMany(after.env, [after.buyerAgentId, after.sellerAgentId], 'series.advanced', seriesEvent(after, { job_id: created.id, index: next.index, previous_job_id: job.id }))
 }
 
 export async function getSeriesForParty(env: Env, agentId: string, id: string): Promise<{ series: SeriesRow; role: Role }> {
@@ -355,7 +414,7 @@ function priceFor(listing: Listing, units: number, param = 'units'): number | nu
   return price
 }
 
-type InsertJobInput = { env: Env; buyer: Agent; seller: Agent; listing: Listing; input: Record<string, unknown>; units: number; title: string; maxRevisions: number; series?: { id: string; index: number; count: number } }
+type InsertJobInput = { env: Env; buyer: Agent; seller: Agent; listing: Listing; input: Record<string, unknown>; units: number; title: string; maxRevisions: number; series?: { id: string; index: number; count: number }; id?: string }
 
 /** Creates one job row with its thread, first system message, job event and notifications (one job, or one milestone). */
 async function insertJob(o: InsertJobInput): Promise<Job> {
@@ -363,7 +422,7 @@ async function insertJob(o: InsertJobInput): Promise<Job> {
   await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
   const price = priceFor(listing, o.units)
   const now = Date.now()
-  const id = newId('job')
+  const id = o.id ?? newId('job')
   const status: JobStatus = listing.pricingModel === 'quote' ? 'quote_requested' : 'open'
   const row: typeof jobs.$inferInsert = {
     id,
@@ -421,19 +480,33 @@ async function createSeries(env: Env, buyer: Agent, seller: Agent, listing: List
   if (input.input !== undefined) throw errors.validation('Send either input (one job) or milestones (a series), not both.', 'input', 'A series is a list of milestones, each with its own input.')
   if (ms.length < SERIES_MIN || ms.length > SERIES_MAX) throw errors.validation(`milestones must have between ${SERIES_MIN} and ${SERIES_MAX} steps.`, 'milestones', 'One step is an ordinary job: send input instead of milestones.')
   const title = (input.title ?? listing.title).slice(0, 100)
+  let planBytes = 0
   const plan: SeriesMilestone[] = ms.map((m, i) => {
     const param = `milestones[${i}]`
     const units = unitsFor(listing, m.units, `${param}.units`)
     const jobInput = validateInput(m.input, listing.inputSchema, `${param}.input`, `milestone ${i + 1} input`)
+    const bytes = Buffer.byteLength(JSON.stringify(jobInput))
+    if (bytes > SERIES_MAX_INPUT_BYTES) throw errors.validation(`milestone ${i + 1} input is ${bytes} bytes; the limit per milestone is ${SERIES_MAX_INPUT_BYTES}.`, `${param}.input`, 'Keep milestone inputs small (references, not payloads); the whole plan is stored with the series.')
+    planBytes += bytes
+    if (planBytes > SERIES_MAX_PLAN_BYTES) throw errors.validation(`The milestone inputs together exceed ${SERIES_MAX_PLAN_BYTES} bytes.`, 'milestones', 'Split the work into fewer or smaller steps, or start a second series later.')
     return { index: i + 1, title: (m.title ?? `${title} (${i + 1}/${ms.length})`).slice(0, 120), input: jobInput, units, price: priceFor(listing, units, `${param}.units`), job_id: null }
   })
   await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
   const now = Date.now()
   const id = newId('series')
-  await db().insert(jobSeries).values({ id, env, listingId: listing.id, buyerAgentId: buyer.id, sellerAgentId: seller.id, title, plan, count: plan.length, currentIndex: 1, status: 'active', createdAt: now, updatedAt: now })
-  const first = await insertJob({ env, buyer, seller, listing, input: plan[0]!.input, units: plan[0]!.units, title: plan[0]!.title, maxRevisions: input.max_revisions ?? 2, series: { id, index: 1, count: plan.length } })
-  plan[0]!.job_id = first.id
-  await db().update(jobSeries).set({ plan, updatedAt: Date.now() }).where(eq(jobSeries.id, id))
+  const firstId = newId('job')
+  plan[0]!.job_id = firstId
+  const terms: SeriesTerms = { payment: listing.payment, turnaround_seconds: listing.turnaroundSeconds, accept_timeout_seconds: listing.acceptTimeoutSeconds, max_revisions: input.max_revisions ?? 2 }
+  await db().insert(jobSeries).values({ id, env, listingId: listing.id, buyerAgentId: buyer.id, sellerAgentId: seller.id, title, plan, terms, count: plan.length, currentIndex: 1, status: 'active', createdAt: now, updatedAt: now })
+  let first: Job
+  try {
+    first = await insertJob({ id: firstId, env, buyer, seller, listing, input: plan[0]!.input, units: plan[0]!.units, title: plan[0]!.title, maxRevisions: terms.max_revisions, series: { id, index: 1, count: plan.length } })
+  } catch (e) {
+    // no job, no series: the buyer gets the error and nothing lingers
+    await cancelOrphanMilestone(firstId)
+    await db().delete(jobSeries).where(eq(jobSeries.id, id))
+    throw e
+  }
   const s = await reloadSeries(id)
   await emitMany(env, [buyer.id, seller.id], 'series.created', seriesEvent(s, { job_id: first.id, price_total: plan.every((p) => p.price != null) ? plan.reduce((sum, p) => sum + (p.price ?? 0), 0) : null }))
   return first
@@ -1092,7 +1165,7 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
       const flipped = await setJobIf(job.id, ['awaiting_payment', 'delivered'], { status: 'expired', unpaid: true })
       if (!flipped) continue
       await logJobEvent(job.id, 'expired', null, { unpaid: true })
-      await note(flipped, null, undefined, job.status === 'delivered' ? `Expired unpaid: the buyer did not pay for the sealed delivery in time. The seller keeps the work; this is recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.` : `Expired unpaid: the buyer did not pay in time. Recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.`, { job_id: job.id, status: 'expired', unpaid: true })
+      await note(flipped, null, undefined, (job.status === 'delivered' ? `Expired unpaid: the buyer did not pay for the sealed delivery in time. The seller keeps the work; this is recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.` : `Expired unpaid: the buyer did not pay in time. Recorded on the buyer's reputation. A payment mined within ${PAYMENT_GRACE_MS / 60000} minutes of the deadline still revives the job.`) + (job.seriesId ? ' This ends the milestone series; a late payment revives this job only.' : ''), { job_id: job.id, status: 'expired', unpaid: true })
       await notify(flipped, 'expired', { unpaid: true })
       await finalize(flipped)
       stats.expired_unpaid++

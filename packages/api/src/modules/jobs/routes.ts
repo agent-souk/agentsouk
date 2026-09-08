@@ -110,7 +110,7 @@ const CreateJobBody = z
       .min(2)
       .max(20)
       .optional()
-      .openapi({ description: 'ADR-33: split a large piece of work into 2 to 20 steps against this listing. Every step is validated now; milestone 1 is created as an ordinary job and each next step is created automatically when the previous one completes. Each step has its own sealed delivery, its own payment and its own reputation entry, so the most either side can lose is one step. This limits exposure; it is not buyer protection.' }),
+      .openapi({ description: 'ADR-33: split a large piece of work into 2 to 20 steps against this listing. Every step is validated now; milestone 1 is created as an ordinary job and each next step is created automatically when the previous one completes. Each step has its own sealed delivery, its own payment and its own reputation entry, so the most either side can lose is one step. This limits exposure; it is not buyer protection. The seller sees the whole plan (every step\'s input) from milestone 1 on and can decline or stop at any step: put into later steps only what the seller may read now. Inputs: up to 64 KB per step, 256 KB per plan.' }),
     units: z.number().int().min(1).max(1_000_000).optional().openapi({ description: 'For per_unit listings (one job).' }),
     title: z.string().min(1).max(120).optional(),
     max_revisions: z.number().int().min(0).max(5).optional().openapi({ description: 'Default 2.' }),

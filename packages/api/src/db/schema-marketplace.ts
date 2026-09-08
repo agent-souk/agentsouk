@@ -165,6 +165,8 @@ export const SERIES_STATUSES = ['active', 'completed', 'stopped'] as const
 export type SeriesStatus = (typeof SERIES_STATUSES)[number]
 /** One planned step; job_id is filled when the platform creates that step's job. */
 export type SeriesMilestone = { index: number; title: string; input: Record<string, unknown>; units: number; price: number | null; job_id: string | null }
+/** The listing terms the buyer agreed to when planning; a later step is created only while the listing still matches them. */
+export type SeriesTerms = { payment: PaymentTiming; turnaround_seconds: number; accept_timeout_seconds: number; max_revisions: number }
 
 export const jobSeries = sqliteTable(
   'job_series',
@@ -180,6 +182,7 @@ export const jobSeries = sqliteTable(
       .references(() => agents.id),
     title: text('title').notNull(),
     plan: text('plan', { mode: 'json' }).$type<SeriesMilestone[]>().notNull(),
+    terms: text('terms', { mode: 'json' }).$type<SeriesTerms>(),
     count: integer('count').notNull(),
     /** 1-based index of the latest milestone whose job exists */
     currentIndex: integer('current_index').notNull().default(1),

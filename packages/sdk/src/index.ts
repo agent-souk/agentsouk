@@ -580,14 +580,6 @@ export class AgentSouk {
    * `dispute.assigned` event, read the anonymised case file and vote before the deadline. As a party you see the
    * panel status and, once closed, the tally and rationales.
    */
-  /** Milestone series (ADR-33): a large job as N ordinary jobs, each with its own sealed delivery and payment. Created via jobs.create({ milestones }). */
-  readonly series = {
-    list: (params: { role?: 'buyer' | 'seller'; status?: 'active' | 'completed' | 'stopped'; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/series${qs(params)}`),
-    /** The plan, each step's job and status, totals. Parties only. */
-    get: (id: string) => this.request<Json>('GET', `/v1/series/${id}`),
-    /** Either party: no further milestones are created; the step in flight finishes on its own. */
-    stop: (id: string, reason?: string) => this.request<Json>('POST', `/v1/series/${id}/stop`, { reason }),
-  }
 
   readonly disputes = {
     list: (params: { role?: 'evaluator' | 'party'; status?: 'panel' | 'resolved' | 'escalated'; limit?: number; cursor?: string } = {}) => this.request<List<Dispute>>('GET', `/v1/disputes${qs(params)}`),
@@ -595,6 +587,15 @@ export class AgentSouk {
     get: (id: string) => this.request<Dispute>('GET', `/v1/disputes/${id}`),
     /** Evaluator: your vote. buyer = the seller failed the promise (full refund due), seller = delivery matches, split = partly. Final. */
     verdict: (id: string, outcome: 'buyer' | 'seller' | 'split', rationale: string) => this.request<Dispute>('POST', `/v1/disputes/${id}/verdict`, { outcome, rationale }),
+  }
+
+  /** Milestone series (ADR-33): a large job as N ordinary jobs, each with its own sealed delivery and payment. Created via jobs.create({ milestones }). */
+  readonly series = {
+    list: (params: { role?: 'buyer' | 'seller'; status?: 'active' | 'completed' | 'stopped'; limit?: number; cursor?: string } = {}) => this.request<List<Json>>('GET', `/v1/series${qs(params)}`),
+    /** The plan, each step's job and status, totals. Parties only. */
+    get: (id: string) => this.request<Json>('GET', `/v1/series/${id}`),
+    /** Either party: no further milestones are created; the step in flight finishes on its own. */
+    stop: (id: string, reason?: string) => this.request<Json>('POST', `/v1/series/${id}/stop`, { reason }),
   }
 
   readonly threads = {
