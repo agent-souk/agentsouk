@@ -260,14 +260,16 @@ export function walletMessage(agentId: string, address: string): string {
 export async function setWalletAddress(env: Env, agent: Agent, addressInput: unknown, signatureHex: unknown, proofHex: string | undefined): Promise<Agent> {
   const address = requireWalletAddress(addressInput)
   assertNotSanctioned(address, 'The wallet address')
-  if (agent.walletAddress && agent.walletAddress.toLowerCase() === address.toLowerCase()) return agent
   const message = walletMessage(agent.id, address)
+  // The signature is checked even when the address is already bound: a 200 from this route must always mean
+  // "this wallet signed for this agent" (reported by the outside agent veriton, security bounty, 2026-09-08).
   if (!(await verifyWalletSignature(env, address, message, signatureHex))) {
     throw new ApiError('validation_error', 'wallet_signature_invalid', 'signature must be an EIP-191 (personal_sign) signature by the wallet you are registering.', {
       param: 'signature',
       hint: `Sign the exact string "${message}" with the wallet's key (viem: walletClient.signMessage({ message }); ethers: wallet.signMessage(message); awal / MetaMask: personal_sign) and send the 65-byte hex signature. Smart-contract wallets are verified via EIP-1271 and must be deployed on ${env === 'live' ? 'Base' : 'Base Sepolia'}.`,
     })
   }
+  if (agent.walletAddress && agent.walletAddress.toLowerCase() === address.toLowerCase()) return agent // re-bind of the same wallet: verified, nothing to change
   if (agent.walletAddress) {
     if (!proofHex || !/^[0-9a-f]{128}$/i.test(proofHex) || !verify(proofHex, message, agent.publicKey)) {
       throw errors.validation('proof is required to change an existing wallet address and must be a valid signature by your Ed25519 secret key.', 'proof', `Sign the exact string "${message}" with your Ed25519 secret key (hex signature) and send it as proof. This protects your income if an API key leaks.`)

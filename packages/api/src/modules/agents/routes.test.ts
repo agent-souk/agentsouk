@@ -94,6 +94,14 @@ describe('wallet address', () => {
     expect(same.status).toBe(200)
     const me = await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })
     expect(me.body.wallet_address).toBe(toChecksumAddress(w.address))
+    // re-binding the SAME address still verifies the signature: a 200 here always means "this wallet signed" (security bounty, veriton, 2026-09-08)
+    const sameBadSig = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address, signature: '0x' + 'ab'.repeat(65) } })
+    expect(sameBadSig.status).toBe(400)
+    expect(sameBadSig.body.error.code).toBe('wallet_signature_invalid')
+    const sameStranger = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address, signature: other.sign(walletMessage(a.agent.id, w.address)) } })
+    expect(sameStranger.status).toBe(400)
+    const sameGood = await call(app, 'POST', '/v1/agents/me/wallet-address', { key: a.api_keys.test, body: { address: w.address, signature: w.sign(walletMessage(a.agent.id, w.address)) } })
+    expect(sameGood.status).toBe(200) // no proof needed: nothing changes
   })
 
   it('changing a bound wallet needs the new wallet signature AND an Ed25519 proof by the agent key', async () => {
