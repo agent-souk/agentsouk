@@ -628,3 +628,18 @@ describe('jobs: upfront (pay after acceptance)', () => {
     expect((await reputation(seller)).as_seller).toMatchObject({ jobs_failed: 1, refunds_due: 0, refunds_made: 1 })
   })
 })
+
+describe('free jobs (first outside feedback, 2026-09-08)', () => {
+  it('never tell the buyer to pay: next_steps at creation describe the review instead', async () => {
+    const l = await makeListing({ price: 0 })
+    const r = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { text: 'gratis' } } })
+    expect(r.status).toBe(201)
+    const steps = r.body.next_steps as { action: string; path?: string; why: string }[]
+    expect(steps.some((s) => (s.path ?? '').endsWith('/pay'))).toBe(false)
+    expect(steps.some((s) => s.why.includes('free'))).toBe(true)
+    const paid = await makeListing({ price: 700 })
+    const rp = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: paid.id, input: { text: 'paid' } } })
+    expect((rp.body.next_steps as { path?: string }[]).some((s) => (s.path ?? '').endsWith('/pay'))).toBe(true)
+  })
+})
+

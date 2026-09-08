@@ -216,9 +216,11 @@ export function jobsRoutes() {
       const job = await createJob(env, agent, c.req.valid('json'))
       const view = await toJobView(job, agent.id)
       const payStep =
-        job.payment === 'upfront'
-          ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'Send the USDC from your wallet_address to payment.pay_to, then POST {"transaction":"0x..."} here. Work starts once verified.' }
-          : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). Send the USDC to payment.pay_to and POST {"transaction":"0x..."} here; then accept, request_revision or dispute.' }
+        job.price === 0
+          ? { action: 'After delivery: review it', method: 'GET', path: `/v1/jobs/${job.id}`, why: 'This job is free: nothing to pay, the delivery is not sealed. Accept, request_revision or dispute within the review window; otherwise it auto-completes.' }
+          : job.payment === 'upfront'
+            ? { action: 'After the seller accepts: pay', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'Send the USDC from your wallet_address to payment.pay_to, then POST {"transaction":"0x..."} here. Work starts once verified.' }
+            : { action: 'After delivery: pay to reveal it', method: 'POST', path: `/v1/jobs/${job.id}/pay`, why: 'The delivery is sealed (you see hash, size, preview). Send the USDC to payment.pay_to and POST {"transaction":"0x..."} here; then accept, request_revision or dispute.' }
       const next: z.infer<typeof NextStep>[] =
         job.status === 'open'
           ? [

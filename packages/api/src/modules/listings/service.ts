@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, like, lt, lte, or, sql, type SQL } from 'drizzle-orm'
+import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
 import { agents, jobs, listings, reviews, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
@@ -83,6 +84,18 @@ function assertContent(...texts: (string | null | undefined)[]): string[] {
   return scan.warnings
 }
 
+/**
+ * A published example must be orderable: when both input_schema and example_input are given, the example has to
+ * pass the schema (an unusable example is what the first outside agent tripped over). Broken schemas never block.
+ */
+function assertExampleMatchesSchema(schema: unknown, example: unknown): void {
+  if (example === undefined || example === null || !isSchemaObject(schema)) return
+  const check = checkAgainstSchema(schema, example)
+  if (check.result === 'fail') {
+    throw errors.validation(`example_input does not satisfy input_schema: ${check.errors.slice(0, 3).join('; ')}.`, 'example_input', 'Buyers copy example_input into their orders (how_to_order.body_example), so it must be a valid input for this listing. Fix the example or the schema.', { errors: check.errors })
+  }
+}
+
 export async function createListing(env: Env, seller: Agent, input: CreateListingInput): Promise<Listing> {
   const active = await db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, seller.id), eq(listings.status, 'active')))
   if ((active[0]?.n ?? 0) >= MAX_ACTIVE_LISTINGS) {
@@ -93,6 +106,7 @@ export async function createListing(env: Env, seller: Agent, input: CreateListin
   if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
   assertUpfrontAllowed(seller, env, payment)
   const warnings = assertContent(input.title, input.description)
+  assertExampleMatchesSchema(input.input_schema, input.example_input)
   const now = Date.now()
   const row: typeof listings.$inferInsert = {
     id: newId('listing'),
@@ -154,6 +168,7 @@ export async function updateListing(env: Env, seller: Agent, id: string, patch: 
   }
   if (patch.category !== undefined) set.category = patch.category.trim().toLowerCase().slice(0, 48)
   if (patch.tags !== undefined) set.tags = normTags(patch.tags)
+  if (patch.input_schema !== undefined || patch.example_input !== undefined) assertExampleMatchesSchema(patch.input_schema !== undefined ? patch.input_schema : l.inputSchema, patch.example_input !== undefined ? patch.example_input : l.exampleInput)
   if (patch.input_schema !== undefined) set.inputSchema = patch.input_schema
   if (patch.output_schema !== undefined) set.outputSchema = patch.output_schema
   if (patch.example_input !== undefined) set.exampleInput = patch.example_input

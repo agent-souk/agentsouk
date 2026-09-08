@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
+import { exampleInputFor, placeholderFromSchema } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
 import { jobs, reviews } from '../../db/schema.js'
 import { newId } from '../../lib/ids.js'
@@ -196,3 +197,44 @@ describe('search understanding', () => {
     expect(await titles('quantum knitting')).toEqual([])
   })
 })
+
+describe('ready-to-send order bodies (first outside feedback, 2026-09-08)', () => {
+  it('fills required fields from input_schema when example_input is missing or partial', async () => {
+    const s = await createTestAgent(app, { name: 'Sparse Seller' })
+    const schema = { type: 'object', required: ['url', 'max_chars', 'mode', 'tags'], properties: { url: { type: 'string', format: 'uri' }, max_chars: { type: 'integer', minimum: 100 }, mode: { type: 'string', enum: ['fast', 'thorough'] }, tags: { type: 'array', items: { type: 'string' } }, note: { type: 'string' } } }
+    const r = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ input_schema: schema, example_input: undefined }) })
+    expect(r.status).toBe(201)
+    expect(r.body.how_to_order.body_example.input).toEqual({ url: 'https://example.com/', max_chars: 100, mode: 'fast', tags: ['<tags>'] })
+    // optional properties are not invented; a (legacy) partial example is completed by the helper itself
+    const partial = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, target: { type: 'string', description: 'ISO language code' } } }, example_input: { text: 'Hello' } }) })
+    expect(partial.status).toBe(201)
+    expect(partial.body.how_to_order.body_example.input).toEqual({ text: 'Hello' })
+    expect(exampleInputFor({ type: 'object', required: ['text', 'target'], properties: { target: { type: 'string', description: 'ISO language code' } } }, { text: 'Hello' })).toEqual({ text: 'Hello', target: '<target: ISO language code>' })
+    expect(placeholderFromSchema({ type: 'object', required: ['n', 'deep', 'when'], properties: { n: { type: 'number', exclusiveMinimum: 0 }, deep: { type: 'object', required: ['inner'], properties: { inner: { type: 'boolean' } } }, when: { type: 'string', format: 'date-time' } } })).toEqual({ n: 1, deep: { inner: false }, when: '2026-01-01T00:00:00Z' })
+    expect(placeholderFromSchema('nope')).toEqual({})
+    expect(placeholderFromSchema({ type: 'object', required: ['x'] })).toEqual({ x: '<x>' })
+    // no schema at all: the example (or an empty object) as before
+    const none = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ input_schema: undefined, example_input: undefined }) })
+    expect(none.body.how_to_order.body_example.input).toEqual({})
+  })
+
+  it('rejects an example_input that violates input_schema, on create and on update', async () => {
+    const s = await createTestAgent(app, { name: 'Sloppy Seller' })
+    const bad = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } }, example_input: { txt: 'typo' } }) })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.param).toBe('example_input')
+    expect(bad.body.error.details.errors.join(' ')).toContain('text')
+    const ok = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
+    expect(ok.status).toBe(201)
+    const patched = await call(app, 'PATCH', `/v1/listings/${ok.body.id}`, { key: s.api_keys.test, body: { example_input: { wrong: 1 } } })
+    expect(patched.status).toBe(400)
+    const schemaChange = await call(app, 'PATCH', `/v1/listings/${ok.body.id}`, { key: s.api_keys.test, body: { input_schema: { type: 'object', required: ['text', 'lang'] } } })
+    expect(schemaChange.status).toBe(400) // the stored example {text} no longer satisfies the new schema
+    const both = await call(app, 'PATCH', `/v1/listings/${ok.body.id}`, { key: s.api_keys.test, body: { input_schema: { type: 'object', required: ['text', 'lang'] }, example_input: { text: 'Hi', lang: 'de' } } })
+    expect(both.status).toBe(200)
+    // a broken schema never blocks the seller
+    const broken = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ input_schema: { type: 'object', properties: { x: { type: 'not-a-type' } } }, example_input: { text: 'Hello' } }) })
+    expect(broken.status).toBe(201)
+  })
+})
+

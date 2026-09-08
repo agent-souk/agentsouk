@@ -65,3 +65,53 @@ export function checkAgainstSchema(schema: Record<string, unknown>, value: unkno
 export function isSchemaObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length > 0
 }
+
+const MAX_PLACEHOLDER_DEPTH = 4
+
+function placeholderFor(name: string, schema: unknown, depth: number): unknown {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return `<${name}>`
+  const sc = schema as Record<string, unknown>
+  if (Array.isArray(sc.examples) && sc.examples.length) return sc.examples[0]
+  if (sc.default !== undefined) return sc.default
+  if (sc.const !== undefined) return sc.const
+  if (Array.isArray(sc.enum) && sc.enum.length) return sc.enum[0]
+  const t = Array.isArray(sc.type) ? String(sc.type[0]) : typeof sc.type === 'string' ? sc.type : sc.properties ? 'object' : sc.items ? 'array' : 'string'
+  if (t === 'string') {
+    const f = typeof sc.format === 'string' ? sc.format : ''
+    if (f === 'uri' || f === 'url') return 'https://example.com/'
+    if (f === 'email') return 'agent@example.com'
+    if (f === 'date-time') return '2026-01-01T00:00:00Z'
+    if (f === 'date') return '2026-01-01'
+    return `<${name}${typeof sc.description === 'string' ? `: ${sc.description.slice(0, 60)}` : ''}>`
+  }
+  if (t === 'integer' || t === 'number') return typeof sc.minimum === 'number' ? sc.minimum : typeof sc.exclusiveMinimum === 'number' ? sc.exclusiveMinimum + 1 : 0
+  if (t === 'boolean') return false
+  if (t === 'null') return null
+  if (t === 'array') return depth < MAX_PLACEHOLDER_DEPTH && sc.items && typeof sc.items === 'object' && !Array.isArray(sc.items) ? [placeholderFor(name, sc.items, depth + 1)] : []
+  if (t === 'object') return depth < MAX_PLACEHOLDER_DEPTH ? placeholderFromSchema(sc, depth + 1) : {}
+  return `<${name}>`
+}
+
+/**
+ * A JSON object that satisfies the REQUIRED properties of an object schema, built from examples/defaults/enums
+ * where the schema has them and readable `<name>` placeholders otherwise. Used for ready-to-send order bodies so
+ * a listing without example_input never advertises a body the API would reject (reported by the first outside
+ * agent, 2026-09-08). Never throws; a non-object schema yields {}.
+ */
+export function placeholderFromSchema(schema: unknown, depth = 0): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return {}
+  const sc = schema as Record<string, unknown>
+  const props = sc.properties && typeof sc.properties === 'object' && !Array.isArray(sc.properties) ? (sc.properties as Record<string, unknown>) : {}
+  const required = Array.isArray(sc.required) ? (sc.required as unknown[]).filter((k): k is string => typeof k === 'string').slice(0, 50) : []
+  const out: Record<string, unknown> = {}
+  for (const k of required) out[k] = placeholderFor(k, props[k], depth)
+  return out
+}
+
+/** The seller's example_input, completed with placeholders for every required field it leaves out. */
+export function exampleInputFor(schema: unknown, example: unknown): Record<string, unknown> {
+  const base = placeholderFromSchema(schema)
+  if (example && typeof example === 'object' && !Array.isArray(example)) return { ...base, ...(example as Record<string, unknown>) }
+  return base
+}
+

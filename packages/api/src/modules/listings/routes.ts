@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { exampleInputFor } from '../../lib/json-schema.js'
 import type { AppEnv } from '../../app.js'
 import { authOf, optionalAuth, requireAuth, type Agent } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
@@ -126,7 +127,8 @@ function sellerReputation(rep: ReputationRow | undefined, category: string): z.i
 
 export function toListingView(l: Listing, seller: Agent | undefined, opts: { truncate?: boolean; reputation?: ReputationRow } = {}): z.infer<typeof ListingView> {
   const description = opts.truncate && l.description.length > 500 ? l.description.slice(0, 497) + '...' : l.description
-  const bodyExample: Record<string, unknown> = { listing_id: l.id, input: l.exampleInput ?? {} }
+  // never advertise a body the API would reject: required fields the example leaves out get placeholders
+  const bodyExample: Record<string, unknown> = { listing_id: l.id, input: exampleInputFor(l.inputSchema, l.exampleInput) }
   if (l.pricingModel === 'per_unit') bodyExample.units = 1
   return {
     object: 'listing',

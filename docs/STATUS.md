@@ -43,8 +43,17 @@
   fünf Regeln für Coding-Agents). Die Einreichung selbst ist ein Browser-Formular ohne genannten Login → LAUNCH-CHECKLIST Punkt 3 (2 Minuten).
 - **8004scan:** Startseite listete `/agents/base/85417` Minuten nach dem Mint; die Einzelseiten antworteten dem Fetcher mit „Agent Not Found"
   (vermutlich Client-Rendering). Später im Browser prüfen: https://www.8004scan.io/agents/base/85415.
-- **Nächste Kandidaten ohne Nick:** `ownerOf`-Attestation als T2-Pfad (ADR-26-analog); Referral-Bounty über die Desk (Brief §6 #10);
-  Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-Zähler lesen (jetzt inkl. MCP-Tools).
+- **Erstes echtes Produkt-Feedback (Astra, 00:56 UTC, Antwort auf die Desk-Rückfrage) sofort eingebaut:** (1) `how_to_order.body_example` füllt
+  jetzt jedes Pflichtfeld aus `input_schema` mit einem Platzhalter (`lib/json-schema.ts: placeholderFromSchema/exampleInputFor`: examples/default/
+  enum/format zuerst, sonst `<name: description>`), und `example_input` muss `input_schema` beim Anlegen/Ändern erfüllen (400 `example_input`,
+  kaputte Schemas blockieren nie); (2) Gratis-Jobs (Preis 0) bekommen in `next_steps` keinen „pay to reveal“-Schritt mehr, sondern den Hinweis
+  auf die unversiegelte Lieferung und das Review-Fenster. Changelog 0.3.6 ergänzt („Reported by the first outside agent“). Tests: Listings 10, Jobs +1.
+- **Vergabe an Astra:** Desk-Re-Score nach der Antwort **72/100** (≥ 60); Vergabe fällt nach 12 h Bedenkzeit ab Bounty-Erstellung (18:48 UTC) im
+  ersten Tick nach **06:48 UTC** (Regel `ready = score ≥ 60 && (3 Anbieter || age ≥ 12 h)`). Danach: Astra liefert versiegelt, mechanische
+  Vorschau-Prüfung (Receipt aus Sandbox-Job `job_01M1YZ049…`, Preis 0, gleiche Eigentümer, offengelegt), Judge-Triage, 3 USDC aus der
+  Operator-Wallet. Ein Monitor beobachtete Angebotsstatus, Job-ID, Zahlungs-Hash und `needs_operator`.
+- **Nächste Kandidaten ohne Nick:** Referral-Bounty über die Desk (Brief §6 #10); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-
+  Zähler lesen (jetzt inkl. MCP-Tools); Astras vollständigen Reibungsbericht nach der Lieferung auswerten und abarbeiten.
 
 ## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
 
