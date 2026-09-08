@@ -2,6 +2,42 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-08, Checkpoint 53: ERC-8004-Projektion live (ADR-28), Judge-Rauchtest, Desk-Fix (API 0.3.6, 194 + 52 Tests grün)
+
+- **Ausgangslage (Tagescheck der Discovery-Zähler, 00:13 UTC):** 4 Registrierungen/7 Tage, 199 MCP-Zugriffe (davon 94 „other" = SentinelOracle-Liveness-Bot),
+  6 aktive Agents = 2 first_party + 2 Astra-Experiment + 2 leere Registrierungen. `astra` hat die Desk-Rückfrage (Thread `thr_01M1Z2WY6K…`) noch nicht
+  beantwortet. PR punkpeye #13922 offen, keine Antwort der Maintainer. Schluss: Fremd-Traffic ist fast nur Crawler; die zahlenden Agents sitzen dort,
+  wo Wallets sind → ERC-8004 (Brief §6 #15).
+- **ERC-8004 (ADR-28):** Identity Registry auf Base `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (per `name()` = „AgentIdentity" geprüft; Sepolia
+  `0x8004A818BFB912233c491871b3d84c89A494BD9e`). API: Registrierungsdatei je Agent `GET /agents/{id}/erc8004.json` (registration-v1 + Erweiterung
+  `dev.agentsouk`), Plattform-Datei `/.well-known/agent-registration.json` (MCP, A2A, DID, Registry-Adressen, Plattform-agentIds aus
+  `ERC8004_PLATFORM_AGENT_ID_{LIVE,TEST}`), `POST/DELETE /v1/agents/me/erc8004` (liest `ownerOf` + `tokenURI` read-only, tokenURI muss exakt die eigene
+  Datei auf agentsouk.dev/www/api sein, `owner_verified` = Besitzer ist die gebundene Wallet), Feld `erc8004` in `AgentPublic`, MCP-Tool `link_erc8004`,
+  SDK `agents.linkErc8004/unlinkErc8004/erc8004File`, Migration 0006 (`agents.erc8004` JSON), Sitemap/Root/llms.txt. Keine Reputationsübernahme.
+- **On-Chain (2026-09-08, 05:38 UTC, Base):** Plattform **agentId 85415** (Tx `0xbd1b3487…a324`, Block 51028284, Besitzer Operator-Wallet),
+  **souk-bounties 85416** (`0x1973f49f…3af6`), **souk-services 85417** (`0xc95da0ff…3c43`, eigene Wallet `0xA0a249…1c07`, vorher 0,0001 ETH Gas aus der
+  Operator-Wallet, Tx `0x4c86eceb…240b`). Beide Agents verknüpft mit `owner_verified: true`; Plattform-Secret `ERC8004_PLATFORM_AGENT_ID_LIVE=85415`
+  gesetzt (auch in `~/.agentsouk-ops/agentsouk-api.env`); tokenURI ↔ Datei beidseitig geprüft. Gaskosten insgesamt unter 0,001 USD.
+  Skript `packages/agents/scripts/register-erc8004.ts` (`--env live|test --who … [--agent-id] [--allow-unverified] --send`), idempotent über Profil-Link →
+  Plattform-Datei → lokales Ledger `~/.agentsouk-ops/erc8004-ledger.json` → `--agent-id`; Wiederholungslauf mintet nichts (geprüft).
+  8004scan zeigte die neuen IDs Minuten nach dem Mint noch nicht (Indexierung ausstehend; später prüfen: https://www.8004scan.io).
+- **Review (Workflow, 2 Reviewer, 177k Tokens, 6 min, 18 Funde, 0 hoch, 6 mittel), alle eingebaut:** `owner_verified` folgt Wallet-Wechseln
+  (`refreshOwnerVerifiedForWallet`), täglicher Sweep `sweepErc8004Links` (verschobener tokenURI → Link fällt, Besitzerwechsel → `owner_verified`,
+  Events `agent.erc8004_unlinked` / `agent.erc8004_owner_changed`), eine agentId gehört nur einem Profil (`releaseOtherClaims`), Test-Key
+  überschreibt keinen Live-Link (409 `erc8004_live_link_exists`), Revert-Erkennung über JSON-RPC `code`/`data` (chain.ts gibt `rpc_code`/`rpc_data`
+  weiter), leeres `ownerOf`-Ergebnis = 502 statt „mint again", zweiter IP-Limiter auf der Link-Route, Privacy-Hinweis (owner_verified legt die
+  sonst private wallet_address offen) in Route/MCP/llms.txt. Skript: `--env` nur live|test, `--agent-id` nur mit genau einer Identität, Besitzprüfung
+  vor dem Verknüpfen, Abbruch bei Wallet-Abweichung, Gas-Top-up aus dem exakten Fehlbetrag von `send()`, Ledger schon beim Broadcast;
+  `parseRegisteredAgentId` prüft den indizierten Besitzer und überspringt `removed`-Logs; uint256-Range-Check; `smoke-judge` lehnt unbekannte `--key` ab.
+- **Judge-Rauchtest gegen das echte Modell:** `npm run smoke:judge -w packages/agents` (`scripts/smoke-judge.ts`): drei Judge-Aufrufe mit Fixtures,
+  bestanden (0,13 USD; der Judge erkannte den Platzhalter-Receipt korrekt als nicht zahlbar). **Regel: vor jedem Agents-Deploy ausführen.**
+- **Desk-Fix:** `runtime.ts` löschte `last_error` am Ende jedes sauberen Durchlaufs, auch wenn derselbe Durchlauf gerade „transfer not sent" gemeldet
+  hatte (Commit 169b605; `runtime.test.ts` war seither auf HEAD rot, Checkpoint 52 hatte die Agents-Suite nicht laufen lassen). Jetzt wird nur ein
+  ALTER Fehler gelöscht. Agents 52 Tests grün, deployt.
+- **Sonstiges:** `flyctl` liegt in `~/.fly/bin` (nicht im Git-Bash-PATH). Deploys: API 0.3.6 (2× heute), Agents. Push vor Deploy eingehalten.
+- **Nächste Kandidaten ohne Nick:** 8004scan-Indexierung prüfen und ggf. `ownerOf`-Attestation als T2-Pfad (ADR-26-analog); Referral-Bounty über die
+  Desk (Brief §6 #10); Context7-Einreichung (#11); Agentverse/AGNTCY-Projektionen (#15); täglich Discovery-Zähler lesen.
+
 ## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
 
 - **Glama verifiziert** (Nick, HTTP-Challenge): https://glama.ai/mcp/connectors/dev.agentsouk/agentsouk — „Ownership verified",

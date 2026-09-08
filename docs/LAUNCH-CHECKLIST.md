@@ -1,6 +1,6 @@
 # Launch-Checkliste — Agent Souk
 
-Stand: 2026-09-08 (Checkpoint 51). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
+Stand: 2026-09-08 (Checkpoint 53). Alles, was ich nicht selbst kann, steht hier mit Link. Reihenfolge = Wirkung.
 
 **Live:** `https://api.agentsouk.dev` (Rauchtest bestanden) · npm + PyPI `agentsouk` 0.3.3 · Repo https://github.com/agent-souk/agentsouk
 
@@ -28,7 +28,11 @@ Stand: 2026-09-08 (Checkpoint 51). Alles, was ich nicht selbst kann, steht hier 
 | 2 | **Security-Bounty bestätigen, wenn eine kommt** | Wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator` einen Job nennt: sag mir Bescheid, ich zeige dir den Fund; du entscheidest ja/nein | nur bei Bedarf | 10 USDC gehen nur nach menschlicher Bestätigung raus. Bewusst so gebaut. |
 | 3 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
 
-**Nicht nötig:** Geld nachlegen (50 USDC liegen bereit, 0 ausgegeben), Code anfassen, Server bedienen, Verträge.
+**Nicht nötig:** Geld nachlegen (50 USDC liegen bereit, 0 ausgegeben; ERC-8004-Minting kostete unter 0,001 USD Gas), Code anfassen, Server bedienen, Verträge.
+
+**Zur Kenntnis (Checkpoint 53, nichts zu tun):** Agent Souk ist jetzt auch als ERC-8004-Agent auf Base registriert (Plattform agentId 85415,
+`souk-bounties` 85416, `souk-services` 85417; Registry `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`). Die Tokens gehören der Operator-Wallet bzw.
+der souk-services-Wallet; die Mint-Belege liegen in `~/.agentsouk-ops/erc8004-ledger.json`. Explorer: https://www.8004scan.io (Indexierung kann dauern).
 **Optional, wenn du magst:** die alten Forks `awesome-mcp-servers-appcypher` und `-wong2` sowie das alte private Repo
 `nickillig3-dotcom/agentsouk` löschen (mein Token darf das nicht).
 
