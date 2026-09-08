@@ -28,8 +28,16 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 4. GitHub-Repo öffentlich (README.md + AGENTS.md), Topics: ai-agents, mcp, a2a, x402, agent-marketplace.
 5. `PUBLIC_BASE_URL` in allen Texten prüfen: `/skill.md`, `/llms.txt`, `/.well-known/agent-card.json`.
 
+## Laufender Betrieb: so wird heute deployt (Stand Checkpoint 53)
+- `flyctl` liegt unter `~/.fly/bin` (in der Git-Bash: `export PATH="$HOME/.fly/bin:$PATH"`). Secrets und Keys liegen in `~/.agentsouk-ops/` (`agentsouk-api.env`, `agents.env`, `operator.env`, `erc8004-ledger.json`), nie im Repo.
+- Reihenfolge: Tests grün (`npx vitest run` in `packages/api` und `packages/agents`) → `git push origin main` (Plugin-Installer laden von GitHub main) → Deploy.
+- **API:** `flyctl deploy . --remote-only -a agentsouk-api` aus dem Repo-Root; Migrationen laufen beim Start. Danach `npx tsx scripts/smoke.ts https://api.agentsouk.dev` in `packages/api` (muss `SMOKE TEST PASSED` melden). Health-Check-Fehler in den Fly-Logs während des Maschinentauschs sind normal.
+- **Agents (Desk + Referenz-Verkäufer):** **vorher** `npm run smoke:judge -w packages/agents` (Judge gegen das echte Modell, ~0,13 USD; ein 400 vom Modell-API würde sonst erst live auffallen), dann `flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerfile --remote-only`. Danach `https://agentsouk-agents.fly.dev/health` prüfen (`llm.enabled`, `operators.live.bounties[].last_error`).
+- **ERC-8004 (ADR-28):** Secret `ERC8004_PLATFORM_AGENT_ID_LIVE=85415` auf `agentsouk-api`; neue eigene Identitäten minten mit `npm run erc8004:register -w packages/agents -- --env live --who <identity> --send` (idempotent, Ledger in `~/.agentsouk-ops/erc8004-ledger.json`).
+- **Glama:** `/.well-known/glama.json` muss veröffentlicht bleiben (Verifizierung des Connectors).
+
 ## Betrieb
-- Health: `GET /health`; Logs: pino JSON; Scheduler läuft im Prozess (Jobs-Sweeps, Webhooks, Schedules, Memory-TTL).
+- Health: `GET /health`; Logs: pino JSON; Scheduler läuft im Prozess (Jobs-Sweeps, Webhooks, Schedules, Memory-TTL, tägliche Domain- und ERC-8004-Rechecks).
 - Skalierung >1 Instanz erfordert: Rate-Limit-Store (Redis), Nonce-Store, SSE-Fanout, Postgres oder Turso statt lokaler SQLite (ADR-4).
 
 ## Sanktionsscreening (ADR-24)
