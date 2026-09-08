@@ -324,6 +324,52 @@ describe('OperatorRuntime', () => {
     expect(sent).toHaveLength(1) // paid exactly once
   })
 
+  it('publishes its review policy in the bounty input and tells every scored seller where it stands, once', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    const good = await createTestAgent(app, { name: 'Good Seller' })
+    const weak = await createTestAgent(app, { name: 'Weak Seller' })
+    const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: good.wallet!.address, value: 800_000n })
+    const judge = scriptedJudge({ scores: [72, 30] })
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 12 })
+    await rt.init()
+    await rt.tick() // posted
+    const st = rt.stateOf(spec.key)!
+    const bounty = (await call(app, 'GET', `/v1/bounties/${st.bounty_id}`, { key: good.api_keys.test })).body
+    expect(bounty.input.review_policy).toMatchObject({ consideration_hours: 12, min_proposals: 3, award_score: 60, instant_score: 85, clarify_score: 40 })
+    expect(Date.parse(bounty.input.review_policy.earliest_decision_at) - Date.parse(bounty.created_at)).toBeGreaterThan(11.9 * 3_600_000)
+    await client(app, good.api_keys.test).bounties.propose(st.bounty_id!, 800_000, 'Concrete plan with endpoints.')
+    await client(app, weak.api_keys.test).bounties.propose(st.bounty_id!, 800_000, 'me too')
+    await rt.tick()
+    expect(st.job_id).toBeNull() // 72 < 85 and the window is open: waiting
+    // the scripted scores land on whichever proposal the desk looks at first: one seller hears "in the running", the other "did not clear"
+    const inboxOf = async (who: typeof good) => {
+      const threads = (await call(app, 'GET', '/v1/threads?kind=direct', { key: who.api_keys.test })).body.data as { id: string }[]
+      expect(threads).toHaveLength(1)
+      return (await call(app, 'GET', `/v1/threads/${threads[0]!.id}/messages`, { key: who.api_keys.test })).body.data as { body: string }[]
+    }
+    const firstRound = [await inboxOf(good), await inboxOf(weak)]
+    for (const msgs of firstRound) expect(msgs).toHaveLength(1)
+    const bodies = firstRound.map((m) => m[0]!.body)
+    expect(bodies.filter((b) => b.includes('in the running'))).toHaveLength(1)
+    expect(bodies.filter((b) => b.includes('did not clear'))).toHaveLength(1)
+    for (const b of bodies) {
+      expect(b).toContain(bounty.input.review_policy.earliest_decision_at)
+      expect(b).toContain('input.review_policy')
+    }
+    await rt.tick() // once per proposal, and no re-scoring
+    expect(judge.seen).toEqual(['score', 'score'])
+    expect(await inboxOf(good)).toHaveLength(1)
+    // survives a restart
+    const rt2 = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 12 })
+    await rt2.init()
+    await rt2.tick()
+    expect(judge.seen).toEqual(['score', 'score'])
+    expect(await inboxOf(good)).toHaveLength(1)
+    expect(await inboxOf(weak)).toHaveLength(1)
+  })
+
   it('asks a middling proposal one concrete question in a direct thread, re-scores once with the answer, and scores a changed proposal afresh', async () => {
     const app = await freshApp()
     const chain = installFakeChain('test')

@@ -49,6 +49,8 @@ export const DEFAULT_CONFIG: OperatorConfig = { totalBudget: 50_000_000n, dailyC
 
 /** What the desk remembers about one proposal: the judge's score plus the clarification round, keyed by the proposal id in platform memory. */
 type ProposalRecord = ProposalScore & {
+  /** the desk told the seller where its proposal stands (once per proposal) */
+  informed_at?: string
   /** hash of price, payment and message at scoring time; a changed proposal is scored again */
   fingerprint: string
   /** when the desk asked its question in a direct thread (null thread = the question could not be delivered) */
@@ -294,6 +296,7 @@ export class OperatorRuntime {
         already_covered: state.paid_distinct,
         round: state.awards_paid + 1,
         operator_confirmation_before_payment: spec.needs_operator_confirmation === true,
+        review_policy: this.reviewPolicy(this.now()),
       },
     })) as { id: string }
     state.bounty_id = b.id
@@ -373,7 +376,7 @@ export class OperatorRuntime {
     const candidates = all.filter((p) => p.status === 'pending' && p.price <= spec.budget_max && p.payment === 'on_delivery' && !state.awarded_to.includes(p.seller.id) && !state.skipped_proposals.includes(p.id))
     if (!candidates.length) return
     const scored: { p: Proposal; s: ProposalScore }[] = []
-    for (const p of candidates) scored.push({ p, s: await this.scoreProposal(spec, p, state.bounty_id) })
+    for (const p of candidates) scored.push({ p, s: await this.scoreProposal(spec, p, state.bounty_id, bounty.created_at) })
     scored.sort((a, b) => b.s.score - a.s.score || a.p.price - b.p.price)
     const best = scored[0]!
     const distinctSellers = new Set(candidates.map((p) => p.seller.id)).size
@@ -412,7 +415,35 @@ export class OperatorRuntime {
    * payment or message) is scored again. A middling score (clarifyScore..awardScore) earns one concrete question
    * in a direct thread; the answer (or an updated proposal) triggers exactly one re-score.
    */
-  private async scoreProposal(spec: BountySpec, p: Proposal, bountyId: string | null): Promise<ProposalScore> {
+  /**
+   * How the desk decides, in the bounty's input (machine-readable) and in its messages: the first outside seller
+   * had to read this runtime's source to learn about the 12-hour consideration window (2026-09-08).
+   */
+  reviewPolicy(postedAt: number) {
+    const c = this.config
+    return {
+      consideration_hours: c.considerationHours,
+      min_proposals: c.minProposals,
+      award_score: c.awardScore,
+      instant_score: c.instantScore,
+      clarify_score: c.clarifyScore,
+      earliest_decision_at: new Date(postedAt + c.considerationHours * 3_600_000).toISOString(),
+      note: `Every proposal is scored 0-100 by the desk's reviewer (specificity to this task, feasibility, price, track record). The best proposal at or above ${c.awardScore} is awarded once ${c.minProposals} distinct sellers proposed or earliest_decision_at has passed; ${c.instantScore}+ from a seller with trust tier 1 (or after half the window) is awarded at once; between ${c.clarifyScore} and ${c.awardScore} the desk asks one question in a direct thread and scores again with the answer. A changed proposal is scored afresh.`,
+    }
+  }
+
+  /** Where a proposal stands after its first scoring, for the seller (one message per proposal; appended to the question when one is asked). */
+  private standingNote(spec: BountySpec, rec: ProposalScore, bountyId: string | null, bountyCreatedAt: string | undefined): string | null {
+    const c = this.config
+    const earliest = bountyCreatedAt ? new Date(Date.parse(bountyCreatedAt) + c.considerationHours * 3_600_000).toISOString() : null
+    const when = earliest ? `at the earliest at ${earliest} (${c.considerationHours} h after the bounty was posted), or as soon as ${c.minProposals} distinct sellers proposed` : `once ${c.minProposals} distinct sellers proposed or the ${c.considerationHours}-hour consideration window has passed`
+    if (rec.score >= c.instantScore) return null
+    if (rec.score >= c.awardScore) return `Your proposal on "${spec.title}" is in the running: the desk decides ${when}, awarding the best proposal that clears the bar. Nothing to do until then; a changed proposal (POST /v1/bounties/${bountyId ?? '<bounty_id>'}/proposals replaces it) is scored afresh. The rules are in the bounty's input.review_policy.`
+    if (rec.score >= c.clarifyScore) return `The desk decides ${when}.`
+    return `Your proposal on "${spec.title}" did not clear the desk's bar (it scores specificity to this task, feasibility, price and track record). A more concrete proposal (POST /v1/bounties/${bountyId ?? '<bounty_id>'}/proposals replaces it) is scored afresh; the desk decides ${when}. The rules are in the bounty's input.review_policy.`
+  }
+
+  private async scoreProposal(spec: BountySpec, p: Proposal, bountyId: string | null, bountyCreatedAt?: string): Promise<ProposalScore> {
     const fp = createHash('sha256').update(`${p.price}|${p.payment}|${p.message ?? ''}`).digest('hex').slice(0, 32)
     const key = `operator/${this.env}/proposal/${p.id}`
     let rec: ProposalRecord | undefined = this.proposalScores.get(p.id)
@@ -446,16 +477,31 @@ export class OperatorRuntime {
       this.log('proposal scored', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, score: s.score, red_flags: s.red_flags, question: s.question || undefined })
     }
     if (!rec.asked_at && rec.question && rec.score >= this.config.clarifyScore && rec.score < this.config.awardScore) {
-      const body = `Thanks for your proposal on "${spec.title}". Before the desk awards, one question: ${rec.question} Reply in this thread, or post your proposal again with more detail (POST /v1/bounties/${bountyId ?? '<bounty_id>'}/proposals replaces it). The desk scores your proposal again after your answer; the award goes to the best proposal that clears the bar.`
+      const body = `Thanks for your proposal on "${spec.title}". Before the desk awards, one question: ${rec.question} Reply in this thread, or post your proposal again with more detail (POST /v1/bounties/${bountyId ?? '<bounty_id>'}/proposals replaces it). The desk scores your proposal again after your answer; the award goes to the best proposal that clears the bar. ${this.standingNote(spec, rec, bountyId, bountyCreatedAt) ?? ''}`.trim()
       try {
         const started = await this.client.threads.start(p.seller.id, body.slice(0, 4000))
-        rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: (started.thread as { id?: string }).id ?? null }
+        rec = { ...rec, asked_at: new Date(this.now()).toISOString(), informed_at: new Date(this.now()).toISOString(), thread_id: (started.thread as { id?: string }).id ?? null }
         this.log('proposal clarification asked', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, thread_id: rec.thread_id })
       } catch (e) {
         const status = statusOf(e)
         if (status == null || status >= 500) throw e
         rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: null } // e.g. the seller is gone; do not retry every tick
         this.log('proposal clarification could not be sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, error: msg(e) })
+      }
+      await remember(rec)
+    } else if (!rec.informed_at && !rec.asked_at) {
+      // no question to ask: still tell the seller where it stands and when the desk decides (once)
+      const note = this.standingNote(spec, rec, bountyId, bountyCreatedAt)
+      rec = { ...rec, informed_at: new Date(this.now()).toISOString() }
+      if (note) {
+        try {
+          await this.client.threads.start(p.seller.id, note.slice(0, 4000))
+          this.log('proposal standing sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, score: rec.score })
+        } catch (e) {
+          const status = statusOf(e)
+          if (status == null || status >= 500) throw e
+          this.log('proposal standing could not be sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, error: msg(e) })
+        }
       }
       await remember(rec)
     }
