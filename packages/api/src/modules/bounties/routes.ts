@@ -9,7 +9,8 @@ import { toJobView, JobView } from '../jobs/routes.js'
 import { formatUsdc } from '../payments/x402.js'
 import { awardBounty, closeBounty, createBounty, createProposal, getBounty, listMyBounties, listProposals, searchBounties, withdrawProposal, type Bounty, type Proposal } from './service.js'
 
-const Party = z.object({ id: z.string(), handle: z.string(), trust_tier: z.number().int() })
+const Party = z.object({ id: z.string(), handle: z.string(), trust_tier: z.number().int(), first_party: z.boolean().openapi({ description: 'true = operated by Agent Souk itself (ADR-23); platform bounties are labelled so they are never mistaken for third-party demand.' }) })
+type PartyRow = { handle: string; trustTier: number; firstParty: boolean }
 
 const BountyView = z
   .object({
@@ -62,7 +63,7 @@ const CreateBountyBody = z
   })
   .openapi('CreateBountyRequest')
 
-async function toBounty(b: Bounty, parties: Map<string, { handle: string; trustTier: number }>): Promise<z.infer<typeof BountyView>> {
+async function toBounty(b: Bounty, parties: Map<string, PartyRow>): Promise<z.infer<typeof BountyView>> {
   const p = parties.get(b.buyerAgentId)
   return {
     object: 'bounty',
@@ -79,21 +80,21 @@ async function toBounty(b: Bounty, parties: Map<string, { handle: string; trustT
     expires_at: iso(b.expiresAt)!,
     proposal_count: b.proposalCount,
     awarded_job_id: b.awardedJobId,
-    buyer: { id: b.buyerAgentId, handle: p?.handle ?? 'unknown', trust_tier: p?.trustTier ?? 0 },
+    buyer: { id: b.buyerAgentId, handle: p?.handle ?? 'unknown', trust_tier: p?.trustTier ?? 0, first_party: p?.firstParty ?? false },
     content_warnings: b.contentWarnings,
     how_to_propose: { method: 'POST', path: `/v1/bounties/${b.id}/proposals`, body_example: { price: Math.min(b.budgetMax, Math.max(1, Math.round(b.budgetMax * 0.8))), payment: 'on_delivery', message: 'What you will deliver and by when.' } },
     created_at: iso(b.createdAt)!,
   }
 }
 
-function toProposal(p: Proposal, parties: Map<string, { handle: string; trustTier: number }>): z.infer<typeof ProposalView> {
+function toProposal(p: Proposal, parties: Map<string, PartyRow>): z.infer<typeof ProposalView> {
   const s = parties.get(p.sellerAgentId)
-  return { object: 'proposal', id: p.id, bounty_id: p.bountyId, seller: { id: p.sellerAgentId, handle: s?.handle ?? 'unknown', trust_tier: s?.trustTier ?? 0 }, price: p.price, display: formatUsdc(p.price), payment: p.payment, message: p.message, status: p.status, content_warnings: p.contentWarnings, created_at: iso(p.createdAt)! }
+  return { object: 'proposal', id: p.id, bounty_id: p.bountyId, seller: { id: p.sellerAgentId, handle: s?.handle ?? 'unknown', trust_tier: s?.trustTier ?? 0, first_party: s?.firstParty ?? false }, price: p.price, display: formatUsdc(p.price), payment: p.payment, message: p.message, status: p.status, content_warnings: p.contentWarnings, created_at: iso(p.createdAt)! }
 }
 
 async function parties(ids: string[]) {
   const m = await sellersById(ids)
-  return new Map([...m.entries()].map(([k, v]) => [k, { handle: v.handle, trustTier: v.trustTier }]))
+  return new Map<string, PartyRow>([...m.entries()].map(([k, v]) => [k, { handle: v.handle, trustTier: v.trustTier, firstParty: v.firstParty }]))
 }
 
 function envOf(c: { get: (k: 'env') => unknown }, override?: string): Env {

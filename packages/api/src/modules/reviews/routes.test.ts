@@ -4,7 +4,10 @@ import { _setRpcFetchForTests } from '../payments/chain.js'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
-import { bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
+import { backfillReputation, bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
+import { db } from '../../db/client.js'
+import { agentReputation } from '../../db/schema.js'
+import { sql } from 'drizzle-orm'
 
 let app: App
 type Ag = Awaited<ReturnType<typeof createTestAgent>>
@@ -188,6 +191,84 @@ describe('reviews & reputation', () => {
       // 5. the attestation carries the split too
       const att = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation/attestation?env=test`)).body
       expect(att.attestation.reputation.as_seller).toMatchObject({ third_party_counterparties: 1, first_party_counterparties: 1 })
+    } finally {
+      _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
+  })
+  it('labels every first_party review machine_generated server-side, classifies free jobs, recomputes on flag changes and backfills old rows (ADR-32 review)', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'adm-token-1234567890' })
+    try {
+      const desk = await createTestAgent(app, { name: 'Souk Desk' })
+      const flag = (id: string, first_party: boolean) => call(app, 'POST', `/v1/admin/agents/${id}/first-party`, { headers: { 'x-admin-token': 'adm-token-1234567890' }, body: { first_party } })
+      expect((await flag(desk.agent.id, true)).status).toBe(200)
+
+      // 1. a first_party reviewer that sends nothing (or false) is still labelled: the API enforces the public rule
+      const j1 = await completedJob('test', seller, desk, 20_000)
+      const silent = await call(app, 'POST', `/v1/jobs/${j1.id}/reviews`, { key: desk.api_keys.test, body: { rating: 4, comment: 'no flag sent', machine_generated: false } })
+      expect(silent.status).toBe(201)
+      expect(silent.body.machine_generated).toBe(true)
+      const ev = (await call(app, 'GET', '/v1/events?types=review.received', { key: seller.api_keys.test })).body
+      expect(ev.data[0].data.machine_generated).toBe(true)
+
+      // 2. free jobs: the desk counts as first party by id, an outsider as third party by id
+      const other = await createTestAgent(app, { name: 'Free Rider' })
+      await completedJob('test', seller, desk, 0)
+      await completedJob('test', seller, other, 0)
+      let rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ jobs_completed: 3, distinct_counterparties: 2, first_party_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 0 })
+
+      // 3. the buyer-role leaderboard lists the desk, labelled, with the seller as its third party
+      const buyers = (await call(app, 'GET', '/v1/leaderboard?env=test&role=buyer')).body
+      expect(buyers.data.find((x: any) => x.agent.id === desk.agent.id)).toMatchObject({ agent: { first_party: true }, third_party_counterparties: 1, rank_value: 20_000 })
+
+      // 4. un-flagging the desk recomputes the seller: everything becomes third party
+      expect((await flag(desk.agent.id, false)).status).toBe(200)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 0, third_party_counterparties: 2, third_party_volume_usdc: 20_000 })
+      expect((await flag(desk.agent.id, true)).status).toBe(200)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 1 })
+
+      // 5. a row written before the split reports null (never a made-up 0) until the startup backfill recomputes it
+      await db().run(sql`update agent_reputation set as_seller = json_remove(as_seller, '$.third_party_counterparties', '$.first_party_counterparties', '$.third_party_volume_usdc') where agent_id = ${seller.agent.id} and env = 'test'`)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ distinct_counterparties: 2, first_party_counterparties: null, third_party_counterparties: null, third_party_volume_usdc: null })
+      const listing = (await call(app, 'GET', `/v1/listings/${j1.listing_id}`, { key: buyer.api_keys.test })).body
+      expect(listing.seller.reputation.third_party_counterparties).toBeNull()
+      const lb = (await call(app, 'GET', '/v1/leaderboard?env=test')).body
+      expect(lb.data.find((x: any) => x.agent.id === seller.agent.id)).toMatchObject({ third_party_counterparties: null, rank_value: 20_000 * 2 })
+      expect(await backfillReputation()).toEqual({ recomputed: 1, errors: 0 })
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 0 })
+      expect(await backfillReputation()).toEqual({ recomputed: 0, errors: 0 })
+      const rows = await db().select().from(agentReputation)
+      expect(rows.every((r) => r.asSeller.third_party_counterparties != null)).toBe(true)
+    } finally {
+      _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
+  })
+
+  it('trust tier 1 needs third-party wallets and volume: the platform desk buying does not count (ADR-32)', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'adm-token-1234567890' })
+    try {
+      const desk = await createTestAgent(app, { name: 'Souk Desk' })
+      expect((await call(app, 'POST', `/v1/admin/agents/${desk.agent.id}/first-party`, { headers: { 'x-admin-token': 'adm-token-1234567890' }, body: { first_party: true } })).status).toBe(200)
+      const outsiders = [buyer, await createTestAgent(app, { name: 'B2' })]
+      // 5 completed live jobs, 3 paying wallets and 10 USDC, but one wallet and 6 USDC of it are the desk's
+      await completedJob('live', seller, desk, 3_000_000)
+      await completedJob('live', seller, desk, 3_000_000)
+      await completedJob('live', seller, outsiders[0]!, 2_000_000)
+      await completedJob('live', seller, outsiders[1]!, 2_000_000)
+      await completedJob('live', seller, outsiders[0]!, 1_000_000)
+      let rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.live.as_seller).toMatchObject({ jobs_completed: 5, distinct_counterparties: 3, third_party_counterparties: 2, volume_usdc: 11_000_000, third_party_volume_usdc: 5_000_000 })
+      expect(rep.trust_tier).toBe(0)
+      // a third outside wallet and enough third-party volume: tier 1
+      const b3 = await createTestAgent(app, { name: 'B3' })
+      await completedJob('live', seller, b3, 5_000_000)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.live.as_seller).toMatchObject({ third_party_counterparties: 3, third_party_volume_usdc: 10_000_000 })
+      expect(rep.trust_tier).toBe(1)
     } finally {
       _setConfigForTests({ ADMIN_TOKEN: undefined })
     }

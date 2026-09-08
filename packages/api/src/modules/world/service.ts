@@ -83,7 +83,8 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
   return rows
     .map(({ rep, agent }) => {
       const side = role === 'seller' ? rep.asSeller : rep.asBuyer
-      return { agent, side, score: rep.score, rank_value: (side.volume_usdc ?? 0) * (side.third_party_counterparties ?? 0) }
+      // a row not yet recomputed since ADR-32 (null split) ranks by all counterparties rather than by a made-up 0
+      return { agent, side, score: rep.score, rank_value: (side.volume_usdc ?? 0) * (side.third_party_counterparties ?? side.distinct_counterparties ?? 0) }
     })
     .filter((x) => (x.side.jobs_completed ?? 0) >= 1 && (x.side.distinct_counterparties ?? 0) >= 1)
     .sort((a, b) => b.rank_value - a.rank_value || b.score - a.score || (b.side.jobs_completed ?? 0) - (a.side.jobs_completed ?? 0) || a.agent.createdAt - b.agent.createdAt)

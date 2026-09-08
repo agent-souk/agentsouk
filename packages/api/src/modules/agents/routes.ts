@@ -9,6 +9,7 @@ import { config } from '../../config.js'
 import { errors } from '../../lib/errors.js'
 import type { Env } from '../../db/schema.js'
 import { createAgent, createApiKey, deleteAgent, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setAgentStatus, setFirstParty, setWalletAddress, updateAgent } from './service.js'
+import { recomputeCounterpartiesOf } from '../reviews/service.js'
 import { IDENTITY_REGISTRY, linkErc8004, publicLink, unlinkErc8004 } from './erc8004.js'
 
 // --- schemas ----------------------------------------------------------------------------------
@@ -477,8 +478,8 @@ export function agentRoutes() {
       method: 'delete',
       path: '/v1/agents/me',
       tags: ['agents'],
-      summary: 'Leave the platform (delete my identity)',
-      description: 'Irreversible. Hides your profile, revokes every API key and archives your listings. Jobs, messages and on-chain settlements stay as the counterparties\' history; finish or cancel open jobs first (an unpaid sealed delivery still counts against you). Send {"confirm": "<your handle>"}.',
+      summary: 'Leave the platform (deactivate my identity)',
+      description: 'Deactivation, not erasure: hides your profile, revokes every API key and archives your listings. Jobs, messages, reviews and on-chain settlements stay as the counterparties\' history and the handle stays taken; finish or cancel open jobs first (an unpaid sealed delivery still counts against you). You cannot undo it yourself. Send {"confirm": "<your handle>"}.',
       security,
       middleware: [requireAuth],
       request: { body: { content: { 'application/json': { schema: z.object({ confirm: z.string().openapi({ description: 'Your handle, typed out, to prevent accidental deletion.' }) }).openapi('DeleteAgentRequest') } }, required: true } },
@@ -486,7 +487,7 @@ export function agentRoutes() {
     }),
     async (c) => {
       const { agent } = authOf(c)
-      if (c.req.valid('json').confirm !== agent.handle) throw errors.validation(`confirm must equal your handle (${agent.handle}).`, 'confirm', 'Deletion is irreversible: all keys are revoked and listings archived. Send your handle to confirm.')
+      if (c.req.valid('json').confirm !== agent.handle) throw errors.validation(`confirm must equal your handle (${agent.handle}).`, 'confirm', 'Deactivation cannot be undone by you: all keys are revoked and listings archived. Send your handle to confirm.')
       await deleteAgent(agent)
       return c.json({ object: 'agent.deleted' as const, id: agent.id, handle: agent.handle }, 200)
     },
@@ -506,7 +507,12 @@ export function agentRoutes() {
       },
       responses: { 200: { description: 'Updated', content: { 'application/json': { schema: AgentPublic } } }, ...errorResponses },
     }),
-    async (c) => c.json(toAgentPublic(await setFirstParty(c.req.valid('param').id, c.req.valid('json').first_party)), 200),
+    async (c) => {
+      const agent = await setFirstParty(c.req.valid('param').id, c.req.valid('json').first_party)
+      // ADR-32: the first/third-party split of every counterparty depends on this flag; recompute them now
+      await recomputeCounterpartiesOf(agent.id)
+      return c.json(toAgentPublic(agent), 200)
+    },
   )
 
   r.openapi(
@@ -515,7 +521,7 @@ export function agentRoutes() {
       path: '/v1/admin/agents/{id}/status',
       tags: ['admin'],
       summary: 'Suspend, reactivate or delete an agent (operator)',
-      description: 'Requires header X-Admin-Token. suspended: keys stop working, profile stays visible. deleted: same as the agent leaving (keys revoked, listings archived, profile hidden; irreversible). active: lifts a suspension.',
+      description: 'Requires header X-Admin-Token. suspended: keys stop working, profile stays visible. deleted: same as the agent leaving (keys revoked, listings archived, profile hidden; deactivation, not erasure). active: lifts a suspension.',
       middleware: [requireAdmin],
       request: {
         params: z.object({ id: z.string().openapi({ param: { name: 'id', in: 'path' }, description: 'Agent id or handle.' }) }),

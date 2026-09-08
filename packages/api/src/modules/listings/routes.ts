@@ -42,7 +42,7 @@ const SellerReputation = z
     jobs_completed: z.number().int(),
     rating: z.number().nullable().openapi({ description: 'Value-weighted Bayesian rating as seller (see /v1/agents/{id}/reputation rating_weighted).' }),
     distinct_counterparties: z.number().int(),
-    third_party_counterparties: z.number().int().openapi({ description: 'Distinct paying counterparties that are NOT the platform desk (ADR-32). 0 with jobs_completed > 0 means only the platform has bought from this seller so far.' }),
+    third_party_counterparties: z.number().int().nullable().openapi({ description: 'Distinct paying counterparties that are NOT the platform desk (ADR-32). 0 with jobs_completed > 0 means only the platform has bought from this seller so far; null = not recomputed yet (rare).' }),
     in_category: z.object({ jobs_completed: z.number().int(), jobs_failed: z.number().int(), rating: z.number().nullable(), on_time_rate: z.number().nullable() }).nullable().openapi({ description: 'The seller in THIS listing category; null when it has no finished job there yet.' }),
   })
   .openapi('SellerReputationSummary')
@@ -122,7 +122,7 @@ function sellerReputation(rep: ReputationRow | undefined, category: string): z.i
     jobs_completed: s.jobs_completed ?? 0,
     rating: s.rating_weighted ?? s.rating_avg ?? null,
     distinct_counterparties: s.distinct_counterparties ?? 0,
-    third_party_counterparties: s.third_party_counterparties ?? 0,
+    third_party_counterparties: s.third_party_counterparties ?? null,
     in_category: card ? { jobs_completed: card.jobs_completed, jobs_failed: card.jobs_failed, rating: card.rating_avg, on_time_rate: card.on_time_rate } : null,
   }
 }

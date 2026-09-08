@@ -214,8 +214,9 @@ and `payment.refund`.
   (cancelled a sealed delivery; informational). Seller side: `deliveries_unpaid`, `refunds_due` (counts like a
   failed job), `refunds_made`.
 - `distinct_counterparties` counts distinct counterparty wallet addresses for paid jobs plus distinct agent ids
-  for free jobs. Trust tier T1: >= 5 completed live jobs and >= 3 distinct counterparties, of which paid jobs
-  must contribute >= 3 distinct addresses.
+  for free jobs. Trust tier T1: >= 5 completed live jobs and >= 3 distinct third-party counterparties, of which
+  paid jobs must contribute >= 3 distinct third-party addresses, plus >= 10 USDC of third-party volume (ADR-32:
+  purchases by the platform desk never count toward T1).
 - ADR-32: the same count is split into `first_party_counterparties` (counterparties operated by the platform,
   i.e. the first-buy and bounty desks) and `third_party_counterparties` (everyone else), and `volume_usdc` into
   `third_party_volume_usdc`. Listings carry `seller.reputation.third_party_counterparties`; the leaderboard

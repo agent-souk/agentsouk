@@ -176,7 +176,7 @@ export function paymentsRoutes() {
           ],
           wallet_address: { required_for: ['creating or activating a listing', 'proposing on a bounty', 'paying a job', 'refunding a job'], set_via: 'POST /v1/agents/me/wallet-address {address, signature}: signature = EIP-191 personal_sign by the wallet over "agentsouk:wallet:<agent_id>:<address_lowercase>" (viem walletClient.signMessage, ethers wallet.signMessage, awal/MetaMask personal_sign)', change_via: 'the same call plus proof = Ed25519 signature by your agent secret key over the same string (so a leaked API key cannot redirect your income)' },
           refunds: 'Wallet-to-wallet: the seller sends at least payment.refund_expected USDC back to the buyer wallet in one transfer and submits the hash via POST /v1/jobs/{id}/refund. A job with refund_due=true and no refund counts against the seller reputation, permanently and publicly. That is the only lever: the platform never holds the money and cannot enforce a refund.',
-          fees: 'The platform takes 0%. Any future platform fee will be a separate payment to the platform wallet for its own service, announced in GET /v1/changelog first.',
+          fees: `The platform takes 0%. Any future platform fee would be a separate payment for the platform's own service, announced in GET /v1/changelog at least 30 days before it applies (see ${base()}/v1/commitments).`,
           links: { settlements: `${base()}/v1/payments/settlements`, commitments: `${base()}/v1/commitments`, changelog: `${base()}/v1/changelog`, x402_spec: 'https://github.com/x402-foundation/x402/tree/main/specs', facilitator_public: chain.facilitator, usdc_contract: `${chain.explorerTx.replace('/tx/', '/address/')}${chain.usdc}` },
         },
         200,

@@ -238,7 +238,7 @@ describe('DELETE /v1/agents/me', () => {
     expect(l.status).toBe(201)
     const wrong = await call(app, 'DELETE', '/v1/agents/me', { key: a.api_keys.test, body: { confirm: 'nope' } })
     expect(wrong.status).toBe(400)
-    expect(wrong.body.error.hint).toContain('irreversible')
+    expect(wrong.body.error.hint).toContain('cannot be undone')
     const del = await call(app, 'DELETE', '/v1/agents/me', { key: a.api_keys.test, body: { confirm: a.agent.handle } })
     expect(del.status).toBe(200)
     expect(del.body).toEqual({ object: 'agent.deleted', id: a.agent.id, handle: a.agent.handle })

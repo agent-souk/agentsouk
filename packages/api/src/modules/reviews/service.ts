@@ -3,6 +3,7 @@ import { db } from '../../db/client.js'
 import { agentReputation, agents, bounties, jobs, listings, reviews, settlements, type CategoryCard, type Env, type ReputationSide } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
+import { log } from '../../lib/log.js'
 import { scanText } from '../../lib/content-safety.js'
 import { emit } from '../../events/bus.js'
 import { recordListingOutcome } from '../listings/service.js'
@@ -150,7 +151,6 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
   // Counterparties: distinct wallet addresses on paid jobs; agents met only through free jobs count by id.
   const addresses = new Set<string>()
   const thirdPartyAddresses = new Set<string>()
-  const firstPartyAddresses = new Set<string>()
   const paidIds = new Set<string>()
   const freeIds = new Set<string>()
   let volume = 0
@@ -162,7 +162,7 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
       for (const s of pays) {
         const address = (side === 'seller' ? s.payerAddress : s.payTo).toLowerCase()
         addresses.add(address)
-        ;(firstParty ? firstPartyAddresses : thirdPartyAddresses).add(address)
+        if (!firstParty) thirdPartyAddresses.add(address)
       }
       paidIds.add(counterpartyId(j))
       const net = pays.reduce((sum, s) => sum + s.amount, 0) - refundsOf(j).reduce((sum, s) => sum + s.amount, 0)
@@ -188,7 +188,8 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
     refunds_due: side === 'seller' ? list.filter(isRefundDue).length : 0,
     refunds_made: side === 'seller' ? list.filter(isRefunded).length : 0,
     distinct_counterparties: addresses.size + ids.size,
-    first_party_counterparties: firstPartyAddresses.size + (ids.size - thirdPartyIds.length),
+    // a partition of distinct_counterparties: an address any third party paid from is third-party, the rest is ours
+    first_party_counterparties: addresses.size + ids.size - (thirdPartyAddresses.size + thirdPartyIds.length),
     third_party_counterparties: thirdPartyAddresses.size + thirdPartyIds.length,
     volume_usdc: Math.max(0, volume),
     third_party_volume_usdc: Math.max(0, thirdPartyVolume),
@@ -242,10 +243,11 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
     .values({ agentId, env, asSeller, asBuyer, score, updatedAt: now })
     .onConflictDoUpdate({ target: [agentReputation.agentId, agentReputation.env], set: { asSeller, asBuyer, score, updatedAt: now } })
   if (env === 'live') {
+    // ADR-32: only third parties count toward tier 1; the platform desk buying from a seller is not evidence of demand
     const completed = asSeller.jobs_completed + asBuyer.jobs_completed
-    const parties = Math.max(asSeller.distinct_counterparties, asBuyer.distinct_counterparties)
-    const paying = Math.max(seller.payingAddresses, buyer.payingAddresses)
-    const volume = asSeller.volume_usdc + asBuyer.volume_usdc
+    const parties = Math.max(asSeller.third_party_counterparties ?? 0, asBuyer.third_party_counterparties ?? 0)
+    const paying = Math.max(seller.thirdPartyPayingAddresses, buyer.thirdPartyPayingAddresses)
+    const volume = (asSeller.third_party_volume_usdc ?? 0) + (asBuyer.third_party_volume_usdc ?? 0)
     if (completed >= TRUST_T1.minCompleted && parties >= TRUST_T1.minCounterparties && paying >= TRUST_T1.minPayingAddresses && volume >= TRUST_T1.minVolumeUsdc) {
       const a = await db().query.agents.findFirst({ where: eq(agents.id, agentId), columns: { trustTier: true } })
       if (a && a.trustTier < 1) {
@@ -271,11 +273,32 @@ export async function backfillReputation(): Promise<{ recomputed: number; errors
     try {
       await recomputeReputation(r.env, r.agentId)
       recomputed += 1
-    } catch {
+    } catch (err) {
       errors += 1
+      // the row keeps reporting null for the split until its next job outcome or review; make that visible in the deploy log
+      log.warn({ err, agentId: r.agentId, env: r.env }, 'reputation backfill row failed')
     }
   }
   return { recomputed, errors }
+}
+
+/**
+ * ADR-32: the first/third-party split is classified by the counterparty's first_party flag at recompute time, so
+ * flagging or un-flagging an agent (POST /v1/admin/agents/{id}/first-party) recomputes everyone it ever traded with.
+ * Admin-only and rare; the loop is bounded by the agent's distinct counterparties.
+ */
+export async function recomputeCounterpartiesOf(agentId: string): Promise<number> {
+  const rows = await db().query.jobs.findMany({ where: or(eq(jobs.sellerAgentId, agentId), eq(jobs.buyerAgentId, agentId)), columns: { env: true, sellerAgentId: true, buyerAgentId: true } })
+  const seen = new Set<string>()
+  for (const j of rows) {
+    const other = j.sellerAgentId === agentId ? j.buyerAgentId : j.sellerAgentId
+    const key = `${j.env}:${other}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    await recomputeReputation(j.env, other)
+  }
+  for (const env of ['live', 'test'] as const) if (rows.some((j) => j.env === env)) await recomputeReputation(env, agentId)
+  return seen.size
 }
 
 // --- CONTRACT used by jobs ---------------------------------------------------------------------
@@ -298,6 +321,9 @@ export async function createReview(env: Env, reviewer: Agent, jobId: string, rat
   if (existing) throw errors.conflict('already_reviewed', 'You already reviewed this job.', 'Reviews are permanent: one per party per job.')
   const scan = scanText(comment)
   const subject = role === 'buyer' ? job.sellerAgentId : job.buyerAgentId
+  // ADR-32 / AI Act Art. 50: everything a platform-operated agent writes here comes from its automated judge, so the
+  // API applies the public label itself rather than trusting the client to send it
+  const machine = machineGenerated || reviewer.firstParty === true
   const row: typeof reviews.$inferInsert = {
     id: newId('review'),
     env,
@@ -309,13 +335,13 @@ export async function createReview(env: Env, reviewer: Agent, jobId: string, rat
     comment: comment?.trim().slice(0, 2000) || null,
     jobPrice: paidValue(job),
     contentWarnings: scan.warnings,
-    machineGenerated,
+    machineGenerated: machine,
     createdAt: Date.now(),
   }
   await db().insert(reviews).values(row)
   await recomputeReputation(env, subject)
   if (job.listingId) await recordListingOutcome({ listingId: job.listingId, status: 'completed', buyerAgentId: job.buyerAgentId, price: job.price ?? 0 })
-  await emit(env, subject, 'review.received', { review_id: row.id, job_id: jobId, from: reviewer.id, role, rating, comment: row.comment, machine_generated: machineGenerated, content_warnings: scan.warnings })
+  await emit(env, subject, 'review.received', { review_id: row.id, job_id: jobId, from: reviewer.id, role, rating, comment: row.comment, machine_generated: machine, content_warnings: scan.warnings })
   return row as ReviewRow
 }
 

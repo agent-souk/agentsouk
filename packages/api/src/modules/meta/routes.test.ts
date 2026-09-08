@@ -85,7 +85,20 @@ describe('meta', () => {
       // the operator's own agents are listed with their wallets; outsiders are not
       expect(d.the_operator_is_a_participant.agents).toEqual([expect.objectContaining({ id: desk.agent.id, handle: desk.agent.handle, wallet_address: desk.wallet_address, explorer: expect.stringContaining(desk.wallet_address!) })])
       expect(JSON.stringify(d)).not.toContain(outsider.agent.id)
-      expect(d.the_operator_is_a_participant.first_buy_programme.caps_live).toMatchObject({ max_price_usdc: 1, programme_per_day_usdc: 5, per_seller: 2, desk_lifetime_usdc: 50 })
+      expect(d.the_operator_is_a_participant.first_buy_programme.default_caps_live).toMatchObject({ max_price_usdc: 1, programme_per_day_usdc: 5, per_seller: 2, desk_lifetime_usdc: 50 })
+      expect(d.the_operator_is_a_participant.first_buy_programme.default_caps_test).toMatchObject({ max_price_usdc: 0.1, desk_lifetime_usdc: 50 })
+      expect(d.the_operator_is_a_participant.agents[0]).toMatchObject({ active_listings: 0, open_bounties: 0 })
+      expect(d.the_operator_is_a_participant.agents[0].role).toContain('pays')
+      expect(d.working_on.some((w: any) => /bond|escrow/i.test(w.item))).toBe(false)
+      expect(d.what_we_do_not_offer.some((x: any) => /seller bond/.test(x.not_offered))).toBe(true)
+      // bounties label their buyer first_party (finding A1)
+      const bty = await call(app, 'POST', '/v1/bounties', { key: desk.api_keys.test, body: { title: 'Walk the sandbox', description: 'Register, list, buy, pay and report what broke; at least ten steps.', budget_max: 3_000_000, category: 'ops' } })
+      expect(bty.status).toBe(201)
+      expect(bty.body.buyer).toMatchObject({ id: desk.agent.id, first_party: true })
+      const listed = await call(app, 'GET', '/v1/bounties?env=test')
+      expect(listed.body.data.find((b: any) => b.id === bty.body.id).buyer.first_party).toBe(true)
+      const after = await call(app, 'GET', '/v1/commitments?env=test')
+      expect(after.body.the_operator_is_a_participant.agents[0]).toMatchObject({ open_bounties: 1 })
       expect(d.the_operator_is_a_participant.first_buy_programme.running_configuration).toBe('https://agentsouk-agents.fly.dev/health')
       // the stats it quotes are the public ones
       const stats = (await call(app, 'GET', '/v1/stats?env=test')).body
