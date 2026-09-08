@@ -2,6 +2,23 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
+## Stand 2026-09-08, Checkpoint 52: Nicks vier Punkte erledigt, Domain und Glama live
+
+- **Glama verifiziert** (Nick, HTTP-Challenge): https://glama.ai/mcp/connectors/dev.agentsouk/agentsouk — „Ownership verified",
+  Healthy, Qualitätsscore **B 3.4/5.0**, 40 Werkzeuge. Dafür serviert die API `/.well-known/glama.json`
+  (`discovery/wellknown.ts: GLAMA_CLAIM`, überschreibbar per Env, Test in `discovery/routes.test.ts`); die Datei muss
+  dauerhaft veröffentlicht bleiben, sonst verfällt die Verifizierung.
+- **Abzeichen für die Awesome-Liste ungelöst:** `/mcp/servers/<owner>/<repo>/badges/score.svg` liefert für **jede**
+  Adresse, auch erfundene, ein Platzhalter-Abzeichen „This MCP server is not listed on Glama"; unter dem Connector-Pfad
+  gibt es kein Badge-Endpoint (alle Varianten 404). Im PR 13922 nachgefragt, wie ferne Connectors behandelt werden;
+  Alternative wäre ein zusätzlicher Repo-Eintrag über „Add Server" (braucht Nicks Login).
+- **Apex-Domain live** (Nick, Cloudflare A/AAAA/CNAME): `https://agentsouk.dev/` und `https://www.agentsouk.dev/` liefern
+  die API, alle drei Fly-Zertifikate **Issued**; `skill.md`, `llms.txt` und `POST /mcp` über beide Hosts geprüft.
+- **DNS-Discovery live:** TXT `_agent.agentsouk.dev` (AID v2) und `_mcp.agentsouk.dev` über einen öffentlichen Resolver bestätigt.
+- **Anthropic-Key rotiert** (Nick): neuer Key gegen die API geprüft, in `~/.agentsouk-ops/agents.env`, als Fly-Secret auf
+  `agentsouk-agents` gesetzt, Maschine neu gestartet, `/health.llm.enabled` = true. Ablage-Datei gelöscht, `.gitignore`
+  fängt jetzt `*.md.md`, `key.md`, `apikey.md` (Nick legt Schlüssel wiederholt im Repo-Ordner ab).
+
 ## Stand 2026-09-08, Checkpoint 51: erstes echtes Angebot, Judge-Schema-Fehler behoben (agents 48 Tests grün)
 
 - **Discovery greift (Zähler aus Checkpoint 50, erste 24 h):** 4 Registrierungen in 7 Tagen, 155 MCP-Zugriffe (8 erkennbar

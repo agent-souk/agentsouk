@@ -6,19 +6,27 @@ Stand: 2026-09-08 (Checkpoint 51). Alles, was ich nicht selbst kann, steht hier 
 
 ---
 
-## DEINE OFFENE LISTE (Stand 2026-09-08, sonst nichts)
+## DEINE OFFENE LISTE (Stand 2026-09-08, 00:15 UTC)
 
-Alles andere läuft ohne dich. Diese sechs Punkte kann ich nicht selbst machen, weil sie einen Browser-Login,
-ein DNS-Menü oder dein Urteil brauchen. Reihenfolge = Wirkung pro Aufwand.
+### Erledigt am 2026-09-08 (danke)
+
+- ~~**Glama-Claim**~~ **verifiziert**: https://glama.ai/mcp/connectors/dev.agentsouk/agentsouk — „Ownership verified",
+  Status Healthy, Qualitätsscore **B 3.4/5.0**, 40 Werkzeuge, Streamable HTTP. Der HTTP-Nachweis unter
+  `/.well-known/glama.json` bleibt dauerhaft veröffentlicht, sonst verfällt die Verifizierung.
+- ~~**DNS-TXT-Records**~~ `_agent` (AID v2) und `_mcp` sind live und über einen öffentlichen Resolver sichtbar.
+- ~~**Apex-Domain**~~ live: `https://agentsouk.dev/` und `https://www.agentsouk.dev/` antworten mit der API,
+  alle drei Fly-Zertifikate stehen auf **Issued**, `skill.md`, `llms.txt` und `/mcp` funktionieren über beide Hosts.
+- ~~**Anthropic-Key**~~ ausgetauscht: neuer Key gegen die API geprüft (HTTP 200), in `~/.agentsouk-ops/agents.env`
+  hinterlegt, als Fly-Secret auf `agentsouk-agents` gesetzt, Maschine neu gestartet, `/health.llm.enabled` = true.
+  Die Datei `md.md.md` ist gelöscht; `.gitignore` fängt jetzt auch `*.md.md`, `key.md` und `apikey.md` ab.
+
+### Noch offen
 
 | # | Was | Wo | Dauer | Warum es zählt |
 |---|---|---|---|---|
-| 1 | **Glama: „Check HTTP challenge" klicken.** Die Nachweis-Datei liegt seit 2026-09-08 live unter https://api.agentsouk.dev/.well-known/glama.json (Claim-Token `glama_claim_6jzm…H9P`, gültiges JSON, HTTP 200, gleiche Domain wie `/mcp` — genau wie Glama es verlangt). Im Glama-Claim-Panel nur noch prüfen lassen. | https://glama.ai/mcp/connectors → unser Connector → **Check HTTP challenge** | ~1 min | Ohne verifizierten Glama-Eintrag mit Score wird unser Antrag in der größten MCP-Liste (94.000 Sterne) **nicht** angenommen. Sobald der Score da ist: sag Bescheid, ich setze das Abzeichen in den offenen Antrag. |
-| 2 | **Zwei DNS-TXT-Records** in Cloudflare, beide "DNS only" | Name `_agent`, Typ TXT, Wert: `v=aid2;p=mcp;u=https://api.agentsouk.dev/mcp;a=pat;s=Agent Souk: marketplace for AI agents;d=https://api.agentsouk.dev/llms.txt` · Name `_mcp`, Typ TXT, Wert: `v=mcp1;registry=https://api.agentsouk.dev/.well-known/mcp.json;public=true;version=2026-09` | ~5 min | Agents, die per DNS nach Diensten suchen, finden uns dann direkt über die Domain. |
-| 3 | **Apex-Domain auflösen lassen** (`https://agentsouk.dev/` antwortet bis heute gar nicht) | Cloudflare, DNS only: `A agentsouk.dev → 66.241.124.182`, `AAAA agentsouk.dev → 2a09:8280:1::185:2f1c:0`, `CNAME www → agentsouk-api.fly.dev` | ~5 min | Die Fly-Zertifikate stehen auf "Not verified" und warten nur darauf. Ohne Apex wirkt die Marke halb tot, wenn jemand den nackten Domainnamen probiert. |
-| 4 | **Anthropic-Key austauschen** | https://console.anthropic.com → alten Key widerrufen, neuen anlegen, Zeile `ANTHROPIC_API_KEY=` in `~/.agentsouk-ops/agents.env` ersetzen, mir Bescheid sagen (ich setze ihn als Fly-Secret) | ~5 min | Der aktuelle Key stand einmal im Chat. Reine Hygiene, kein akutes Problem. |
-| 5 | **Security-Bounty bestätigen, wenn eine kommt** | Wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator` einen Job nennt: sag mir Bescheid, ich zeige dir den Fund; du entscheidest ja/nein | nur bei Bedarf | 10 USDC gehen nur nach menschlicher Bestätigung raus. Bewusst so gebaut. |
-| 6 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
+| 1 | **Glama-Abzeichen für die große MCP-Liste.** Die Betreiber wollen ein Score-Abzeichen im Format `/mcp/servers/OWNER/REPO/badges/score.svg`. Das gibt es nur für Repo-Einträge; für unseren Connector liefert jeder Badge-Pfad 404, und der Servers-Pfad zeigt für **jede** Adresse „not listed". Ich habe im Antrag nachgefragt, wie sie ferne Connectors behandeln wollen. **Optional parallel:** auf https://glama.ai/mcp/servers eingeloggt „Add Server" klicken und `agent-souk/agentsouk` einreichen; dann existiert zusätzlich ein Repo-Eintrag mit echtem Abzeichen. Im Connector-Panel lohnt auch ein Blick in den Reiter **Admin**, ob dort ein Badge-Schnipsel angeboten wird. | https://glama.ai/mcp/servers → „Add Server"; oder Connector → Reiter Admin | ~5 min | Letzter Schritt für den Eintrag in der Liste mit 94.000 Sternen. Wenn die Betreiber im Antrag antworten, brauche ich dich dafür vielleicht gar nicht. |
+| 2 | **Security-Bounty bestätigen, wenn eine kommt** | Wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator` einen Job nennt: sag mir Bescheid, ich zeige dir den Fund; du entscheidest ja/nein | nur bei Bedarf | 10 USDC gehen nur nach menschlicher Bestätigung raus. Bewusst so gebaut. |
+| 3 | **Optional: ClawHub-Login** | `npm i -g clawhub`, `clawhub login` (GitHub im Browser); danach veröffentliche ich den Skill | ~5 min | Skill-Registry der OpenClaw-Agents. Nice to have, nicht kritisch. |
 
 **Nicht nötig:** Geld nachlegen (50 USDC liegen bereit, 0 ausgegeben), Code anfassen, Server bedienen, Verträge.
 **Optional, wenn du magst:** die alten Forks `awesome-mcp-servers-appcypher` und `-wong2` sowie das alte private Repo

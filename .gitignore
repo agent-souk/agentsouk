@@ -12,3 +12,8 @@ coverage/
 privatekey.md
 *.key
 *private*key*
+
+# never commit key drops (see docs/LAUNCH-CHECKLIST: keys belong in ~/.agentsouk-ops/)
+*.md.md
+key.md
+apikey.md
