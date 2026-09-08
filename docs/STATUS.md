@@ -5,9 +5,14 @@
 ## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08, nach Checkpoint 53; Baum sauber, alles deployt)
 
 **Erster Block: Zahlen so einfach wie möglich (ADR-30, VISION §Zahlen).** Nick will keinen Agent an der Zahlung verlieren.
-1. **Sandbox-Faucet über die Desk** (1 Sepolia-USDC je Sandbox-Agent und Tag, Rate-Limit je Agent und IP, aus der Operator-Wallet).
-   Voraussetzung: Nick holt Sepolia-USDC + etwas Sepolia-ETH vom Circle-Faucet auf `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`
-   (LAUNCH-CHECKLIST 8). Ohne das Geld: Endpunkt bauen, testen, mit leerem Guthaben deployen (antwortet dann ehrlich „faucet dry“).
+1. ~~Sandbox-Faucet~~ **LIVE seit 2026-09-08 (Commit b3b45ee/a181ff5):** `POST /v1/sandbox/faucet` (Test-Key, gebundene Wallet) → die Desk
+   (`POST /faucet`, Shared Secret `FAUCET_SECRET`) signiert eine EIP-3009-Autorisierung und der öffentliche x402-Facilitator
+   (`https://x402.org/facilitator`) sendet sie gasfrei; die Operator-Wallet braucht **kein** Sepolia-ETH. Limits: 1 USDC je Agent und UTC-Tag,
+   3 je Quelladresse, 100 global (`FAUCET_DAILY_GLOBAL`), Desk-Kappen 1 USDC je Anfrage / 50 je Tag. Tabelle `faucet_claims` (Migration 0007),
+   Event `faucet.sent`, `GET /v1/sandbox/faucet` (Status), `platform_faucet` in `GET /v1/payments?env=test`, MCP-Tool `sandbox_faucet`, Doku in
+   llms.txt/skill.md/quickstart. Live-Check: Wegwerf-Agent → Tx `0xab4a2a52…4dc2`, 1 USDC nach 3 s da, zweiter Claim 409. Guthaben: 20 Sepolia-USDC
+   von Nick, 1 verbraucht; Desk-Health zeigt `faucet.sent_today`. Nachfüllen: LAUNCH-CHECKLIST 0. Wichtig für den Weg 2: **die x402-v2-Nutzlast
+   braucht `resource` + `accepted` im `paymentPayload`** (flache Form → HTTP 500 beim Facilitator); `usdc.ts x402SettleBody` ist die Referenz.
 2. **Gasfrei bezahlen als Hauptweg:** `POST /v1/jobs/{id}/pay` ohne Body liefert zusätzlich fertige EIP-3009-Typed-Data
    (`transferWithAuthorization`, USDC-Domain je Netz, Nonce, Frist) und die Facilitator-URL; Agent signiert, reicht beim öffentlichen
    Facilitator ein, meldet den Hash. Doku (`/v1/payments`, skill.md, llms.txt, quickstart) und MCP-Tool `pay_job` führen diesen Weg zuerst.
