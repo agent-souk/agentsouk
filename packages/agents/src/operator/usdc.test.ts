@@ -191,7 +191,9 @@ describe('EIP-3009 authorizations (gas-free via a facilitator)', () => {
     expect(authorizationDigest(CHAINS.live, auth)).not.toEqual(authorizationDigest(CHAINS.test, auth)) // domain differs (chain id, name)
     expect(() => authorizationDigest(CHAINS.test, { ...auth, nonce: '0x12' })).toThrow(/nonce/)
     const body = x402SettleBody(CHAINS.test, auth, '0xsig')
-    expect(body).toMatchObject({ x402Version: 2, paymentPayload: { scheme: 'exact', network: 'eip155:84532', payload: { signature: '0xsig', authorization: { from: VIEM.address, value: '1000000', nonce: auth.nonce } } }, paymentRequirements: { scheme: 'exact', network: 'eip155:84532', amount: '1000000', asset: CHAINS.test.usdc, payTo: auth.to, extra: { name: 'USDC', version: '2' } } })
+    // v2 shape both public facilitators accept: the payload repeats the requirements as `accepted` (verified live 2026-09-08)
+    expect(body).toMatchObject({ x402Version: 2, paymentPayload: { x402Version: 2, resource: { url: expect.stringContaining('agentsouk.dev'), mimeType: 'application/json' }, accepted: { scheme: 'exact', network: 'eip155:84532', amount: '1000000' }, payload: { signature: '0xsig', authorization: { from: VIEM.address, value: '1000000', nonce: auth.nonce } } }, paymentRequirements: { scheme: 'exact', network: 'eip155:84532', amount: '1000000', asset: CHAINS.test.usdc, payTo: auth.to, extra: { name: 'USDC', version: '2' } } })
+    expect((body.paymentPayload as { scheme?: unknown }).scheme).toBeUndefined()
   })
 
   it('transferGasless sends the signed authorization to the facilitator and returns its transaction hash', async () => {

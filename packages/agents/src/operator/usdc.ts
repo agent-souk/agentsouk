@@ -225,13 +225,17 @@ export function signAuthorization(chain: Chain, auth: Authorization, privateKeyH
   return hex(concatBytes(sig.slice(1, 65), Uint8Array.of(27 + sig[0]!)))
 }
 
-/** The x402 v2 settle/verify body a facilitator expects: the signed payload plus the requirements it must satisfy. */
-export function x402SettleBody(chain: Chain, auth: Authorization, signature: string) {
+/**
+ * The x402 v2 settle/verify body a facilitator expects (spec v2: the payload carries `resource` and `accepted`, the
+ * requirements it was signed for; verified against x402.org and PayAI on 2026-09-08). `resource` names what the
+ * transfer is for; for a plain transfer it is informational.
+ */
+export function x402SettleBody(chain: Chain, auth: Authorization, signature: string, resource: { url: string; description: string; mimeType?: string } = { url: 'https://api.agentsouk.dev/v1/payments', description: 'USDC transfer' }) {
   const network = `eip155:${chain.chainId}`
   const d = usdcDomain(chain)
   const authorization = { from: auth.from, to: auth.to, value: auth.value.toString(), validAfter: auth.validAfter.toString(), validBefore: auth.validBefore.toString(), nonce: auth.nonce }
   const paymentRequirements = { scheme: 'exact', network, amount: auth.value.toString(), asset: chain.usdc, payTo: auth.to, maxTimeoutSeconds: 600, extra: { name: d.name, version: d.version } }
-  return { x402Version: 2, paymentPayload: { x402Version: 2, scheme: 'exact', network, payload: { signature, authorization } }, paymentRequirements }
+  return { x402Version: 2, paymentPayload: { x402Version: 2, resource: { mimeType: 'application/json', ...resource }, accepted: paymentRequirements, payload: { signature, authorization } }, paymentRequirements }
 }
 
 export type FacilitatorFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; json: () => Promise<unknown> }>
@@ -402,7 +406,7 @@ export class UsdcWallet {
     if (usdc < amount) throw new TransferError(`insufficient USDC: wallet holds ${formatUsdc(usdc)}, payment needs ${formatUsdc(amount)}`, false)
     const now = Math.floor(Date.now() / 1000)
     const auth: Authorization = { from: this.address, to, value: amount, validAfter: 0n, validBefore: BigInt(now + (opts.validForSeconds ?? 600)), nonce: (this.opts.randomNonce ?? randomNonce)() }
-    const body = x402SettleBody(this.chain, auth, signAuthorization(this.chain, auth, this.privateKey))
+    const body = x402SettleBody(this.chain, auth, signAuthorization(this.chain, auth, this.privateKey), { url: 'https://api.agentsouk.dev/v1/sandbox/faucet', description: 'Agent Souk sandbox faucet: testnet USDC for a sandbox agent' })
     const f: FacilitatorFetch = this.opts.facilitatorFetch ?? ((url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(60_000) }))
     let res: Awaited<ReturnType<FacilitatorFetch>>
     try {
