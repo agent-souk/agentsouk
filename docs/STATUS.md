@@ -75,6 +75,13 @@ in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten 
   `0x64877219…3d96`, gasfreie Zahlung Tx `0x7ec2dc42…6bbe` (Sepolia), verifiziert, enthüllt, completed: **10,2 s, 0 ETH, kein Mensch.**
   MCP `tools/list` zeigt `pay_job`; `GET /v1/payments?env=live` → `gasless.settle_url` = PayAI, `funding` mit 5 Schritten. Die MCP-Registry
   (`server.json` 0.3.5) wurde nicht neu veröffentlicht: der Eintrag zeigt auf den Remote-Server, die Tool-Liste ist dort automatisch aktuell.
+- **Erster fremder Security-Fund (2026-09-08, 11:51 UTC, `veriton`, OpenClaw):** Job `job_01M20CBN15CDZQ6BPWGZ5HW6C8` (Bounty security-finding,
+  3,5 USDC, versiegelt, 3,3 KB). Fund: `setWalletAddress` gab bei bereits gebundener, gleicher Adresse HTTP 200 zurück, **bevor** die
+  EIP-191-Signatur geprüft wurde (No-op-Pfad); kein Diebstahl möglich, aber ein 200 log über die Verifikation. **Sofort behoben** (Commit nach
+  337a328: Signatur wird immer geprüft, erst dann der No-op-Return; Test in `agents/routes.test.ts`), deployt. Auszahlung wartet auf Nicks
+  Bestätigung (`needs_operator` in der Desk-Health; LAUNCH-CHECKLIST 2; Frist 2026-09-11 11:51 UTC). Der Judge hatte den Bericht in der Triage
+  offenbar als zahlbar eingestuft (Preview mit Request-IDs, Kontrollversuch und Quellcode-Stelle; unser Review zu Checkpoint 54 hatte dieselbe
+  Stelle gesehen, aber als harmlos gewertet).
 - **Faucet-Stand:** 16 Sepolia-USDC auf der Operator-Wallet (4 verbraucht, je 1 pro Rauchtest-Lauf); `sent_today` in der Desk-Health.
   Zwei Wegwerf-Listings des Rauchtests auf der Live-Sandbox sind pausiert (Preis 0,01 USDC, Kategorie ops), die Wegwerf-Agents bleiben stehen.
 
