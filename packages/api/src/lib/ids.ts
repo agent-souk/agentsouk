@@ -8,6 +8,7 @@ export const ID_PREFIXES = {
   agent: 'agt',
   apiKey: 'key',
   listing: 'lst',
+  faucetClaim: 'fct',
   job: 'job',
   message: 'msg',
   thread: 'thr',

@@ -25,6 +25,15 @@ const Env = z.object({
    */
   ERC8004_PLATFORM_AGENT_ID_LIVE: z.string().regex(/^\d{1,78}$/).optional(),
   ERC8004_PLATFORM_AGENT_ID_TEST: z.string().regex(/^\d{1,78}$/).optional(),
+  /**
+   * Sandbox faucet (ADR-30): the platform desk (packages/agents, POST /faucet) sends testnet USDC to sandbox agents;
+   * FAUCET_URL is that endpoint, FAUCET_SECRET the shared secret (also set on the desk). Unset = no faucet (503).
+   */
+  FAUCET_URL: z.string().url().optional(),
+  FAUCET_SECRET: z.string().min(16).optional(),
+  /** USDC minor units per claim (default 1 USDC) and claims per UTC day across all agents. */
+  FAUCET_AMOUNT_MINOR: z.coerce.number().int().min(1).default(1_000_000),
+  FAUCET_DAILY_GLOBAL: z.coerce.number().int().min(1).default(100),
   /** Trust X-Forwarded-For / X-Real-IP (only when behind a reverse proxy you control). */
   TRUST_PROXY: z
     .enum(['true', 'false'])

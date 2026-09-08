@@ -17,6 +17,7 @@ import { messagingRoutes } from './modules/messaging/routes.js'
 import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
 import { memoryRoutes } from './modules/memory/routes.js'
+import { faucetRoutes } from './modules/faucet/routes.js'
 import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
 import { worldRoutes } from './modules/world/routes.js'
@@ -184,6 +185,7 @@ export function createApp() {
   app.route('/', reviewsRoutes())
   app.route('/', eventsRoutes())
   app.route('/', memoryRoutes())
+  app.route('/', faucetRoutes())
   app.route('/', schedulesRoutes())
   app.route('/', metaRoutes())
   app.route('/', worldRoutes())

@@ -14,7 +14,14 @@ export function verifyWebhook(secret: string, timestamp: string, signature: stri
 
 export type Runtimes = Partial<Record<Env, SellerRuntime>>
 export type Operators = Partial<Record<Env, { handleEvent(event: { type: string; data?: Record<string, unknown> }): Promise<boolean>; status(): unknown }>>
-export type ServerOptions = { version?: string; wait?: boolean; llm?: () => Record<string, unknown>; operators?: Operators }
+/** The sandbox faucet (ADR-30): the platform API asks the desk, with a shared secret, to send testnet USDC to a sandbox agent. */
+export type Faucet = {
+  secret: string
+  /** sends `amount` USDC minor units on the test chain; throws on refusal */
+  send: (to: string, amount: bigint) => Promise<{ hash: string; explorer: string }>
+  status: () => Record<string, unknown>
+}
+export type ServerOptions = { version?: string; wait?: boolean; llm?: () => Record<string, unknown>; operators?: Operators; faucet?: Faucet }
 
 type WebhookEvent = { type: string; data?: Record<string, unknown> }
 
@@ -30,6 +37,7 @@ export function createServer(runtimes: Runtimes, secret: string, log: Logger, op
       envs: Object.keys(runtimes),
       llm: opts.llm?.() ?? null,
       operators: Object.fromEntries(Object.entries(operators).map(([env, o]) => [env, o.status()])),
+      faucet: opts.faucet ? opts.faucet.status() : null,
       time: new Date().toISOString(),
     }),
   )
@@ -64,6 +72,32 @@ export function createServer(runtimes: Runtimes, secret: string, log: Logger, op
     const work = op.handleEvent(p.event).catch((e: unknown) => log('operator event handling failed', { env, type: p.event.type, error: String(e) }))
     if (opts.wait) await work
     return c.json({ ok: true }, 200)
+  })
+  // POST /faucet {to, amount}: only the platform API calls this (shared secret, constant-time compare); the API enforces
+  // per-agent, per-address and global limits, the desk enforces the money limits and does the sending.
+  app.post('/faucet', async (c) => {
+    const faucet = opts.faucet
+    if (!faucet) return c.json({ error: 'faucet disabled' }, 404)
+    const given = Buffer.from(c.req.header('x-faucet-secret') ?? '')
+    const want = Buffer.from(faucet.secret)
+    if (given.length !== want.length || !timingSafeEqual(given, want)) return c.json({ error: 'invalid secret' }, 401)
+    let body: { to?: unknown; amount?: unknown }
+    try {
+      body = (await c.req.json()) as { to?: unknown; amount?: unknown }
+    } catch {
+      return c.json({ error: 'invalid json' }, 400)
+    }
+    if (typeof body.to !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(body.to)) return c.json({ error: 'to must be an EVM address' }, 400)
+    if (typeof body.amount !== 'number' || !Number.isInteger(body.amount) || body.amount <= 0) return c.json({ error: 'amount must be a positive integer (USDC minor units)' }, 400)
+    try {
+      const sent = await faucet.send(body.to, BigInt(body.amount))
+      log('faucet sent', { to: body.to, amount: body.amount, hash: sent.hash })
+      return c.json({ ok: true, transaction: sent.hash, explorer: sent.explorer }, 200)
+    } catch (e) {
+      const msg = String((e as Error).message ?? e)
+      log('faucet refused', { to: body.to, amount: body.amount, error: msg })
+      return c.json({ ok: false, error: msg.slice(0, 300) }, /insufficient|dry|cap|exceeds/i.test(msg) ? 409 : 502)
+    }
   })
   return app
 }

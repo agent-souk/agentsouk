@@ -15,6 +15,8 @@
  *   OPERATOR_API_KEY_LIVE/TEST keys of the bounty desk identity (souk-bounties); optional
  *   OPERATOR_PRIVATE_KEY       0x... key of the wallet bound to that identity; without it the desk posts nothing
  *   OPERATOR_TOTAL_BUDGET_USDC default 50 (lifetime), OPERATOR_DAILY_CAP_USDC default 20, OPERATOR_MAX_TRANSFER_USDC default 15
+ *   FAUCET_SECRET              enables POST /faucet for the platform API (sandbox faucet, ADR-30): testnet USDC from the operator wallet, gas-free via the x402 facilitator
+ *   FAUCET_MAX_USDC            per request, default 1; FAUCET_DAILY_CAP_USDC default 50
  */
 import { serve } from '@hono/node-server'
 import { AgentSouk } from 'agentsouk'
@@ -59,6 +61,39 @@ for (const env of ['live', 'test'] as Env[]) {
   operators[env] = new OperatorRuntime(clientFor(key), wallet, new Judge(llm), CATALOG, env, log, operatorConfig)
 }
 
+// Sandbox faucet (ADR-30): the operator wallet on Base Sepolia gives sandbox agents testnet USDC so they can practise paying without a human.
+let faucet: import('./server.js').Faucet | undefined
+const faucetSecret = process.env.FAUCET_SECRET
+if (faucetSecret && faucetSecret.length >= 16 && operatorKey) {
+  const maxPer = usdc(process.env.FAUCET_MAX_USDC, 1_000_000n)
+  const dailyCap = usdc(process.env.FAUCET_DAILY_CAP_USDC, 50_000_000n)
+  const wallet = new UsdcWallet(operatorKey, CHAINS.test, { maxPerTransfer: maxPer, log })
+  let day = ''
+  let sentToday = 0n
+  const roll = () => {
+    const d = new Date().toISOString().slice(0, 10)
+    if (d !== day) {
+      day = d
+      sentToday = 0n
+    }
+  }
+  faucet = {
+    secret: faucetSecret,
+    send: async (to, amount) => {
+      roll()
+      if (amount > maxPer) throw new Error(`amount exceeds the faucet cap of ${maxPer} minor units`)
+      if (sentToday + amount > dailyCap) throw new Error('faucet daily cap reached; try again after 00:00 UTC')
+      const r = await wallet.transferGasless(to, amount)
+      sentToday += amount
+      return { hash: r.hash, explorer: r.explorer }
+    },
+    status: () => {
+      roll()
+      return { enabled: true, wallet: wallet.address, network: 'eip155:84532', max_per_request: maxPer.toString(), daily_cap: dailyCap.toString(), sent_today: sentToday.toString(), facilitator: CHAINS.test.facilitator }
+    },
+  }
+}
+
 if (!Object.keys(runtimes).length && !Object.keys(operators).length) {
   console.error('Set AGENTSOUK_API_KEY_LIVE/TEST (seller) and/or OPERATOR_API_KEY_LIVE/TEST (bounty desk)')
   process.exit(1)
@@ -94,5 +129,5 @@ setInterval(() => {
   for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) op.tick().catch((e: unknown) => log('operator tick failed', { env, error: String(e) }))
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: '0.2.0', llm: () => llm.status(), operators: operators as Operators })
+const server = createServer(runtimes, secret, log, { version: '0.2.0', llm: () => llm.status(), operators: operators as Operators, faucet })
 serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))

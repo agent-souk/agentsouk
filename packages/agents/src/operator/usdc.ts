@@ -10,11 +10,21 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js'
 
-export type Chain = { rpcUrl: string; chainId: number; usdc: string; explorerTx: string }
+export type Chain = {
+  rpcUrl: string
+  chainId: number
+  usdc: string
+  explorerTx: string
+  /** EIP-712 domain of the USDC contract (defaults: "USD Coin" on Base, "USDC" on Base Sepolia, version 2) */
+  usdcName?: string
+  usdcVersion?: string
+  /** public x402 facilitator that broadcasts EIP-3009 authorizations for this network (pays the gas) */
+  facilitator?: string
+}
 
 export const CHAINS: Record<'live' | 'test', Chain> = {
-  live: { rpcUrl: 'https://mainnet.base.org', chainId: 8453, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', explorerTx: 'https://basescan.org/tx/' },
-  test: { rpcUrl: 'https://sepolia.base.org', chainId: 84532, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', explorerTx: 'https://sepolia.basescan.org/tx/' },
+  live: { rpcUrl: 'https://mainnet.base.org', chainId: 8453, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', explorerTx: 'https://basescan.org/tx/', usdcName: 'USD Coin', usdcVersion: '2', facilitator: 'https://facilitator.payai.network' },
+  test: { rpcUrl: 'https://sepolia.base.org', chainId: 84532, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', explorerTx: 'https://sepolia.basescan.org/tx/', usdcName: 'USDC', usdcVersion: '2', facilitator: 'https://x402.org/facilitator' },
 }
 
 export const USDC_DECIMALS = 6
@@ -64,6 +74,12 @@ function addressBytes(a: string): Uint8Array {
 }
 
 const hex = (b: Uint8Array) => '0x' + bytesToHex(b)
+const utf8 = (s: string) => new TextEncoder().encode(s)
+function randomNonce(): string {
+  const b = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(b)
+  return hex(b)
+}
 const quantity = (v: bigint) => '0x' + v.toString(16)
 
 export function hexToBigInt(v: unknown, what = 'quantity'): bigint {
@@ -111,7 +127,6 @@ export const ERC8004_IDENTITY_REGISTRY: Record<'live' | 'test', string> = {
   live: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
   test: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
 }
-const utf8 = (s: string) => new TextEncoder().encode(s)
 const selector = (signature: string) => keccak_256(utf8(signature)).slice(0, 4)
 /** keccak("Registered(uint256,string,address)") */
 export const ERC8004_REGISTERED_TOPIC = '0x' + bytesToHex(keccak_256(utf8('Registered(uint256,string,address)')))
@@ -178,6 +193,49 @@ function bigintToBytes32(v: bigint): Uint8Array {
   return out
 }
 
+// --- EIP-3009 transferWithAuthorization, settled gas-free through a public x402 facilitator (ADR-30) --------------
+
+const TYPEHASH_DOMAIN = keccak_256(utf8('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'))
+const TYPEHASH_TRANSFER_WITH_AUTHORIZATION = keccak_256(utf8('TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)'))
+
+export type Authorization = { from: string; to: string; value: bigint; validAfter: bigint; validBefore: bigint; nonce: string }
+
+function addressWord(a: string): Uint8Array {
+  const out = new Uint8Array(32)
+  out.set(addressBytes(a), 12)
+  return out
+}
+
+export function usdcDomain(chain: Chain): { name: string; version: string } {
+  return { name: chain.usdcName ?? (chain.chainId === 8453 ? 'USD Coin' : 'USDC'), version: chain.usdcVersion ?? '2' }
+}
+
+/** EIP-712 digest of a TransferWithAuthorization for the USDC contract of `chain` (what the token verifies on-chain). */
+export function authorizationDigest(chain: Chain, auth: Authorization): Uint8Array {
+  const d = usdcDomain(chain)
+  if (!/^0x[0-9a-fA-F]{64}$/.test(auth.nonce)) throw new Error('nonce must be 0x + 64 hex characters')
+  const domain = keccak_256(concatBytes(TYPEHASH_DOMAIN, keccak_256(utf8(d.name)), keccak_256(utf8(d.version)), bigintToBytes32(BigInt(chain.chainId)), addressWord(chain.usdc)))
+  const struct = keccak_256(concatBytes(TYPEHASH_TRANSFER_WITH_AUTHORIZATION, addressWord(auth.from), addressWord(auth.to), bigintToBytes32(auth.value), bigintToBytes32(auth.validAfter), bigintToBytes32(auth.validBefore), hexToBytes(auth.nonce.slice(2))))
+  return keccak_256(concatBytes(Uint8Array.of(0x19, 0x01), domain, struct))
+}
+
+/** 65-byte signature (r, s, v = 27/28) over the authorization digest; identical to viem's signTypedData. */
+export function signAuthorization(chain: Chain, auth: Authorization, privateKeyHex: string): string {
+  const sig = secp256k1.sign(authorizationDigest(chain, auth), hexToBytes(privateKeyHex.replace(/^0x/, '')), { prehash: false, format: 'recovered', lowS: true })
+  return hex(concatBytes(sig.slice(1, 65), Uint8Array.of(27 + sig[0]!)))
+}
+
+/** The x402 v2 settle/verify body a facilitator expects: the signed payload plus the requirements it must satisfy. */
+export function x402SettleBody(chain: Chain, auth: Authorization, signature: string) {
+  const network = `eip155:${chain.chainId}`
+  const d = usdcDomain(chain)
+  const authorization = { from: auth.from, to: auth.to, value: auth.value.toString(), validAfter: auth.validAfter.toString(), validBefore: auth.validBefore.toString(), nonce: auth.nonce }
+  const paymentRequirements = { scheme: 'exact', network, amount: auth.value.toString(), asset: chain.usdc, payTo: auth.to, maxTimeoutSeconds: 600, extra: { name: d.name, version: d.version } }
+  return { x402Version: 2, paymentPayload: { x402Version: 2, scheme: 'exact', network, payload: { signature, authorization } }, paymentRequirements }
+}
+
+export type FacilitatorFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ status: number; json: () => Promise<unknown> }>
+
 export type UnsignedTx = { chainId: number; nonce: number; maxPriorityFeePerGas: bigint; maxFeePerGas: bigint; gasLimit: bigint; to: string; value: bigint; data: Uint8Array }
 
 function txFields(tx: UnsignedTx): RlpItem[] {
@@ -201,6 +259,10 @@ export function signEip1559(tx: UnsignedTx, privateKeyHex: string): { raw: strin
 export type RpcFetch = (url: string, body: string) => Promise<{ status: number; json: () => Promise<unknown> }>
 export type WalletOptions = {
   fetchImpl?: RpcFetch
+  /** HTTP client for the x402 facilitator (tests inject a fake) */
+  facilitatorFetch?: FacilitatorFetch
+  /** 32 random bytes as 0x hex for EIP-3009 nonces (tests inject a fixed one) */
+  randomNonce?: () => string
   /** USDC minor units; a single transfer above this is refused (default 25 USDC) */
   maxPerTransfer?: bigint
   /** wei; refuse to sign above these (Base normally runs far below: ~0.001 gwei tip, ~0.01 gwei base fee) */
@@ -320,6 +382,43 @@ export class UsdcWallet {
   async view(to: string, data: Uint8Array): Promise<string> {
     const r = await this.rpc<string>('eth_call', [{ to, data: hex(data) }, 'latest'])
     if (typeof r !== 'string') throw new Error('eth_call: malformed result')
+    return r
+  }
+
+  /**
+   * Sends USDC without holding any ETH: signs an EIP-3009 transferWithAuthorization and hands it to the public
+   * x402 facilitator of this chain, which broadcasts it and pays the gas. Same guard rails as transfer(). The
+   * facilitator's answer carries the transaction hash; `broadcast` on a failure says whether the authorization may
+   * already be on its way (facilitator accepted it but the answer was lost).
+   */
+  async transferGasless(to: string, amount: bigint, opts: { validForSeconds?: number } = {}): Promise<Sent & { facilitator: string }> {
+    if (!isAddress(to)) throw new TransferError(`refusing to pay: recipient is not a plain address (${String(to).slice(0, 60)})`, false)
+    if (sameAddress(to, this.address)) throw new TransferError('refusing to pay: recipient is the operator wallet itself', false)
+    if (amount <= 0n) throw new TransferError('refusing to pay: amount must be positive', false)
+    if (amount > this.maxPerTransfer) throw new TransferError(`refusing to pay: ${formatUsdc(amount)} exceeds the per-transfer cap of ${formatUsdc(this.maxPerTransfer)}`, false)
+    const facilitator = this.chain.facilitator
+    if (!facilitator) throw new TransferError('no facilitator configured for this chain', false)
+    const usdc = await this.pre(() => this.usdcBalance())
+    if (usdc < amount) throw new TransferError(`insufficient USDC: wallet holds ${formatUsdc(usdc)}, payment needs ${formatUsdc(amount)}`, false)
+    const now = Math.floor(Date.now() / 1000)
+    const auth: Authorization = { from: this.address, to, value: amount, validAfter: 0n, validBefore: BigInt(now + (opts.validForSeconds ?? 600)), nonce: (this.opts.randomNonce ?? randomNonce)() }
+    const body = x402SettleBody(this.chain, auth, signAuthorization(this.chain, auth, this.privateKey))
+    const f: FacilitatorFetch = this.opts.facilitatorFetch ?? ((url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(60_000) }))
+    let res: Awaited<ReturnType<FacilitatorFetch>>
+    try {
+      res = await f(`${facilitator.replace(/\/$/, '')}/settle`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body) })
+    } catch (e) {
+      throw new TransferError(`facilitator unreachable: ${String((e as Error).message ?? e)}`, true)
+    }
+    const json = (await res.json().catch(() => undefined)) as { success?: unknown; transaction?: unknown; errorReason?: unknown; error?: unknown } | undefined
+    if (res.status >= 500 || !json || typeof json !== 'object') throw new TransferError(`facilitator answered HTTP ${res.status} without a usable body`, true)
+    if (json.success !== true || typeof json.transaction !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(json.transaction)) {
+      // a rejected authorization was never broadcast (invalid signature, insufficient funds, expired); other answers are unknown
+      const reason = String(json.errorReason ?? json.error ?? `HTTP ${res.status}`)
+      throw new TransferError(`facilitator declined: ${reason}`.slice(0, 300), !(res.status < 500 && json.success === false))
+    }
+    const r = { hash: json.transaction.toLowerCase(), nonce: -1, explorer: this.chain.explorerTx + json.transaction.toLowerCase(), maxFeePerGas: 0n, maxPriorityFeePerGas: 0n, facilitator }
+    this.opts.log?.('usdc transfer sent gas-free', { to, amount: amount.toString(), hash: r.hash, facilitator, chain_id: this.chain.chainId })
     return r
   }
 

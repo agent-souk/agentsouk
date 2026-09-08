@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { describe, expect, it } from 'vitest'
-import { CHAINS, decodeStringResult, encodeBalanceOf, encodeOwnerOf, encodeRegister, encodeTokenUri, encodeTransfer, ERC8004_IDENTITY_REGISTRY, ERC8004_REGISTERED_TOPIC, parseRegisteredAgentId, privateKeyToAddress, rlpEncode, signEip1559, toChecksumAddress, UsdcWallet, type RpcFetch } from './usdc.js'
+import { authorizationDigest, CHAINS, decodeStringResult, encodeBalanceOf, encodeOwnerOf, encodeRegister, encodeTokenUri, encodeTransfer, ERC8004_IDENTITY_REGISTRY, ERC8004_REGISTERED_TOPIC, parseRegisteredAgentId, privateKeyToAddress, rlpEncode, signAuthorization, signEip1559, toChecksumAddress, UsdcWallet, x402SettleBody, type FacilitatorFetch, type RpcFetch } from './usdc.js'
 
 const PK = '0x' + '11'.repeat(32)
 // Produced independently with viem 2.56.3 (privateKeyToAccount(PK).signTransaction({...})) for exactly these fields.
@@ -181,3 +181,41 @@ describe('UsdcWallet.call', () => {
     expect(await w.view(registry, encodeOwnerOf(1n))).toMatch(/^0x/)
   })
 })
+
+describe('EIP-3009 authorizations (gas-free via a facilitator)', () => {
+  const auth = { from: VIEM.address, to: '0xA0a2494006B72109137630bC026434a809731c07', value: 1_000_000n, validAfter: 0n, validBefore: 1_800_000_000n, nonce: '0x' + 'ab'.repeat(32) }
+  it('signs exactly like viem signTypedData for the Base Sepolia USDC domain', () => {
+    // viem 2.56.3: privateKeyToAccount(PK).signTypedData({ domain: { name: 'USDC', version: '2', chainId: 84532, verifyingContract: USDC }, primaryType: 'TransferWithAuthorization', message: auth })
+    expect(signAuthorization(CHAINS.test, auth, PK)).toBe('0xe1520c0d91b4e7a4123d76df591f18b8d71d4f30cdeda7dc5bf9684a976f74ad195632e6522d7c39fb6608e3574db203db3b325216899f1f60e41bd2786db5021c')
+    expect(authorizationDigest(CHAINS.test, auth)).toHaveLength(32)
+    expect(authorizationDigest(CHAINS.live, auth)).not.toEqual(authorizationDigest(CHAINS.test, auth)) // domain differs (chain id, name)
+    expect(() => authorizationDigest(CHAINS.test, { ...auth, nonce: '0x12' })).toThrow(/nonce/)
+    const body = x402SettleBody(CHAINS.test, auth, '0xsig')
+    expect(body).toMatchObject({ x402Version: 2, paymentPayload: { scheme: 'exact', network: 'eip155:84532', payload: { signature: '0xsig', authorization: { from: VIEM.address, value: '1000000', nonce: auth.nonce } } }, paymentRequirements: { scheme: 'exact', network: 'eip155:84532', amount: '1000000', asset: CHAINS.test.usdc, payTo: auth.to, extra: { name: 'USDC', version: '2' } } })
+  })
+
+  it('transferGasless sends the signed authorization to the facilitator and returns its transaction hash', async () => {
+    const calls: { url: string; body: any }[] = []
+    const ff: FacilitatorFetch = async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) })
+      return { status: 200, json: async () => ({ success: true, transaction: '0x' + 'cd'.repeat(32), network: 'eip155:84532' }) }
+    }
+    const rpc = fakeRpc(base)
+    const w = new UsdcWallet(PK, CHAINS.test, { fetchImpl: rpc.f, facilitatorFetch: ff, randomNonce: () => '0x' + 'ab'.repeat(32) })
+    const r = await w.transferGasless('0xA0a2494006B72109137630bC026434a809731c07', 1_000_000n)
+    expect(r.hash).toBe('0x' + 'cd'.repeat(32))
+    expect(r.facilitator).toBe(CHAINS.test.facilitator)
+    expect(calls[0]!.url).toBe(CHAINS.test.facilitator + '/settle')
+    expect(calls[0]!.body.paymentPayload.payload.authorization.from).toBe(VIEM.address)
+    expect(calls[0]!.body.paymentPayload.payload.signature).toMatch(/^0x[0-9a-f]{130}$/)
+    expect(rpc.calls.some((c) => c.method === 'eth_sendRawTransaction')).toBe(false) // nothing broadcast by us, no gas needed
+    // refusals: declined = not broadcast; 5xx = fate unknown
+    const declined = new UsdcWallet(PK, CHAINS.test, { fetchImpl: rpc.f, facilitatorFetch: async () => ({ status: 400, json: async () => ({ success: false, errorReason: 'invalid_exact_evm_payload_signature' }) }) })
+    await expect(declined.transferGasless('0xA0a2494006B72109137630bC026434a809731c07', 1n)).rejects.toMatchObject({ broadcast: false })
+    const lost = new UsdcWallet(PK, CHAINS.test, { fetchImpl: rpc.f, facilitatorFetch: async () => ({ status: 502, json: async () => ({}) }) })
+    await expect(lost.transferGasless('0xA0a2494006B72109137630bC026434a809731c07', 1n)).rejects.toMatchObject({ broadcast: true })
+    await expect(w.transferGasless(VIEM.address, 1n)).rejects.toThrow(/itself/)
+    await expect(w.transferGasless('0xA0a2494006B72109137630bC026434a809731c07', 99_000_000n)).rejects.toThrow(/insufficient USDC|cap/)
+  })
+})
+

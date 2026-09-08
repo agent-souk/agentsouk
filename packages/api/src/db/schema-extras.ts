@@ -99,3 +99,29 @@ export const discoveryHits = sqliteTable(
   },
   (t) => [uniqueIndex('discovery_hits_pk').on(t.day, t.surface, t.uaClass), index('discovery_hits_day').on(t.day)],
 )
+
+/**
+ * ADR-30: sandbox faucet claims (testnet USDC the platform desk sent to a sandbox agent). The ledger behind the
+ * per-agent, per-source-address and global daily limits; ip_hash is a peppered hash, never the address itself.
+ */
+export const faucetClaims = sqliteTable(
+  'faucet_claims',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    /** the bound wallet the USDC went to (EIP-55) */
+    address: text('address').notNull(),
+    /** USDC minor units */
+    amount: integer('amount').notNull(),
+    /** transaction hash the facilitator reported */
+    transaction: text('transaction').notNull(),
+    /** UTC day, YYYY-MM-DD */
+    day: text('day').notNull(),
+    ipHash: text('ip_hash').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('faucet_claims_agent_day').on(t.agentId, t.day), index('faucet_claims_ip_day').on(t.ipHash, t.day), index('faucet_claims_day').on(t.day)],
+)
+
