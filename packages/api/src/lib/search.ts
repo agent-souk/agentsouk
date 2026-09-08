@@ -64,6 +64,30 @@ const SYNONYMS: Record<string, string[]> = {
   english: ['en'],
 }
 
+/**
+ * The same intents in other languages (ADR-29): a query in German, French, Spanish, Italian, Portuguese, Russian,
+ * Chinese, Japanese, Korean, Arabic, Dutch, Turkish or Polish reaches the English stems most listings use. Each word
+ * is registered as typed and as stemmed, so the lookup below finds it either way.
+ */
+const INTENTS: [words: string[], stems: string[]][] = [
+  [['übersetzung', 'übersetzen', 'übersetze', 'übersetzer', 'traduction', 'traduire', 'traducteur', 'traducción', 'traducir', 'traductor', 'traduzione', 'tradurre', 'tradução', 'traduzir', 'перевод', 'перевести', 'переводчик', '翻译', '翻譯', '翻訳', '번역', 'ترجمة', 'çeviri', 'vertaling', 'vertalen', 'tłumaczenie'], ['translat']],
+  [['zusammenfassung', 'zusammenfassen', 'résumé', 'résumer', 'resumen', 'resumir', 'riassunto', 'riassumere', 'resumo', 'резюме', 'краткое', 'кратко', '摘要', '总结', '總結', '要約', '요약', 'ملخص', 'özet', 'samenvatting', 'streszczenie'], ['summar']],
+  [['extrahieren', 'extraktion', 'auslesen', 'extraction', 'extraire', 'extracción', 'extraer', 'estrazione', 'extração', 'извлечение', 'извлечь', '提取', '抽取', '抽出', '추출', 'استخراج', 'çıkarma', 'extractie', 'ekstrakcja'], ['extract']],
+  [['klassifizieren', 'klassifikation', 'kategorisieren', 'einordnen', 'classification', 'classer', 'classifier', 'clasificación', 'clasificar', 'classificazione', 'classificação', 'классификация', 'классифицировать', '分类', '分類', '분류', 'تصنيف', 'sınıflandırma', 'classificatie', 'klasyfikacja'], ['classif']],
+  [['validieren', 'validierung', 'prüfen', 'prüfung', 'überprüfen', 'validation', 'valider', 'vérifier', 'validación', 'validar', 'verificar', 'validazione', 'validação', 'проверка', 'проверить', 'валидация', '验证', '校验', '驗證', '検証', '검증', 'تحقق', 'doğrulama', 'validatie', 'walidacja'], ['validat']],
+  [['webseite', 'website', 'internetseite', 'scraping', 'site', 'página', 'pagina', 'сайт', 'веб', 'страница', '网页', '网站', '網頁', 'ウェブ', 'サイト', '웹', '웹사이트', 'موقع', 'strona'], ['web']],
+  [['programmieren', 'programmierung', 'quellcode', 'programme', 'código', 'codice', 'код', 'программирование', '代码', '编程', '程式', 'コード', 'プログラミング', '코드', 'كود', 'kod', 'programmeren'], ['code']],
+  [['bild', 'bilder', 'foto', 'image', 'imagen', 'immagine', 'imagem', 'изображение', 'картинка', '图片', '图像', '圖片', '画像', '이미지', 'صورة', 'resim', 'afbeelding', 'obraz'], ['imag']],
+  [['recherche', 'recherchieren', 'forschung', 'investigación', 'investigar', 'ricerca', 'pesquisa', 'исследование', 'исследовать', '研究', '调研', '調査', '연구', 'بحث', 'araştırma', 'onderzoek', 'badanie'], ['research']],
+  [['daten', 'datensatz', 'données', 'datos', 'dati', 'dados', 'данные', '数据', '數據', 'データ', '데이터', 'بيانات', 'veri', 'gegevens', 'dane'], ['data']],
+  [['modellierung', 'modelado', 'modellazione', 'моделирование', '建模', 'モデリング', '모델링', 'نمذجة'], ['3d', 'cad', 'model']],
+]
+for (const [words, stems] of INTENTS) {
+  for (const w of words) {
+    for (const key of new Set([w, stem(w)])) SYNONYMS[key] = [...new Set([...(SYNONYMS[key] ?? []), ...stems])]
+  }
+}
+
 /** Cheap English stemming: enough to make "translation", "translating" and "translate" meet at "translat". */
 export function stem(word: string): string {
   let w = word.toLowerCase()

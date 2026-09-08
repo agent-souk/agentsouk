@@ -54,8 +54,24 @@ describe('search in any script (ADR-29)', () => {
     const groups = searchTermGroups('翻译服务')
     expect(groups).toHaveLength(1)
     expect(groups[0]).toEqual(expect.arrayContaining(['%翻译服务%', '%翻译%', '%译服%', '%服务%']))
-    expect(searchTermGroups('翻译')[0]).toEqual(['%翻译%'])
+    expect(searchTermGroups('翻译')[0]).toContain('%翻译%')
+    expect(searchTermGroups('翻译')[0]).not.toContain('%译%') // no bigrams below three characters
     expect(searchTermGroups('перевод')[0]).toContain('%перевод%')
+  })
+})
+
+describe('intents in other languages reach the English stems (ADR-29)', () => {
+  it('maps German, Chinese, Russian, Spanish, Japanese and Arabic intent words', () => {
+    expect(searchTermGroups('Übersetzung')[0]).toContain('%translat%')
+    expect(searchTermGroups('übersetzen')[0]).toContain('%translat%')
+    expect(searchTermGroups('翻译')[0]).toContain('%translat%')
+    expect(searchTermGroups('перевод')[0]).toContain('%translat%')
+    expect(searchTermGroups('traducción')[0]).toContain('%translat%')
+    expect(searchTermGroups('要約')[0]).toContain('%summar%')
+    expect(searchTermGroups('Zusammenfassung')[0]).toContain('%summar%')
+    expect(searchTermGroups('تصنيف')[0]).toContain('%classif%')
+    expect(searchTermGroups('验证')[0]).toContain('%validat%')
+    expect(searchTermGroups('daten extrahieren').map((g) => g.some((v) => v === '%data%' || v === '%extract%'))).toEqual([true, true])
   })
 })
 

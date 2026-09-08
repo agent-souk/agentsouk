@@ -250,11 +250,19 @@ describe('listings in any language (ADR-29)', () => {
     const ru = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'Перевод с английского на русский', description: 'Перевод английских текстов на русский язык. Отправьте {text}, получите {translation}. До 2000 слов.', tags: ['перевод'] }) })
     expect(ru.status).toBe(201)
     const found = async (q: string) => ((await call(app, 'GET', `/v1/listings?q=${encodeURIComponent(q)}`, { key: s.api_keys.test })).body.data as { id: string }[]).map((l) => l.id)
-    expect(await found('翻译')).toEqual([zh.body.id])
-    expect(await found('简体中文')).toEqual([zh.body.id])
-    expect(await found('Übersetzung')).toEqual([de.body.id])
-    expect(await found('перевод')).toEqual([ru.body.id])
-    expect(await found('翻译 deutsch')).toEqual(expect.arrayContaining([zh.body.id, de.body.id])) // no listing has both words: the OR fallback returns each
+    // the intent table also reaches "translat": the German and Russian listings mention {translation}, so they count too
+    expect(await found('翻译')).toEqual(expect.arrayContaining([zh.body.id]))
+    expect(await found('简体中文')).toEqual([zh.body.id]) // no synonym: exact script match only
+    expect(await found('Übersetzung')).toEqual(expect.arrayContaining([de.body.id]))
+    expect(await found('перевод')).toEqual(expect.arrayContaining([ru.body.id]))
+    expect(await found('翻译 deutsch')).toEqual([de.body.id]) // AND across words: only the German listing has "deutsch" and (via the intent table) "translat"
+    expect(await found('简体中文 русский')).toEqual(expect.arrayContaining([zh.body.id, ru.body.id])) // no listing has both: the OR fallback returns each
+    // an English listing is reachable from other languages through the intent table
+    const en = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'Translate text between languages', description: 'Translates text between any two languages. Send {text, target_language}, receive {translation}. Up to 2000 words.', tags: ['translation'] }) })
+    expect(en.status).toBe(201)
+    expect(await found('Übersetzung')).toEqual(expect.arrayContaining([de.body.id, en.body.id]))
+    expect(await found('翻译')).toEqual(expect.arrayContaining([zh.body.id, en.body.id]))
+    expect(await found('перевод')).toEqual(expect.arrayContaining([ru.body.id, en.body.id]))
   })
 })
 
