@@ -150,21 +150,31 @@ export function decodeStringResult(result: unknown): string | undefined {
   return new TextDecoder().decode(hexToBytes(h.slice(128, 128 + len * 2)))
 }
 
-export type ReceiptLog = { address?: string; topics?: string[]; data?: string }
+export type ReceiptLog = { address?: string; topics?: string[]; data?: string; removed?: boolean }
 
-/** The agentId minted by a register() transaction: the Registered event emitted by the registry. */
-export function parseRegisteredAgentId(logs: ReceiptLog[] | undefined, registry: string): bigint | undefined {
+/**
+ * The agentId minted by a register() transaction: the Registered(agentId, agentURI, owner) event emitted by the
+ * registry. With `owner` given, only an event minted to that address counts (a proxy or a future upgrade could emit
+ * more than one); reorged logs (removed: true) never count.
+ */
+export function parseRegisteredAgentId(logs: ReceiptLog[] | undefined, registry: string, owner?: string): bigint | undefined {
   for (const l of logs ?? []) {
-    if (!l || typeof l.address !== 'string' || !sameAddress(l.address, registry) || !Array.isArray(l.topics)) continue
+    if (!l || l.removed === true || typeof l.address !== 'string' || !sameAddress(l.address, registry) || !Array.isArray(l.topics)) continue
     if (String(l.topics[0] ?? '').toLowerCase() !== ERC8004_REGISTERED_TOPIC || !/^0x[0-9a-fA-F]{64}$/.test(String(l.topics[1] ?? ''))) continue
+    if (owner) {
+      const t2 = String(l.topics[2] ?? '')
+      if (!/^0x[0-9a-fA-F]{64}$/.test(t2) || !sameAddress('0x' + t2.slice(-40), owner)) continue
+    }
     return BigInt(String(l.topics[1]))
   }
   return undefined
 }
 
 function bigintToBytes32(v: bigint): Uint8Array {
+  if (v < 0n || v >= 1n << 256n) throw new Error('value does not fit in uint256')
   const out = new Uint8Array(32)
-  out.set(bigintToBytes(v), 32 - bigintToBytes(v).length)
+  const b = bigintToBytes(v)
+  out.set(b, 32 - b.length)
   return out
 }
 

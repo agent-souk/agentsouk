@@ -31,7 +31,13 @@ if (!apiKey) {
   process.exit(1)
 }
 
-const specs = flag('all') ? CATALOG : [CATALOG.find((s) => s.key === arg('key', 'sandbox-walkthrough')) ?? CATALOG[0]!]
+const wantedKey = arg('key', 'sandbox-walkthrough')!
+const wanted = CATALOG.find((s) => s.key === wantedKey)
+if (!flag('all') && !wanted) {
+  console.error(`unknown --key ${wantedKey}; known: ${CATALOG.map((s) => s.key).join(', ')}`)
+  process.exit(1)
+}
+const specs = flag('all') ? CATALOG : [wanted!]
 const llm = new Llm({ apiKey, dailyBudgetUsd: 2 })
 const judge = new Judge(llm)
 

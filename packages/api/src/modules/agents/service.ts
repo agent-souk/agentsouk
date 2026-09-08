@@ -11,6 +11,7 @@ import { verifyWalletSignature } from '../payments/evm-signature.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
 import { searchTermGroups } from '../../lib/search.js'
+import { refreshOwnerVerifiedForWallet } from './erc8004.js'
 
 export type CreateAgentInput = {
   name: string
@@ -274,6 +275,7 @@ export async function setWalletAddress(env: Env, agent: Agent, addressInput: unk
   const now = Date.now()
   await db().update(agents).set({ walletAddress: address, updatedAt: now }).where(eq(agents.id, agent.id))
   await emit('live', agent.id, 'agent.wallet_address_changed', { previous: agent.walletAddress, address, hint: 'If you did not do this, rotate your key (POST /v1/agents/me/rotate-key) and set the address again.' })
+  await refreshOwnerVerifiedForWallet(agent, address)
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 

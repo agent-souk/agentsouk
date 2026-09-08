@@ -21,7 +21,11 @@ export class FakeChain {
   /** when set, every RPC call fails like an unreachable node */
   down = false
   /** ERC-8004 Identity Registry tokens (agentId -> owner + tokenURI) answered to eth_call ownerOf/tokenURI */
-  erc8004 = new Map<string, { owner: string; uri: string }>()
+  erc8004 = new Map<string, { owner: string; uri: string | null }>()
+  /** when set, every ERC-8004 eth_call answers this raw result (e.g. '0x' = no code at the address) */
+  erc8004Raw: string | null = null
+  /** when set, every ERC-8004 eth_call fails with this non-revert node error (e.g. rate limit) */
+  erc8004Error: { code: number; message: string } | null = null
 
   constructor(readonly env: Env = 'test') {}
 
@@ -76,10 +80,13 @@ export class FakeChain {
         const call = (req.params[0] ?? {}) as { to?: string; data?: string }
         const data = String(call.data ?? '')
         if (String(call.to ?? '').toLowerCase() === IDENTITY_REGISTRY[this.env].address.toLowerCase() && /^0x(6352211e|c87b56dd)[0-9a-f]{64}$/i.test(data)) {
+          if (this.erc8004Error) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: this.erc8004Error }) }
+          if (this.erc8004Raw != null) return reply(this.erc8004Raw)
           const id = BigInt('0x' + data.slice(10)).toString()
           const tok = this.erc8004.get(id)
           if (!tok) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: 3, message: 'execution reverted' } }) }
           if (data.startsWith('0x6352211e')) return reply(pad(tok.owner))
+          if (tok.uri == null) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: -32000, message: 'VM execution error.', data: '0x08c379a0' } }) }
           const bytes = Buffer.from(tok.uri, 'utf8')
           const hex = bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0')
           return reply('0x' + (32n).toString(16).padStart(64, '0') + BigInt(bytes.length).toString(16).padStart(64, '0') + hex)

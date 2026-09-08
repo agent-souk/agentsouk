@@ -3,7 +3,9 @@ import { freshApp, createTestAgent, call } from '../../test/setup.js'
 import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
-import { decodeString, matchesAgentUri, parseAgentId, registryCaip10, IDENTITY_REGISTRY, ERC8004_TYPE, acceptedOrigins } from './erc8004.js'
+import { decodeString, matchesAgentUri, parseAgentId, registryCaip10, IDENTITY_REGISTRY, ERC8004_TYPE, acceptedOrigins, sweepErc8004Links } from './erc8004.js'
+import { setWallet, randomWallet } from '../../test/setup.js'
+import { sign } from '../../lib/crypto.js'
 
 const BASE = 'http://localhost:8787'
 
@@ -49,6 +51,13 @@ describe('erc8004 helpers', () => {
     expect(matchesAgentUri(`https://evil.example/agents/agt_1/erc8004.json`, BASE, 'agt_1')).toBe(false)
     expect(matchesAgentUri('not a url', BASE, 'agt_1')).toBe(false)
     expect(matchesAgentUri(null, BASE, 'agt_1')).toBe(false)
+    expect(matchesAgentUri(`${BASE}/agents/agt_1/erc8004.json#frag`, BASE, 'agt_1')).toBe(false)
+    expect(matchesAgentUri('http://user:pw@localhost:8787/agents/agt_1/erc8004.json', BASE, 'agt_1')).toBe(false)
+    expect(matchesAgentUri('http://localhost:8443/agents/agt_1/erc8004.json', BASE, 'agt_1')).toBe(false) // other port = other origin
+    expect(matchesAgentUri(`${BASE}/agents/AGT_1/erc8004.json`, BASE, 'agt_1')).toBe(false) // ids are case-sensitive
+    expect(matchesAgentUri(`${BASE}/agents/agt_1/erc8004.json/`, BASE, 'agt_1')).toBe(false)
+    expect(matchesAgentUri(`${BASE}/agents/../agents/agt_1/erc8004.json`, BASE, 'agt_1')).toBe(true) // WHATWG normalises dot segments
+    expect(matchesAgentUri('x'.repeat(2049), BASE, 'agt_1')).toBe(false)
     // the apex, www and api hosts serve the same documents
     const prod = 'https://api.agentsouk.dev'
     expect(acceptedOrigins(prod)).toEqual(expect.arrayContaining(['https://api.agentsouk.dev', 'https://agentsouk.dev', 'https://www.agentsouk.dev']))
@@ -175,5 +184,89 @@ describe('POST /v1/agents/me/erc8004', () => {
     expect(r.status).toBe(200)
     expect(r.body.erc8004).toMatchObject({ chain_id: 8453, registry: registryCaip10('live') })
     expect(live.calls.filter((c) => c.method === 'eth_call').every((c) => String((c.params[0] as any).to).toLowerCase() === IDENTITY_REGISTRY.live.address.toLowerCase())).toBe(true)
+  })
+})
+
+describe('link maintenance (review findings)', () => {
+  it('owner_verified follows a wallet change and a token that moves to another profile releases the stale claim', async () => {
+    const a = await createTestAgent(app, { name: 'First Claimant' })
+    const b = await createTestAgent(app, { name: 'Second Claimant' })
+    chain.erc8004.set('21', { owner: a.wallet_address!, uri: `${BASE}/agents/${a.agent.id}/erc8004.json` })
+    expect((await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.test, body: { agent_id: '21' } })).body.erc8004.owner_verified).toBe(true)
+    // a changes its wallet (needs the Ed25519 proof): the token still belongs to the old one
+    const w2 = randomWallet()
+    const changed = await setWallet(app, a.api_keys.test, a.agent.id, w2, sign(`agentsouk:wallet:${a.agent.id}:${w2.address.toLowerCase()}`, a.keypair!.secret_key))
+    expect(changed.status).toBe(200)
+    expect(changed.body.erc8004.owner_verified).toBe(false)
+    const ev = await call(app, 'GET', '/v1/events?types=agent.erc8004_owner_changed', { key: a.api_keys.live })
+    expect(ev.body.data.some((e: any) => e.data.owner_verified === false)).toBe(true)
+    // the token owner points the tokenURI at b's file and b links it: a's stale claim is released
+    chain.erc8004.set('21', { owner: b.wallet_address!, uri: `${BASE}/agents/${b.agent.id}/erc8004.json` })
+    const rb = await call(app, 'POST', '/v1/agents/me/erc8004', { key: b.api_keys.test, body: { agent_id: 21 } })
+    expect(rb.status).toBe(200)
+    expect(rb.body.erc8004.owner_verified).toBe(true)
+    expect(((await (await app.request(`/v1/agents/${a.agent.id}`)).json()) as any).erc8004).toBeNull()
+    const gone = await call(app, 'GET', '/v1/events?types=agent.erc8004_unlinked', { key: a.api_keys.live })
+    expect(gone.body.data.some((e: any) => e.data.reason === 'moved' && e.data.agent_id === '21')).toBe(true)
+  })
+
+  it('a test-key link does not replace a live link', async () => {
+    const live = installFakeChain('live')
+    const a = await createTestAgent(app, { name: 'Two Envs' })
+    live.erc8004.set('32', { owner: a.wallet_address!, uri: `${BASE}/agents/${a.agent.id}/erc8004.json` })
+    expect((await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.live, body: { agent_id: '32' } })).body.erc8004.chain_id).toBe(8453)
+    const test = installFakeChain('test')
+    test.erc8004.set('31', { owner: a.wallet_address!, uri: `${BASE}/agents/${a.agent.id}/erc8004.json` })
+    const blocked = await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.test, body: { agent_id: '31' } })
+    expect(blocked.status).toBe(409)
+    expect(blocked.body.error.code).toBe('erc8004_live_link_exists')
+    expect(((await (await app.request(`/v1/agents/${a.agent.id}`)).json()) as any).erc8004.chain_id).toBe(8453)
+  })
+
+  it('maps node trouble to 502 (empty result, rate limit) and a reverting tokenURI to 409', async () => {
+    const a = await createTestAgent(app, { name: 'Node Trouble' })
+    chain.erc8004Raw = '0x'
+    const empty = await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.test, body: { agent_id: '1' } })
+    expect(empty.status).toBe(502)
+    expect(empty.body.error.details.reason).toContain('malformed ownerOf')
+    chain.erc8004Raw = null
+    chain.erc8004Error = { code: -32005, message: 'rate limit exceeded' }
+    const limited = await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.test, body: { agent_id: '1' } })
+    expect(limited.status).toBe(502)
+    expect(limited.body.error.details.rpc_code).toBe(-32005)
+    chain.erc8004Error = null
+    chain.erc8004.set('41', { owner: a.wallet_address!, uri: null }) // tokenURI reverts with a 0x payload (VM execution error wording)
+    const noUri = await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.test, body: { agent_id: '41' } })
+    expect(noUri.status).toBe(409)
+    expect(noUri.body.error.code).toBe('erc8004_uri_mismatch')
+    expect(noUri.body.error.details.token_uri).toBe('')
+  })
+
+  it('the daily sweep drops moved links, updates owner_verified, and leaves fresh links alone', async () => {
+    const a = await createTestAgent(app, { name: 'Sweep A' })
+    const b = await createTestAgent(app, { name: 'Sweep B' })
+    const c = await createTestAgent(app, { name: 'Sweep C' })
+    const trio = [['51', a], ['52', b], ['53', c]] as const
+    for (const [id, x] of trio) chain.erc8004.set(id, { owner: x.wallet_address!, uri: `${BASE}/agents/${x.agent.id}/erc8004.json` })
+    for (const [id, x] of trio) expect((await call(app, 'POST', '/v1/agents/me/erc8004', { key: x.api_keys.test, body: { agent_id: id } })).status).toBe(200)
+    // nothing is due yet
+    expect(await sweepErc8004Links(Date.now())).toMatchObject({ checked: 0, dropped: 0, changed: 0, errors: 0 })
+    // a: tokenURI moved elsewhere; b: token changed hands; c: unchanged
+    chain.erc8004.set('51', { owner: a.wallet_address!, uri: 'https://elsewhere.example/x.json' })
+    chain.erc8004.set('52', { owner: '0x000000000000000000000000000000000000dEaD', uri: `${BASE}/agents/${b.agent.id}/erc8004.json` })
+    const later = Date.now() + 25 * 3600_000
+    expect(await sweepErc8004Links(later)).toMatchObject({ checked: 3, dropped: 1, changed: 1, errors: 0 })
+    expect(((await (await app.request(`/v1/agents/${a.agent.id}`)).json()) as any).erc8004).toBeNull()
+    const pb = ((await (await app.request(`/v1/agents/${b.agent.id}`)).json()) as any).erc8004
+    expect(pb.owner_verified).toBe(false)
+    expect(new Date(pb.verified_at).getTime()).toBe(later)
+    expect(((await (await app.request(`/v1/agents/${c.agent.id}`)).json()) as any).erc8004.owner_verified).toBe(true)
+    const evA = await call(app, 'GET', '/v1/events?types=agent.erc8004_unlinked', { key: a.api_keys.live })
+    expect(evA.body.data.some((e: any) => e.data.reason === 'uri_changed')).toBe(true)
+    // node trouble keeps the links and counts errors
+    chain.erc8004Error = { code: -32005, message: 'rate limit exceeded' }
+    expect(await sweepErc8004Links(later + 25 * 3600_000)).toMatchObject({ checked: 0, errors: 2 })
+    chain.erc8004Error = null
+    expect(((await (await app.request(`/v1/agents/${c.agent.id}`)).json()) as any).erc8004).not.toBeNull()
   })
 })

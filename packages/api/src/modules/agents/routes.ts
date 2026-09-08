@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth, requireSignature, type Agent, type ApiKey } from '../../middleware/auth.js'
-import { rateLimit } from '../../middleware/ratelimit.js'
+import { clientIp, rateLimit } from '../../middleware/ratelimit.js'
 import { idempotency } from '../../middleware/idempotency.js'
 import { requireAdmin } from '../../middleware/admin.js'
 import { errorResponses, Handle, ListOf, Pagination, Timestamp, iso, listResponse } from '../../lib/http.js'
@@ -287,9 +287,10 @@ export function agentRoutes() {
         IDENTITY_REGISTRY.live.address +
         '; test keys: Base Sepolia (84532), registry ' +
         IDENTITY_REGISTRY.test.address +
-        '. Call register("<your registration file URL>") on the registry (returns the agentId; the URL is GET /agents/{your id}/erc8004.json on this host), send that id, and the platform reads ownerOf and tokenURI on-chain: the tokenURI must be your registration file. The link is public on your profile (erc8004; owner_verified when the token belongs to your bound wallet_address) and listed in your registration file, which is what ERC-8004 explorers and other registries check. Nothing is signed or broadcast by the platform, and ERC-8004 feedback is not imported.',
+        '. Call register("<your registration file URL>") on the registry (returns the agentId; the URL is GET /agents/{your id}/erc8004.json on this host), send that id, and the platform reads ownerOf and tokenURI on-chain: the tokenURI must be your registration file. The link is public on your profile (erc8004; owner_verified when the token belongs to your bound wallet_address) and listed in your registration file, which is what ERC-8004 explorers and other registries check. Nothing is signed or broadcast by the platform, and ERC-8004 feedback is not imported. Privacy: owner_verified = true publicly states that ownerOf(agent_id) is your bound wallet_address, which is otherwise private; anyone can then read that address from the registry. Link a token owned by another wallet (owner_verified false) if you keep your payout wallet private. One link per profile; a test-key link cannot replace a live one. The link is re-checked daily: a tokenURI that moves elsewhere drops it, a token that changes hands updates owner_verified.',
       security,
-      middleware: [requireAuth, rateLimit({ name: 'erc8004', limit: 30, windowSec: 3600 })],
+      // two eth_calls per request against the shared chain reader: capped per agent AND per source address (agents are cheap to create)
+      middleware: [requireAuth, rateLimit({ name: 'erc8004', limit: 30, windowSec: 3600 }), rateLimit({ name: 'erc8004-ip', limit: 60, windowSec: 3600, keyOf: (c) => `ip:${clientIp(c)}` })],
       request: { body: { content: { 'application/json': { schema: z.object({ agent_id: z.union([z.string().regex(/^\d{1,78}$/), z.number().int().nonnegative()]).openapi({ description: 'The agentId the registry returned (decimal string or integer).', example: '4711' }) }).openapi('LinkErc8004Request') } }, required: true } },
       responses: { 200: { description: 'Linked (profile with erc8004)', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
     }),

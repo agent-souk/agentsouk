@@ -1,5 +1,7 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm'
+import { registerSweep } from '../../lib/scheduler.js'
 import { config } from '../../config.js'
+import { log } from '../../lib/log.js'
 import { db } from '../../db/client.js'
 import { agents, type Env, type Erc8004Link } from '../../db/schema.js'
 import { emit } from '../../events/bus.js'
@@ -8,7 +10,7 @@ import type { Agent } from '../../middleware/auth.js'
 import { APP_VERSION } from '../../version.js'
 import { PLATFORM_NAME, tagline } from '../../discovery/text.js'
 import { sameAddress, toChecksumAddress } from '../payments/address.js'
-import { rpc } from '../payments/chain.js'
+import { chainUnavailable, rpc } from '../payments/chain.js'
 
 /**
  * ERC-8004 "Trustless Agents" projection (ADR-28). Two things, both read-only for the platform:
@@ -123,8 +125,10 @@ export async function readRegistration(env: Env, agentId: bigint): Promise<OnCha
     if (isRevert(e)) return null
     throw e
   }
+  // '0x' means no code at the registry address (wrong node/chain): a node problem, never "mint again"
   const owner = decodeAddress(ownerRaw)
-  if (!owner || /^0x0{40}$/.test(owner)) return null
+  if (!owner) throw chainUnavailable('malformed ownerOf result from node', { registry: to })
+  if (/^0x0{40}$/.test(owner)) return null
   let uriRaw: unknown
   try {
     uriRaw = await rpc<string>(env, 'eth_call', [{ to, data: SEL_TOKEN_URI + word(agentId) }, 'latest'])
@@ -135,11 +139,17 @@ export async function readRegistration(env: Env, agentId: bigint): Promise<OnCha
   return { owner, uri: decodeString(uriRaw) ?? '' }
 }
 
-/** An eth_call that reverted is a JSON-RPC error; the chain reader wraps every node error as chain_unavailable. */
-function isRevert(e: unknown): boolean {
+/**
+ * An eth_call that reverted is a JSON-RPC error; the chain reader wraps every node error as chain_unavailable and
+ * keeps the code/data. EIP-1474 code 3 = execution error, a 0x payload = revert data; the message check covers
+ * clients that word it differently.
+ */
+export function isRevert(e: unknown): boolean {
   if (!(e instanceof ApiError) || e.code !== 'chain_unavailable') return false
-  const reason = (e.opts.details as { reason?: unknown } | undefined)?.reason
-  return typeof reason === 'string' && /revert|invalid token|nonexistent|out of bounds/i.test(reason)
+  const d = (e.opts.details ?? {}) as { reason?: unknown; rpc_code?: unknown; rpc_data?: unknown }
+  if (d.rpc_code === 3) return true
+  if (typeof d.rpc_data === 'string' && /^0x[0-9a-fA-F]*$/.test(d.rpc_data)) return true
+  return typeof d.reason === 'string' && /revert|invalid token|nonexistent|out of bounds|execution error/i.test(d.reason)
 }
 
 // --- link / unlink ------------------------------------------------------------------------------------------
@@ -163,10 +173,16 @@ export async function linkErc8004(env: Env, agent: Agent, agentIdInput: unknown,
       details: { agent_id: id.toString(), expected_uri: uri, token_uri: onChain.uri.slice(0, 2048), owner: onChain.owner },
     })
   }
+  // one slot per agent: a sandbox (Base Sepolia) link never silently replaces a live (Base) link
+  if (agent.erc8004 && agent.erc8004.chain_id === IDENTITY_REGISTRY.live.chainId && env === 'test') {
+    throw errors.state('erc8004_live_link_exists', `Your profile already links agentId ${agent.erc8004.agent_id} on Base (live); a test-key link would replace it.`, 'Keep the live link (it is what counts), or remove it first with DELETE /v1/agents/me/erc8004 using a live key, then link the Base Sepolia token with the test key.')
+  }
   const ownerVerified = !!agent.walletAddress && sameAddress(onChain.owner, agent.walletAddress)
   const link: Erc8004Link = { agent_id: id.toString(), chain_id: registry.chainId, registry: registryCaip10(env), agent_uri: onChain.uri, owner: onChain.owner, owner_verified: ownerVerified, verified_at: Date.now() }
   const changed = !agent.erc8004 || agent.erc8004.agent_id !== link.agent_id || agent.erc8004.registry !== link.registry || agent.erc8004.owner_verified !== ownerVerified
   await db().update(agents).set({ erc8004: link, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+  // the chain says this token now points here: any other profile still claiming it is stale
+  await releaseOtherClaims(link, agent.id)
   if (changed) {
     await emit('live', agent.id, 'agent.erc8004_linked', {
       agent_id: link.agent_id,
@@ -177,6 +193,71 @@ export async function linkErc8004(env: Env, agent: Agent, agentIdInput: unknown,
   }
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
+
+/** Clears the same (registry, agentId) from every other agent and tells them (one on-chain identity, one profile). */
+async function releaseOtherClaims(link: Pick<Erc8004Link, 'agent_id' | 'registry'>, keepAgentId: string): Promise<void> {
+  const others = await db().query.agents.findMany({
+    where: and(isNotNull(agents.erc8004), ne(agents.id, keepAgentId), sql`json_extract(${agents.erc8004}, '$.registry') = ${link.registry}`, sql`json_extract(${agents.erc8004}, '$.agent_id') = ${link.agent_id}`),
+    columns: { id: true },
+    limit: 50,
+  })
+  for (const o of others) {
+    await db().update(agents).set({ erc8004: null, updatedAt: Date.now() }).where(eq(agents.id, o.id))
+    await emit('live', o.id, 'agent.erc8004_unlinked', { agent_id: link.agent_id, registry: link.registry, reason: 'moved', hint: 'The tokenURI of this agentId now points at another profile, so the link was removed from yours. Mint your own agentId or set the tokenURI back to your registration file and link again.' })
+  }
+}
+
+/** Called when the bound wallet changes: owner_verified follows the new wallet (the token itself is unchanged). */
+export async function refreshOwnerVerifiedForWallet(agent: Agent, newWallet: string | null): Promise<void> {
+  const l = agent.erc8004
+  if (!l) return
+  const ownerVerified = !!newWallet && sameAddress(l.owner, newWallet)
+  if (ownerVerified === l.owner_verified) return
+  await db().update(agents).set({ erc8004: { ...l, owner_verified: ownerVerified }, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+  await emit('live', agent.id, 'agent.erc8004_owner_changed', { agent_id: l.agent_id, registry: l.registry, owner_verified: ownerVerified, hint: ownerVerified ? 'Your new wallet owns the linked ERC-8004 token.' : 'Your new wallet does not own the linked ERC-8004 token; owner_verified is false until the token is transferred to it (or you link a token it owns).' })
+}
+
+const RECHECK_AFTER_MS = 24 * 3600_000
+
+/**
+ * Daily re-check of every link (like verified domains): the tokenURI may have been pointed elsewhere and the token
+ * may have changed hands. A moved tokenURI drops the link; a new owner updates owner_verified. Node trouble is
+ * logged and retried next round; the link stays until the chain disagrees.
+ */
+export async function sweepErc8004Links(now = Date.now()): Promise<{ checked: number; dropped: number; changed: number; errors: number }> {
+  const stats = { checked: 0, dropped: 0, changed: 0, errors: 0 }
+  const due = await db().query.agents.findMany({ where: and(isNotNull(agents.erc8004), sql`json_extract(${agents.erc8004}, '$.verified_at') < ${now - RECHECK_AFTER_MS}`, ne(agents.status, 'deleted')), limit: 25 })
+  const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
+  for (const a of due) {
+    const l = a.erc8004!
+    const env: Env = l.chain_id === IDENTITY_REGISTRY.test.chainId ? 'test' : 'live'
+    try {
+      const onChain = await readRegistration(env, BigInt(l.agent_id))
+      stats.checked++
+      if (!onChain || !matchesAgentUri(onChain.uri, base, a.id)) {
+        await db().update(agents).set({ erc8004: null, updatedAt: now }).where(eq(agents.id, a.id))
+        await emit('live', a.id, 'agent.erc8004_unlinked', { agent_id: l.agent_id, registry: l.registry, reason: onChain ? 'uri_changed' : 'token_gone', hint: 'The daily re-check found that the token no longer points at your registration file (or no longer exists), so the link was removed. Set the tokenURI back to your file and link again with POST /v1/agents/me/erc8004.' })
+        stats.dropped++
+        continue
+      }
+      const ownerVerified = !!a.walletAddress && sameAddress(onChain.owner, a.walletAddress)
+      const next: Erc8004Link = { ...l, agent_uri: onChain.uri, owner: onChain.owner, owner_verified: ownerVerified, verified_at: now }
+      await db().update(agents).set({ erc8004: next, updatedAt: now }).where(eq(agents.id, a.id))
+      if (ownerVerified !== l.owner_verified || !sameAddress(onChain.owner, l.owner)) {
+        stats.changed++
+        await emit('live', a.id, 'agent.erc8004_owner_changed', { agent_id: l.agent_id, registry: l.registry, owner_verified: ownerVerified, hint: ownerVerified ? 'The linked ERC-8004 token is owned by your bound wallet again.' : 'The linked ERC-8004 token changed hands and is no longer owned by your bound wallet; owner_verified is false.' })
+      }
+    } catch (e) {
+      stats.errors++
+      log.error({ err: e, agent: a.id }, 'sweep: erc8004 re-check failed')
+    }
+  }
+  return stats
+}
+
+registerSweep('erc8004', async (now) => {
+  await sweepErc8004Links(now)
+})
 
 export async function unlinkErc8004(agent: Agent): Promise<Agent> {
   if (agent.erc8004) await db().update(agents).set({ erc8004: null, updatedAt: Date.now() }).where(eq(agents.id, agent.id))

@@ -71,6 +71,18 @@ describe('ERC-8004 encoding', () => {
     expect(parseRegisteredAgentId(logs.slice(0, 2), registry)).toBeUndefined()
     expect(parseRegisteredAgentId(undefined, registry)).toBeUndefined()
     expect(parseRegisteredAgentId([{ address: registry, topics: [ERC8004_REGISTERED_TOPIC, 'nope'] }], registry)).toBeUndefined()
+    // owner filter (indexed topics[2]) and reorged logs
+    const owner = '0xA0a2494006B72109137630bC026434a809731c07'
+    const padOwner = '0x' + owner.slice(2).toLowerCase().padStart(64, '0')
+    const two = [
+      { address: registry, topics: [ERC8004_REGISTERED_TOPIC, '0x' + (7).toString(16).padStart(64, '0'), '0x' + 'ee'.repeat(12).padStart(64, '0')], data: '0x' },
+      { address: registry, topics: [ERC8004_REGISTERED_TOPIC, '0x' + (8).toString(16).padStart(64, '0'), padOwner], data: '0x' },
+    ]
+    expect(parseRegisteredAgentId(two, registry)).toBe(7n)
+    expect(parseRegisteredAgentId(two, registry, owner)).toBe(8n)
+    expect(parseRegisteredAgentId([{ ...two[1]!, removed: true }], registry, owner)).toBeUndefined()
+    expect(() => encodeTokenUri(1n << 256n)).toThrow(/uint256/)
+    expect(() => encodeOwnerOf(-1n)).toThrow(/uint256/)
   })
 })
 
@@ -161,6 +173,7 @@ describe('UsdcWallet.call', () => {
     const receipt = await w.waitForReceipt(r.hash, { intervalMs: 1 })
     expect(receipt.status).toBe('success')
     expect(parseRegisteredAgentId(receipt.logs, registry)).toBe(9n)
+    expect(parseRegisteredAgentId(receipt.logs, registry, VIEM.address)).toBeUndefined() // the fake log names no owner
     await expect(w.call('0x1234', data)).rejects.toThrow(/not a plain address/)
     await expect(w.call(registry, new Uint8Array(0))).rejects.toThrow(/empty calldata/)
     const noEth = fakeRpc({ ...base, eth_getBalance: () => '0x0' })

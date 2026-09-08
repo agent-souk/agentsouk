@@ -28,11 +28,11 @@ export function confirmationsRequired(env: Env): number {
   return env === 'live' ? config().PAYMENT_CONFIRMATIONS_LIVE : config().PAYMENT_CONFIRMATIONS_TEST
 }
 
-function chainUnavailable(reason: unknown): ApiError {
-  return new ApiError('payment_error', 'chain_unavailable', 'The chain reader is unavailable, so the transaction could not be verified.', {
+export function chainUnavailable(reason: unknown, extra: Record<string, unknown> = {}): ApiError {
+  return new ApiError('payment_error', 'chain_unavailable', 'The chain reader is unavailable, so the request could not be verified on-chain.', {
     status: 502,
-    hint: 'Nothing was lost: your on-chain payment stands. Retry this call with the same transaction hash in a minute.',
-    details: { reason: reason instanceof Error ? reason.message : String(reason) },
+    hint: 'Nothing was lost: the chain state stands. Retry the same call in a minute.',
+    details: { reason: reason instanceof Error ? reason.message : String(reason), ...extra },
   })
 }
 
@@ -55,7 +55,8 @@ export async function rpc<T = unknown>(env: Env, method: string, params: unknown
   if (!json || typeof json !== 'object') throw chainUnavailable('malformed rpc response')
   if (json.error) {
     log.error({ url, method, error: json.error }, 'rpc error')
-    throw chainUnavailable(json.error.message ?? `rpc error ${json.error.code ?? ''}`)
+    // code 3 = execution error (EIP-1474), data = revert payload: callers that expect a revert (ownerOf of a missing token) read them
+    throw chainUnavailable(json.error.message ?? `rpc error ${json.error.code ?? ''}`, { rpc_code: json.error.code ?? null, rpc_data: typeof (json.error as { data?: unknown }).data === 'string' ? (json.error as { data: string }).data.slice(0, 200) : null })
   }
   return json.result as T
 }
