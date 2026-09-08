@@ -2,45 +2,31 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~16:20 UTC, nach Checkpoint 55; Baum sauber, alles deployt)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-08 ~17:00 UTC, nach Checkpoint 55; Baum sauber, alles deployt)
 
-**Stand:** Erstkäufer-Programm (ADR-31) ist **live** (Agents-Deploy 16:10 UTC, API 0.3.8 16:11 UTC). Im Init-Tick hat die Desk sofort gekauft:
-Live `veriton` „HTML→JSON“ 0,02 USDC (`job_01M20WHWXTS10ZVKS3XJD9D3J4`); Sandbox `veriton` 0,01 USDC (`job_01M20WHXFNVW…`) und
-`moneyagent-sandbox-test` „Echo test“ 0,01 USDC (`job_01M20WHXH9XX…`); alle 6 eigenen Listings korrekt übersprungen. Jetzt müssen die fremden
-Verkäufer annehmen und liefern; die Desk zahlt dann gasfrei, bewertet, rezensiert (Tick alle 10 min). **Beobachten:**
-`https://agentsouk-agents.fly.dev/health` → `operators.<env>.firstbuy` (`open`, `recent`, `needs_operator`, `last_error`); Ergebnis in
-STATUS Checkpoint 55 nachtragen. Sonst nichts Dringendes: Security-Job von veriton ist bezahlt (3,5 USDC) und in Revision; Nick: Bremse bleibt.
-**Nächste Kandidaten:** Agent-Postfach (MX-Records von Nick), Referral-Bounty, Agentverse/AGNTCY; Desk-Auszahlungen auf Live ebenfalls gasfrei.
+**Der erste Erstkauf ist durch und hat einen eigenen Fehler aufgedeckt, der behoben ist.** Live: `veriton`
+„HTML to structured JSON“ 0,02 USDC, geliefert, gasfrei bezahlt (Tx `0xdf7f12be…d573f`, 16:19 UTC), bewertet
+(Rating 3) und öffentlich rezensiert; Job `job_01M20WHWXTS10ZVKS3XJD9D3J4` completed. Die zwei Sandbox-Käufe
+(veriton, moneyagent) sind **expired**, weil die Verkäufer nicht angenommen haben: ruhende Testlistings, erwartetes Verhalten.
 
-## Übergabe davor (Checkpoint 54; Baum sauber, alles deployt)
+**Der Fehler:** das Listing hat kein `example_input`, also fiel `inputFor()` auf `how_to_order.body_example` zurück,
+und das enthält seit API 0.3.6 Schema-Platzhalter. Wir haben mit dem String `<html: HTML document to parse>` bestellt
+und für ein leeres Ergebnis bezahlt; der Judge gab 3 und schrieb ehrlich dazu, dass die Schuld bei uns liegt.
+**Behoben (Commit e2bb024, deployt):** Platzhalter gelten nicht mehr als Beispiel; `judge.inputForListing` schreibt
+eine kleine, realistische Anfrage, die gegen `input_schema` geprüft wird (ajv), sonst wird das Listing übersprungen.
+Rauchtest deckt den neuen Modellaufruf ab. `veriton` hat eine sachliche Korrektur im Job-Thread bekommen.
 
-**Erster Block: Zahlen so einfach wie möglich (ADR-30, VISION §Zahlen).** Nick will keinen Agent an der Zahlung verlieren.
-1. ~~Sandbox-Faucet~~ **LIVE seit 2026-09-08 (Commit b3b45ee/a181ff5):** `POST /v1/sandbox/faucet` (Test-Key, gebundene Wallet) → die Desk
-   (`POST /faucet`, Shared Secret `FAUCET_SECRET`) signiert eine EIP-3009-Autorisierung und der öffentliche x402-Facilitator
-   (`https://x402.org/facilitator`) sendet sie gasfrei; die Operator-Wallet braucht **kein** Sepolia-ETH. Limits: 1 USDC je Agent und UTC-Tag,
-   3 je Quelladresse, 100 global (`FAUCET_DAILY_GLOBAL`), Desk-Kappen 1 USDC je Anfrage / 50 je Tag. Tabelle `faucet_claims` (Migration 0007),
-   Event `faucet.sent`, `GET /v1/sandbox/faucet` (Status), `platform_faucet` in `GET /v1/payments?env=test`, MCP-Tool `sandbox_faucet`, Doku in
-   llms.txt/skill.md/quickstart. Live-Check: Wegwerf-Agent → Tx `0xab4a2a52…4dc2`, 1 USDC nach 3 s da, zweiter Claim 409. Guthaben: 20 Sepolia-USDC
-   von Nick, 1 verbraucht; Desk-Health zeigt `faucet.sent_today`. Nachfüllen: LAUNCH-CHECKLIST 0. Wichtig für den Weg 2: **die x402-v2-Nutzlast
-   braucht `resource` + `accepted` im `paymentPayload`** (flache Form → HTTP 500 beim Facilitator); `usdc.ts x402SettleBody` ist die Referenz.
-2. ~~Gasfrei bezahlen als Hauptweg~~ **LIVE seit 2026-09-08 (Checkpoint 54, API 0.3.7):** `POST /v1/jobs/{id}/pay` ohne Body liefert
-   `gasless` (EIP-712-Typed-Data für `TransferWithAuthorization` + fertiger x402-v2-Settle-Body + `settle_url`); der Agent signiert, POSTet
-   an den öffentlichen Facilitator, meldet den Hash. MCP-Tool `pay_job`, SDKs 0.3.4 (`jobs.payGasless` / `jobs.pay_gasless`, `sandbox.faucet`),
-   Doku führt den Weg überall zuerst. **Messlatte erfüllt:** `npm run smoke:gasless -w packages/agents` (Wegwerf-Agents, Faucet, versiegelte
-   Lieferung, Signatur, x402.org, Verifikation) lief in 10,5 s ohne ETH und ohne Menschen; PayAI (Base Mainnet) verifiziert unsere
-   Autorisierung (`--verify-live`, nichts gesettelt).
-3. ~~Ehrliche Live-Anleitung~~ **erledigt:** `GET /v1/payments` → `funding` (live: erst hier verdienen, sonst Betreiber kauft einmal USDC und
-   zieht auf Base ab; nie Fiat über uns) und `gasless` (Caveats: Facilitator ist Dritter, Fallback normaler Transfer).
-4. **Jetzt dran:** Agent-Postfach (Brief §8 #3; braucht MX-Records von Nick), Referral-Bounty über die Desk, Agentverse/AGNTCY-Projektionen;
-   optional die Desk-Auszahlungen auf Live ebenfalls gasfrei über PayAI (heute klassischer Transfer mit eigenem Gas, funktioniert).
+**Was als Nächstes zu beobachten ist:** `https://agentsouk-agents.fly.dev/health` → `operators.<env>.firstbuy`.
+Live gibt es aktuell kein weiteres fremdes Listing unter der 1-USDC-Kappe (moneyagent bietet einen Sicherheitsaudit
+für 5 USDC an, bewusst zu teuer für das Programm); neue Listings werden automatisch gekauft. Ausgaben live: 17,32
+von 50 USDC.
 
-**Was sonst offen ist:** 8004scan zeigt 85417, aber 85415/85416 noch nicht (ggf. `setAgentURI` neu setzen); PR punkpeye #13922 wartet auf
-die Maintainer; Runde-2-Bounties laufen (Desk vergibt autonom, `needs_operator` nur bei Security-Funden); täglich `discovery` in der
-Admin-Übersicht lesen (jetzt inkl. `mcp:tool:*`). Fiat/Bank: nur über Stripe Connect als lizenzierten Mittler, nachfragegetrieben (ADR-30).
-
-**Wie deployt wird:** `docs/DEPLOY.md` §Laufender Betrieb (Push vor Deploy; Agents nur nach `npm run smoke:judge`; `flyctl` in `~/.fly/bin`).
-**Praktische Lehre dieser Sitzung:** lange Bash-Heredocs mit TypeScript-Inhalt brachen mehrfach an Quoting; Python-Skripte per Write-Tool
-in den Scratchpad schreiben und ausführen war zuverlässig; Commit-Nachrichten per `-F datei`.
+**Nächste Kandidaten:** Agent-Postfach (braucht MX-Records von Nick), Referral-Bounty, Agentverse/AGNTCY,
+Desk-Auszahlungen auf Live ebenfalls gasfrei. **Größere Frage aus Nicks Fragen heute:** unsere eigenen
+Referenz-Listings (Übersetzung, Zusammenfassung) bestehen den Test „könnte der Käufer das selbst?“ nicht; künftige
+eigene Dienste und die Bounty-Auswahl sollten auf Zugang, Spezialhardware, Determinismus mit Beleg und Haftung
+zielen. Für hohe Preise (Web-Design & Co.) fehlen Meilenstein-Jobs; technisch möglich sind sie schon heute
+(Preis bis 1 Mio USDC, `quote`-Preismodell, 30 Tage Bearbeitungszeit, 512 KB Lieferung, Rest per Link).
 
 ## Stand 2026-09-08, Checkpoint 55: Erstkäufer-Programm live (ADR-31; Agents 61 Tests, API 216, Judge-Rauchtest bestanden)
 
