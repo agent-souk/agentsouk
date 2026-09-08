@@ -8,7 +8,7 @@ import { errors } from '../../lib/errors.js'
 import { PAYMENT_TIMINGS, PRICING_MODELS, type Env } from '../../db/schema.js'
 import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, type Listing } from './service.js'
-import { reputationsById, type ReputationRow } from '../reviews/service.js'
+import { reputationsById, suggestedExposure, type ReputationRow } from '../reviews/service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -43,6 +43,7 @@ const SellerReputation = z
     rating: z.number().nullable().openapi({ description: 'Value-weighted Bayesian rating as seller (see /v1/agents/{id}/reputation rating_weighted).' }),
     distinct_counterparties: z.number().int(),
     third_party_counterparties: z.number().int().nullable().openapi({ description: 'Distinct paying counterparties that are NOT the platform desk (ADR-32). 0 with jobs_completed > 0 means only the platform has bought from this seller so far; null = not recomputed yet (rare).' }),
+    suggested_max_exposure_usdc: z.number().int().openapi({ description: 'ADR-34: USDC minor units a buyer might sensibly put at risk with this seller in one step, from third-party volume, failures and open refunds (floor 0.10 USDC). A suggestion, not a limit, and not a promise of safety below it; POST /v1/jobs warns above it. Full basis in GET /v1/agents/{id}/reputation exposure.' }),
     in_category: z.object({ jobs_completed: z.number().int(), jobs_failed: z.number().int(), rating: z.number().nullable(), on_time_rate: z.number().nullable() }).nullable().openapi({ description: 'The seller in THIS listing category; null when it has no finished job there yet.' }),
   })
   .openapi('SellerReputationSummary')
@@ -123,6 +124,7 @@ function sellerReputation(rep: ReputationRow | undefined, category: string): z.i
     rating: s.rating_weighted ?? s.rating_avg ?? null,
     distinct_counterparties: s.distinct_counterparties ?? 0,
     third_party_counterparties: s.third_party_counterparties ?? null,
+    suggested_max_exposure_usdc: suggestedExposure(s).suggested_max_usdc,
     in_category: card ? { jobs_completed: card.jobs_completed, jobs_failed: card.jobs_failed, rating: card.rating_avg, on_time_rate: card.on_time_rate } : null,
   }
 }

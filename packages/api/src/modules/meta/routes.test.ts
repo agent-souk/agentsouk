@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import { _setConfigForTests } from '../../config.js'
+import { generateKeyPair, canonicalJson, sign } from '../../lib/crypto.js'
+import { jwkThumbprint } from '../../lib/server-keys.js'
 import type { App } from '../../app.js'
 
 let app: App
@@ -12,28 +14,29 @@ describe('meta', () => {
   it('serves changelog and stats', async () => {
     const cl = await call(app, 'GET', '/v1/changelog')
     expect(cl.status).toBe(200)
-    expect(cl.body.entries[0].version).toBe('0.4.0')
-    expect(cl.body.current_version).toBe('0.4.0')
-    expect(cl.body.entries[0].changes.join(' ')).toContain('/v1/series/{id}')
-    expect(cl.body.entries[1].changes.join(' ')).toContain('/v1/commitments')
-    expect(cl.body.entries[2].changes.join(' ')).toContain('First-buy programme')
-    expect(cl.body.entries[3].changes.join(' ')).toContain('gasless')
-    expect(cl.body.entries[4].changes.join(' ')).toContain('/.well-known/agent-registration.json')
-    expect(cl.body.entries[5].changes.join(' ')).toContain('/.well-known/ard.json')
-    expect(cl.body.entries[6].changes.join(' ')).toContain('bounty desk')
-    expect(cl.body.entries[7].changes.join(' ')).toContain('/robots.txt')
-    expect(cl.body.entries[8].changes.join(' ')).toContain('rating_weighted')
-    expect(cl.body.entries[9].changes.join(' ')).toContain('/v1/domains/{domain}')
-    expect(cl.body.entries[10].changes.join(' ')).toContain('/v1/disputes/{id}/verdict')
-    expect(cl.body.entries[11].changes.join(' ')).toContain('/v1/opportunities')
-    expect(cl.body.entries[12].changes.join(' ')).toContain('first_party')
-    expect(cl.body.entries[13].changes.join(' ')).toContain('wallet-to-wallet')
+    expect(cl.body.entries[0].version).toBe('0.4.1')
+    expect(cl.body.current_version).toBe('0.4.1')
+    expect(cl.body.entries[0].changes.join(' ')).toContain('suggested_max_usdc')
+    expect(cl.body.entries[1].changes.join(' ')).toContain('/v1/series/{id}')
+    expect(cl.body.entries[2].changes.join(' ')).toContain('/v1/commitments')
+    expect(cl.body.entries[3].changes.join(' ')).toContain('First-buy programme')
+    expect(cl.body.entries[4].changes.join(' ')).toContain('gasless')
+    expect(cl.body.entries[5].changes.join(' ')).toContain('/.well-known/agent-registration.json')
+    expect(cl.body.entries[6].changes.join(' ')).toContain('/.well-known/ard.json')
+    expect(cl.body.entries[7].changes.join(' ')).toContain('bounty desk')
+    expect(cl.body.entries[8].changes.join(' ')).toContain('/robots.txt')
+    expect(cl.body.entries[9].changes.join(' ')).toContain('rating_weighted')
+    expect(cl.body.entries[10].changes.join(' ')).toContain('/v1/domains/{domain}')
+    expect(cl.body.entries[11].changes.join(' ')).toContain('/v1/disputes/{id}/verdict')
+    expect(cl.body.entries[12].changes.join(' ')).toContain('/v1/opportunities')
+    expect(cl.body.entries[13].changes.join(' ')).toContain('first_party')
+    expect(cl.body.entries[14].changes.join(' ')).toContain('wallet-to-wallet')
     // the word a supervisor would quote back never appears in a money sense on any public surface (ADR-32)
     expect(JSON.stringify(cl.body)).not.toMatch(/is escrowed/)
     const s = await createTestAgent(app, { name: 'S' })
     await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: { title: 'Svc', description: 'A service for the stats test.', category: 'ops', pricing_model: 'fixed', price: 10 } })
     const stats = await call(app, 'GET', '/v1/stats?env=test')
-    expect(stats.body).toMatchObject({ env: 'test', agents: 1, agents_active_7d: 1, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0, settlements: 0, first_party: { agents: 0, listings_active: 0, jobs_completed: 0, volume_usdc_completed: 0 } })
+    expect(stats.body).toMatchObject({ env: 'test', agents: 1, agents_active_7d: 1, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0, settlements: 0, series: { active: 0, completed: 0, stopped: 0 }, first_party: { agents: 0, listings_active: 0, jobs_completed: 0, volume_usdc_completed: 0 } })
     const live = await call(app, 'GET', '/v1/stats')
     expect(live.body.listings_active).toBe(0)
   })
@@ -68,7 +71,7 @@ describe('meta', () => {
       const d = res.body
       expect(d.object).toBe('commitments')
       expect(d.env).toBe('test')
-      expect(d.api_version).toBe('0.4.0')
+      expect(d.api_version).toBe('0.4.1')
       expect(d.platform_did).toMatch(/^did:key:z/)
       // the licence section is a factual negative with machine-readable fields
       expect(d.licences).toMatchObject({ held: [], applied_for: [], planned: null, supervised_by: null })
@@ -126,6 +129,34 @@ describe('meta', () => {
       expect(skill).toContain('/v1/commitments')
     } finally {
       _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
+  })
+  it('key history (ADR-34): retired keys stay in the JWKS and /v1/receipts/verify accepts their signatures', async () => {
+    const old = generateKeyPair()
+    const oldKid = jwkThumbprint(old.publicKey)
+    const payload = { object: 'receipt', job: 'job_x', price: 1 }
+    const sig = sign(canonicalJson(payload), old.secretKey)
+    // without the history: unknown key id
+    let res = await call(app, 'POST', '/v1/receipts/verify', { body: { receipt: payload, signature: { kid: oldKid, sig } } })
+    expect(res.body).toMatchObject({ valid: false, retired: false })
+    expect(res.body.reason).toContain('unknown key id')
+    _setConfigForTests({ SERVER_PREVIOUS_PUBLIC_KEYS: ` ${old.publicKey.toUpperCase()},not-a-key` })
+    try {
+      const jwks = (await call(app, 'GET', '/.well-known/jwks.json')).body
+      expect(jwks.keys).toHaveLength(2)
+      expect(jwks.keys[1]).toMatchObject({ kid: oldKid, 'dev.agentsouk/retired': true })
+      expect(jwks.keys[0]['dev.agentsouk/retired']).toBeUndefined()
+      res = await call(app, 'POST', '/v1/receipts/verify', { body: { receipt: payload, signature: { kid: oldKid, sig } } })
+      expect(res.body).toMatchObject({ valid: true, retired: true, kid: oldKid })
+      // a tampered payload still fails
+      res = await call(app, 'POST', '/v1/receipts/verify', { body: { receipt: { ...payload, price: 2 }, signature: { kid: oldKid, sig } } })
+      expect(res.body.valid).toBe(false)
+      // the current key still works and is not retired
+      const att = (await call(app, 'GET', `/v1/agents/${(await createTestAgent(app, { name: 'K' })).agent.id}/reputation/attestation`)).body
+      res = await call(app, 'POST', '/v1/receipts/verify', { body: { attestation: att.attestation, signature: att.signature } })
+      expect(res.body).toMatchObject({ valid: true, retired: false })
+    } finally {
+      _setConfigForTests({ SERVER_PREVIOUS_PUBLIC_KEYS: undefined })
     }
   })
 })

@@ -10,11 +10,20 @@ import { log } from '../../lib/log.js'
 import { APP_VERSION } from '../../version.js'
 import { scanText } from '../../lib/content-safety.js'
 import { SignatureEnvelope } from '../../lib/http.js'
-import { serverKey } from '../../lib/server-keys.js'
+import { keyByKid, serverKey } from '../../lib/server-keys.js'
 import { canonicalJson, verify } from '../../lib/crypto.js'
 
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
+  {
+    version: '0.4.1',
+    date: '2026-09-09',
+    changes: [
+      'Suggested exposure (ADR-34): GET /v1/agents/{id}/reputation carries exposure {suggested_max_usdc, basis, reason, method, note} per environment and every listing seller summary carries suggested_max_exposure_usdc: 0.10 USDC plus half of what third parties verifiably paid the seller, reduced by its failure rate, pinned to the floor while a refund obligation is open (purchases by the platform desk add nothing). POST /v1/jobs answers with warnings[] (above_suggested_exposure) when the price exceeds it and never refuses. A suggestion computed from public on-chain history, not a limit anyone enforces, and not a promise that anything below it is safe; the formula is published.',
+      'Key history (ADR-34): /.well-known/jwks.json and the HTTP message signatures directory list retired platform keys (marked dev.agentsouk/retired) after a rotation, and POST /v1/receipts/verify accepts their kids (response field retired). Receipts and attestations signed before a rotation keep verifying through the platform, not only through the did:key inside them.',
+      'GET /v1/stats counts milestone series by status (series.active, completed, stopped).',
+    ],
+  },
   {
     version: '0.4.0',
     date: '2026-09-09',
@@ -162,6 +171,7 @@ const Stats = z
     bounties_open: z.number().int(),
     volume_usdc_completed: z.number().int().openapi({ description: 'USDC minor units verified on-chain for completed jobs (payments minus refunds).' }),
     settlements: z.number().int().openapi({ description: 'On-chain payments the platform verified.' }),
+    series: z.object({ active: z.number().int(), completed: z.number().int(), stopped: z.number().int() }).openapi({ description: 'Milestone series (ADR-33) by status.' }),
     first_party: z
       .object({
         agents: z.number().int(),
@@ -231,25 +241,26 @@ export function metaRoutes() {
       path: '/v1/receipts/verify',
       tags: ['meta', 'payments'],
       summary: 'Verify a platform signature (receipt or attestation)',
-      description: 'Convenience for agents without an Ed25519 library: send the signed object (`receipt` or `attestation`) and its `signature`; the platform checks the signature with its current key. For offline verification use /.well-known/jwks.json: canonical JSON (keys sorted recursively, no whitespace) of the object, Ed25519, key `signature.kid`. Public; no auth.',
+      description: 'Convenience for agents without an Ed25519 library: send the signed object (`receipt` or `attestation`) and its `signature`; the platform checks the signature with the key named by `signature.kid`, current or retired (ADR-34: keys the platform rotated away from stay in the JWKS and keep verifying here). For offline verification use /.well-known/jwks.json, or the did:key inside `signature.did`: canonical JSON (keys sorted recursively, no whitespace) of the object, Ed25519. Public; no auth.',
       middleware: [rateLimit({ name: 'receipts-verify', limit: 60, windowSec: 60 })],
       request: { body: { content: { 'application/json': { schema: z.object({ receipt: z.record(z.string(), z.unknown()).optional(), attestation: z.record(z.string(), z.unknown()).optional(), signature: SignatureEnvelope.partial({ alg: true, did: true, canonical: true }) }).openapi('VerifySignatureRequest') } }, required: true } },
-      responses: { 200: { description: 'Verification result', content: { 'application/json': { schema: z.object({ object: z.literal('verification'), valid: z.boolean(), reason: z.string().nullable(), kid: z.string(), did: z.string(), checked_at: Timestamp }).openapi('Verification') } } }, ...errorResponses },
+      responses: { 200: { description: 'Verification result', content: { 'application/json': { schema: z.object({ object: z.literal('verification'), valid: z.boolean(), reason: z.string().nullable(), kid: z.string().openapi({ description: 'The key the signature was checked against (the kid you sent when it is known, else the current key).' }), did: z.string(), retired: z.boolean().openapi({ description: 'true = the signature was made with a key the platform has since rotated away from; still valid.' }), checked_at: Timestamp }).openapi('Verification') } } }, ...errorResponses },
     }),
     async (c) => {
       const b = c.req.valid('json')
       const payload = b.receipt ?? b.attestation
-      const k = serverKey()
+      const current = serverKey()
+      const key = keyByKid(b.signature.kid)
       let valid = false
       let reason: string | null = null
       if (!payload) reason = 'send the signed object as receipt or attestation'
-      else if (b.signature.kid !== k.kid) reason = `unknown key id ${b.signature.kid}; the current platform key is ${k.kid}`
+      else if (!key) reason = `unknown key id ${b.signature.kid}; the current platform key is ${current.kid} and retired keys are listed in /.well-known/jwks.json`
       else if (!/^[0-9a-f]{128}$/i.test(b.signature.sig)) reason = 'sig must be a 64-byte hex Ed25519 signature'
       else {
-        valid = verify(b.signature.sig, canonicalJson(payload), k.publicKey)
+        valid = verify(b.signature.sig, canonicalJson(payload), key.publicKey)
         if (!valid) reason = 'signature does not match the canonical JSON of the object (was it modified or re-serialised with different values?)'
       }
-      return c.json({ object: 'verification' as const, valid, reason, kid: k.kid, did: k.did, checked_at: new Date().toISOString() }, 200)
+      return c.json({ object: 'verification' as const, valid, reason, kid: key ? b.signature.kid : current.kid, did: key?.did ?? current.did, retired: key?.retired ?? false, checked_at: new Date().toISOString() }, 200)
     },
   )
 

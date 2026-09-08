@@ -7,7 +7,7 @@ import { errors } from '../../lib/errors.js'
 import { config } from '../../config.js'
 import { signReceipt } from '../../lib/server-keys.js'
 import { sellersById } from '../listings/service.js'
-import { createReview, emptySide, getReputation, listReviewsForAgent, resolveAgent, type ReputationRow, type ReviewRow } from './service.js'
+import { createReview, emptySide, EXPOSURE_METHOD, EXPOSURE_NOTE, getReputation, listReviewsForAgent, resolveAgent, suggestedExposure, type ReputationRow, type ReviewRow } from './service.js'
 import { evaluatorStats, type EvaluatorStats } from '../disputes/service.js'
 
 const ReviewView = z
@@ -66,7 +66,18 @@ const EvaluatorSide = z
   })
   .openapi('ReputationEvaluator')
 
-const Snapshot = z.object({ score: z.number().int().min(0).max(100), as_seller: Side, as_buyer: Side, as_evaluator: EvaluatorSide, updated_at: Timestamp.nullable() })
+const ExposureView = z
+  .object({
+    suggested_max_usdc: z.number().int().openapi({ description: 'USDC minor units a buyer might sensibly put at risk with this seller in ONE step. Floor 0.10 USDC, cap 100 USDC.' }),
+    display: z.string(),
+    basis: z.object({ third_party_volume_usdc: z.number().int(), third_party_counterparties: z.number().int(), jobs_completed: z.number().int(), jobs_failed: z.number().int(), jobs_cancelled: z.number().int(), refunds_due: z.number().int() }),
+    reason: z.string(),
+    method: z.string(),
+    note: z.string(),
+  })
+  .openapi({ description: 'ADR-34: a suggestion computed from public on-chain history (third-party volume, failures, open refunds), not a limit anyone enforces, and not a promise that anything below it is safe. POST /v1/jobs warns (never refuses) when a price exceeds it.' })
+
+const Snapshot = z.object({ score: z.number().int().min(0).max(100), as_seller: Side, as_buyer: Side, as_evaluator: EvaluatorSide, exposure: ExposureView, updated_at: Timestamp.nullable() })
 
 const ReputationView = z
   .object({
@@ -90,7 +101,9 @@ function sideView(row: Partial<z.infer<typeof Side>> | undefined): z.infer<typeo
 }
 
 function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
-  return { score: r?.score ?? 0, as_seller: sideView(r?.asSeller), as_buyer: sideView(r?.asBuyer), as_evaluator: ev, updated_at: iso(r?.updatedAt) }
+  const seller = sideView(r?.asSeller)
+  const exposure = suggestedExposure({ ...seller, first_party_counterparties: seller.first_party_counterparties ?? 0, third_party_counterparties: seller.third_party_counterparties ?? 0, third_party_volume_usdc: seller.third_party_volume_usdc ?? 0 })
+  return { score: r?.score ?? 0, as_seller: seller, as_buyer: sideView(r?.asBuyer), as_evaluator: ev, exposure: { ...exposure, method: EXPOSURE_METHOD, note: EXPOSURE_NOTE }, updated_at: iso(r?.updatedAt) }
 }
 
 async function toReview(r: ReviewRow, handles: Map<string, { handle: string }>): Promise<z.infer<typeof ReviewView>> {
@@ -178,7 +191,7 @@ export function reviewsRoutes() {
           trust_tier: a.trustTier,
           live: snapshot(rep.live, evLive),
           test: snapshot(rep.test, evTest),
-          explain: 'score = 40% rating_weighted (one counterparty = one vote, weighted by USDC paid, Bayesian prior 3.5) + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not. as_seller.categories shows the seller per category; as_evaluator is the track record on dispute panels (not part of the score).',
+          explain: 'score = 40% rating_weighted (one counterparty = one vote, weighted by USDC paid, Bayesian prior 3.5) + 30% on-chain volume (log) + 20% completion rate + 10% on-time delivery. Failed jobs, seller cancellations, open refunds, buyer withdrawals and silent non-payment count against completion; walk-aways from sealed deliveries do not. as_seller.categories shows the seller per category; as_evaluator is the track record on dispute panels (not part of the score). exposure.suggested_max_usdc (ADR-34) is how much a buyer might sensibly risk in one step: 0.10 USDC plus half of what third parties verifiably paid, reduced by the failure rate, pinned to the floor while a refund is open; a suggestion, not a limit, and not a promise of safety below it.',
         },
         200,
       )

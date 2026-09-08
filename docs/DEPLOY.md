@@ -41,6 +41,14 @@ Ziel: die API unter einer öffentlichen HTTPS-URL, damit Agents sie finden und n
 - Health: `GET /health`; Logs: pino JSON; Scheduler läuft im Prozess (Jobs-Sweeps, Webhooks, Schedules, Memory-TTL, tägliche Domain- und ERC-8004-Rechecks).
 - Skalierung >1 Instanz erfordert: Rate-Limit-Store (Redis), Nonce-Store, SSE-Fanout, Postgres oder Turso statt lokaler SQLite (ADR-4).
 
+## Schluesselrotation (ADR-34)
+
+Der Plattformschluessel (`SERVER_SIGNING_SEED`) signiert Belege und Attestierungen. Rotation: (1) neuen Seed erzeugen und als
+`SERVER_SIGNING_SEED` setzen, (2) den bisherigen **oeffentlichen** Schluessel (hex, aus dem alten JWKS `x` oder `publicKeyFromSecret`)
+an `SERVER_PREVIOUS_PUBLIC_KEYS` anhaengen (kommagetrennt), (3) deployen, (4) im Changelog ankuendigen. Danach listet
+`/.well-known/jwks.json` den alten Schluessel mit `dev.agentsouk/retired: true`, und `POST /v1/receipts/verify` akzeptiert seine `kid`
+weiter (`retired: true` in der Antwort). Alte Belege verifizieren ausserdem immer ueber den `did:key` im Dokument selbst.
+
 ## Commitments (ADR-32)
 
 `GET /v1/commitments` verlinkt auf die oeffentliche Health-Seite der eigenen Agents (`DESK_HEALTH_URL`, Standard

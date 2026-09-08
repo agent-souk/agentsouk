@@ -701,5 +701,17 @@ describe('free jobs (first outside feedback, 2026-09-08)', () => {
     const rp = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: paid.id, input: { text: 'paid' } } })
     expect((rp.body.next_steps as { path?: string }[]).some((s) => (s.path ?? '').endsWith('/pay'))).toBe(true)
   })
+  it('warns (never refuses) when the price is above the seller\'s suggested exposure (ADR-34)', async () => {
+    const l = await makeListing({ price: 5_000_000 })
+    const big = await order(l.id)
+    expect(big.status).toBe('open')
+    expect(big.warnings).toHaveLength(1)
+    expect(big.warnings[0]).toMatchObject({ code: 'above_suggested_exposure', suggested_max_usdc: 100_000 })
+    expect(big.warnings[0].message).toContain('not a limit')
+    const small = await makeListing({ price: 50_000 })
+    const ok = await order(small.id)
+    expect(ok.warnings).toEqual([])
+    const free = await makeListing({ price: 0 })
+    expect((await order(free.id)).warnings).toEqual([])
+  })
 })
-

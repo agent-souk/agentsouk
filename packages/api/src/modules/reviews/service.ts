@@ -210,6 +210,43 @@ export async function firstPartyAgentIds(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.id))
 }
 
+/** ADR-34: floor and cap of the suggested exposure, USDC minor units (0.10 and 100 USDC). */
+export const EXPOSURE_FLOOR = 100_000
+export const EXPOSURE_CAP = 100_000_000
+export const EXPOSURE_METHOD = 'suggested_max_usdc = clamp(0.10 USDC, 0.10 USDC + 0.5 × third_party_volume_usdc × (1 − failure_rate), 100 USDC); failure_rate = jobs_failed / (jobs_completed + jobs_failed), where jobs_failed already includes seller cancellations and buyer verdicts; an open refund obligation pins it to the floor. Only third-party volume counts: purchases by the platform desk add nothing.'
+export const EXPOSURE_NOTE = 'A suggestion computed from public on-chain history, not a limit anyone enforces, and not a promise that anything below it is safe. Start small; every completed step raises it.'
+
+export type Exposure = {
+  suggested_max_usdc: number
+  display: string
+  basis: { third_party_volume_usdc: number; third_party_counterparties: number; jobs_completed: number; jobs_failed: number; jobs_cancelled: number; refunds_due: number }
+  reason: string
+}
+
+/**
+ * ADR-34: how much a buyer might sensibly put at risk with this seller in one step, from what third parties have
+ * verifiably paid it and how often it failed. Pure information: nothing enforces it (a buyer ordering above it gets
+ * a warning, not a refusal), and it says nothing about safety below it.
+ */
+export function suggestedExposure(side: ReputationSide): Exposure {
+  const volume = Math.max(0, side.third_party_volume_usdc ?? 0)
+  // jobs_failed already counts seller cancellations (cancelKind seller_failed) and buyer verdicts; jobs_cancelled is a subset
+  const failed = side.jobs_failed
+  const total = side.jobs_completed + failed
+  const failureRate = total ? failed / total : 0
+  const basis = { third_party_volume_usdc: volume, third_party_counterparties: side.third_party_counterparties ?? 0, jobs_completed: side.jobs_completed, jobs_failed: side.jobs_failed, jobs_cancelled: side.jobs_cancelled, refunds_due: side.refunds_due }
+  let suggested: number
+  let reason: string
+  if (side.refunds_due > 0) {
+    suggested = EXPOSURE_FLOOR
+    reason = `${side.refunds_due} refund obligation(s) open: pinned to the floor until they are settled on-chain.`
+  } else {
+    suggested = Math.min(EXPOSURE_CAP, Math.max(EXPOSURE_FLOOR, Math.round(EXPOSURE_FLOOR + 0.5 * volume * (1 - failureRate))))
+    reason = volume === 0 ? 'no verified payment from a third party yet (purchases by the platform desk do not count): the floor.' : `${basis.third_party_counterparties} third-party wallet(s) paid ${(volume / 1_000_000).toFixed(6)} USDC in total${failed ? `; ${failed} of ${total} jobs failed or were cancelled` : ''}.`
+  }
+  return { suggested_max_usdc: suggested, display: `${(suggested / 1_000_000).toFixed(6)} USDC`, basis, reason }
+}
+
 export function scoreOf(asSeller: ReputationSide, asBuyer: ReputationSide): number {
   const rating = asSeller.rating_weighted ?? asSeller.rating_avg ?? asBuyer.rating_weighted ?? asBuyer.rating_avg
   const ratingNorm = rating == null ? 0.5 : (rating - 1) / 4

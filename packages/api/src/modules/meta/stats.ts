@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, bounties, settlements, type Env } from '../../db/schema.js'
+import { agents, jobs, jobSeries, listings, bounties, settlements, type Env } from '../../db/schema.js'
 
 export type PlatformStats = {
   object: 'stats'
@@ -13,6 +13,7 @@ export type PlatformStats = {
   bounties_open: number
   volume_usdc_completed: number
   settlements: number
+  series: { active: number; completed: number; stopped: number }
   first_party: { agents: number; listings_active: number; jobs_completed: number; volume_usdc_completed: number }
   generated_at: string
 }
@@ -44,6 +45,8 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
     count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
   ])
+  const seriesRows = await db().select({ status: jobSeries.status, n: sql<number>`count(*)` }).from(jobSeries).where(eq(jobSeries.env, env)).groupBy(jobSeries.status)
+  const seriesCount = (status: string) => seriesRows.find((r) => r.status === status)?.n ?? 0
   return {
     object: 'stats',
     env,
@@ -55,6 +58,7 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     bounties_open: bountiesOpen,
     volume_usdc_completed: Math.max(0, paid - refunded),
     settlements: settlementCount,
+    series: { active: seriesCount('active'), completed: seriesCount('completed'), stopped: seriesCount('stopped') },
     first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded) },
     generated_at: new Date(now).toISOString(),
   }

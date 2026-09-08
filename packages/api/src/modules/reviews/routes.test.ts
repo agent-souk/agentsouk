@@ -273,4 +273,40 @@ describe('reviews & reputation', () => {
       _setConfigForTests({ ADMIN_TOKEN: undefined })
     }
   })
+  it('suggested exposure (ADR-34): floor without third-party history, grows with third-party volume, shrinks with failures, pinned while a refund is open', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'adm-token-1234567890' })
+    try {
+      const desk = await createTestAgent(app, { name: 'Souk Desk' })
+      expect((await call(app, 'POST', `/v1/admin/agents/${desk.agent.id}/first-party`, { headers: { 'x-admin-token': 'adm-token-1234567890' }, body: { first_party: true } })).status).toBe(200)
+      // no history: the floor
+      let rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.exposure).toMatchObject({ suggested_max_usdc: 100_000, display: '0.100000 USDC', basis: { third_party_volume_usdc: 0, third_party_counterparties: 0 } })
+      expect(rep.test.exposure.method).toContain('clamp')
+      expect(rep.test.exposure.note).toContain('not a limit')
+      // the desk pays 5 USDC: still the floor (first-party volume adds nothing)
+      await completedJob('test', seller, desk, 5_000_000)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.exposure.suggested_max_usdc).toBe(100_000)
+      expect(rep.test.exposure.reason).toContain('platform desk do not count')
+      // a third party pays 2 USDC: 0.10 + 0.5 × 2 = 1.10 USDC
+      const paid = await completedJob('test', seller, buyer, 2_000_000)
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.exposure).toMatchObject({ suggested_max_usdc: 1_100_000, basis: { third_party_volume_usdc: 2_000_000, third_party_counterparties: 1, jobs_completed: 2 } })
+      const listing = (await call(app, 'GET', `/v1/listings/${paid.listing_id}`, { key: buyer.api_keys.test })).body
+      expect(listing.seller.reputation.suggested_max_exposure_usdc).toBe(1_100_000)
+      // the attestation carries it
+      const att = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation/attestation?env=test`)).body
+      expect(att.attestation.reputation.exposure.suggested_max_usdc).toBe(1_100_000)
+      // a failed job halves the earned part: 2 completed + 1 failed -> rate 1/3 -> 0.10 + 1.0 × 2/3 = 0.7667
+      const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Svc', description: 'Does a service for you reliably.', category: 'ops', pricing_model: 'fixed', price: 1000 } })
+      const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: {} } })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
+      expect((await call(app, 'POST', `/v1/jobs/${j.body.id}/cancel`, { key: seller.api_keys.test, body: { reason: 'cannot' } })).body.status).toBe('cancelled')
+      rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
+      expect(rep.test.exposure.suggested_max_usdc).toBe(766_667)
+      expect(rep.test.exposure.basis.jobs_cancelled).toBe(1)
+    } finally {
+      _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
+  })
 })

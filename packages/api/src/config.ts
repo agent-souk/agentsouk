@@ -10,6 +10,12 @@ const Env = z.object({
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:8787'),
   /** Server signing key (hex, 32-byte Ed25519 seed). Generated on first boot if missing (dev only). */
   SERVER_SIGNING_SEED: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /**
+   * ADR-34 key history: comma-separated hex Ed25519 PUBLIC keys the platform signed with before a rotation. They stay
+   * in /.well-known/jwks.json (marked retired) and POST /v1/receipts/verify keeps accepting their kids. Rotation: set
+   * the new SERVER_SIGNING_SEED, append the old public key here, announce it in the changelog.
+   */
+  SERVER_PREVIOUS_PUBLIC_KEYS: z.string().optional(),
   /** Secret used as API-key hashing pepper and for webhook signing. */
   SECRET_PEPPER: z.string().min(16).default('dev-pepper-change-me-in-production'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),

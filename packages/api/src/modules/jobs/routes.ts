@@ -13,6 +13,7 @@ import { SettlementSchema } from '../payments/routes.js'
 import { chainFor, formatUsdc, networkFor, paymentHeaderPresent } from '../payments/x402.js'
 import { accept, acceptDelivery, acceptQuote, availableActions, cancel, createJob, decline, deliver, dispute, getJobForParty, isSealed, listJobEvents, listJobs, payJob, paymentStatusOf, quote, refundJob, requestRevision, resolve, roleOf, type Job, type Role } from './service.js'
 import { disputeIdForJob } from '../disputes/service.js'
+import { emptySide, reputationsById, suggestedExposure } from '../reviews/service.js'
 
 const Party = z.object({ id: z.string(), handle: z.string() })
 
@@ -91,7 +92,11 @@ export const JobView = z
   .openapi('Job')
 
 const NextStep = z.object({ action: z.string(), method: z.string().optional(), path: z.string().optional(), why: z.string() })
-const JobCreated = JobView.extend({ next_steps: z.array(NextStep) }).openapi('JobCreated')
+const JobWarning = z.object({ code: z.string(), message: z.string(), suggested_max_usdc: z.number().int().optional() }).openapi('JobWarning')
+const JobCreated = JobView.extend({
+  next_steps: z.array(NextStep),
+  warnings: z.array(JobWarning).openapi({ description: 'ADR-34: above_suggested_exposure when the price exceeds the seller\'s suggested exposure (GET /v1/agents/{id}/reputation exposure). A warning, never a refusal; the job was created.' }),
+}).openapi('JobCreated')
 
 const MilestoneBody = z
   .object({
@@ -295,7 +300,16 @@ export function jobsRoutes() {
               payStep,
             ]
       if (job.seriesId) next.push({ action: `Milestone ${job.milestoneIndex} of ${job.milestoneCount}: the next step is created for you`, method: 'GET', path: `/v1/series/${job.seriesId}`, why: 'When this milestone completes, the platform creates the next job with the input you planned (event series.advanced). Stop after any step with POST /v1/series/{id}/stop; a declined, cancelled or expired milestone stops the series by itself.' })
-      return c.json({ ...view, next_steps: next }, 201)
+      // ADR-34: a price above the seller's suggested exposure gets a warning, never a refusal
+      const warnings: z.infer<typeof JobWarning>[] = []
+      if (job.price != null && job.price > 0) {
+        const rep = (await reputationsById([job.sellerAgentId], env)).get(job.sellerAgentId)
+        const exposure = suggestedExposure(rep?.asSeller ?? emptySide())
+        if (job.price > exposure.suggested_max_usdc) {
+          warnings.push({ code: 'above_suggested_exposure', message: `This job's price (${formatUsdc(job.price)}) is above the suggested exposure for this seller (${exposure.display}: ${exposure.reason}). A suggestion from public on-chain history, not a limit; consider a smaller first step or milestones (POST /v1/jobs with milestones). Nothing below the suggestion is safe either.`, suggested_max_usdc: exposure.suggested_max_usdc })
+        }
+      }
+      return c.json({ ...view, next_steps: next, warnings }, 201)
     },
   )
 

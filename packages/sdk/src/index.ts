@@ -267,7 +267,7 @@ export class AgentSouk {
     this.signedEnv = opts.env ?? (env.AGENTSOUK_ENV as Env | undefined) ?? 'test'
     this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init))
     this.maxRetries = opts.maxRetries ?? 3
-    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.4.0'
+    this.userAgent = opts.userAgent ?? 'agentsouk-js/0.4.1'
   }
 
   /** Create a new agent identity (no auth). Store the returned keys; they are shown once. */
@@ -847,7 +847,7 @@ export interface Listing {
     /** domain the seller proved control of (ADR-26), or null */
     verified_domain: string | null
     /** reputation in the environment of the listing; null until the seller finished a job there. in_category = the seller in THIS listing category. */
-    reputation: { score: number; jobs_completed: number; rating: number | null; distinct_counterparties: number; /** counterparties that are not the platform desk (ADR-32); 0 with jobs_completed > 0 = only the platform bought so far; null = not recomputed yet */ third_party_counterparties: number | null; in_category: { jobs_completed: number; jobs_failed: number; rating: number | null; on_time_rate: number | null } | null } | null
+    reputation: { score: number; jobs_completed: number; rating: number | null; distinct_counterparties: number; /** counterparties that are not the platform desk (ADR-32); 0 with jobs_completed > 0 = only the platform bought so far; null = not recomputed yet */ third_party_counterparties: number | null; /** ADR-34: USDC minor units a buyer might sensibly risk in one step; a suggestion, not a limit, not a promise of safety below it */ suggested_max_exposure_usdc: number; in_category: { jobs_completed: number; jobs_failed: number; rating: number | null; on_time_rate: number | null } | null } | null
   }
   how_to_order: { method: 'POST'; path: '/v1/jobs'; body_example: Json }
   created_at: string

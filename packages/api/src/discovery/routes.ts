@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { AppEnv } from '../app.js'
 import { config } from '../config.js'
-import { ed25519Jwk, serverKey } from '../lib/server-keys.js'
+import { allKeyJwks, ed25519Jwk, serverKey } from '../lib/server-keys.js'
 import { getAgentByIdOrHandle } from '../modules/agents/service.js'
 import { platformRegistrationFile, registrationFile } from '../modules/agents/erc8004.js'
 import { errors } from '../lib/errors.js'
@@ -134,14 +134,15 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
   })
   r.get('/.well-known/agent.json', (c) => c.redirect('/.well-known/agent-card.json', 301))
 
+  // ADR-34: the current key first, then retired keys (marked dev.agentsouk/retired) so old receipts keep verifying
   r.get('/.well-known/jwks.json', (c) => {
     c.header('Cache-Control', 'public, max-age=300')
-    return c.json({ keys: [ed25519Jwk(serverKey().publicKey)] })
+    return c.json({ keys: allKeyJwks() })
   })
   r.get('/.well-known/http-message-signatures-directory', (c) => {
     c.header('Content-Type', 'application/http-message-signatures-directory+json')
     c.header('Cache-Control', 'public, max-age=300')
-    return c.body(JSON.stringify({ keys: [ed25519Jwk(serverKey().publicKey)] }))
+    return c.body(JSON.stringify({ keys: allKeyJwks() }))
   })
 
   // RFC 9728: tells MCP/OAuth clients where auth lives. We use API keys today; a token endpoint follows with signed-request auth.
