@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, jobs, jobSeries, listings, bounties, settlements, type Env } from '../../db/schema.js'
+import { isOurWallet, ourFundedWallets } from '../payments/our-money.js'
 
 export type PlatformStats = {
   object: 'stats'
@@ -59,27 +60,16 @@ export const OUTSIDER_PRICE_FLOOR = 10_000 // 0.01 USDC
  * one coin around nets to zero for everyone and therefore reports nothing, which is what it is.
  */
 async function betweenOutsiders(env: Env): Promise<PlatformStats['between_outsiders']> {
-  // Wallets holding money that came from us: the sandbox faucet, plus everything our own agents have paid out,
-  // followed through every subsequent payment recorded here. Only hops we can see - an off-platform transfer
-  // breaks the trail, and GET /v1/commitments says so rather than implying this is complete.
-  const ours = sql`
-    with recursive ours(addr) as (
-        select lower(fc.address) from faucet_claims fc
-      union
-        select lower(st.pay_to) from settlements st join agents a on a.id = st.payer_agent_id
-         where st.env = ${env} and st.kind = 'payment' and st.status = 'settled' and a.first_party = 1
-      union
-        select lower(s2.pay_to) from settlements s2, ours
-         where s2.env = ${env} and s2.kind = 'payment' and s2.status = 'settled' and lower(s2.payer_address) = ours.addr
-    )`
+  // One definition of "money that came from us", shared with the per-agent reputation (ADR-45): the two drifting
+  // apart is how ADR-43 happened. See modules/payments/our-money.ts for what the trail does and does not cover.
+  const our = await ourFundedWallets(env)
   const paidOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled')`
   const refundedOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'refund' and st.status = 'settled')`
-  const fromUs = sql`exists (select 1 from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled' and lower(st.payer_address) in (select addr from ours))`
+  const fromUs = sql`exists (select 1 from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled' and ${isOurWallet(sql`st.payer_address`, our)})`
   const outsiderJobs = sql`from jobs j where j.env = ${env} and j.status in ('completed','resolved') and j.first_party_involved = 0`
 
   const row = await db().get<{ jobs: number; buyers: number; sellers: number; net: number; gross: number; ex_no_money: number; ex_floor: number; ex_ours: number; ex_refunded: number }>(sql`
-    ${ours},
-    counted as (select j.id ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} < ${paidOn}),
+    with counted as (select j.id ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} < ${paidOn}),
     flows as (
         select lower(st.payer_address) addr, -st.amount delta from settlements st join counted c on c.id = st.job_id where st.status = 'settled'
       union all

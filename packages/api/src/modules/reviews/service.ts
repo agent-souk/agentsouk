@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agentReputation, agents, bounties, jobs, listings, reviews, settlements, type CategoryCard, type Env, type ReputationSide } from '../../db/schema.js'
+import { OUTSIDER_PRICE_FLOOR } from '../meta/stats.js'
+import { ourFundedWallets } from '../payments/our-money.js'
 import { errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { log } from '../../lib/log.js'
@@ -44,6 +46,7 @@ export const emptySide = (): ReputationSide => ({
   distinct_counterparties: 0,
   first_party_counterparties: 0,
   third_party_counterparties: 0,
+  counterparties_without_payment: 0,
   volume_usdc: 0,
   third_party_volume_usdc: 0,
   rating_avg: null,
@@ -145,12 +148,20 @@ type SideResult = { side: ReputationSide; payingAddresses: number; thirdPartyPay
  * counterparties and volume are also reported without them (ADR-32), because the desk buys every new listing once
  * and a seller nobody but the platform has paid must not look like one with demand.
  */
-function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewRow[], stl: Map<string, SettlementRow[]>, firstPartyIds: Set<string> = new Set()): SideResult {
+function sideFromJobs(
+  list: JobRow[],
+  side: 'seller' | 'buyer',
+  ratings: ReviewRow[],
+  stl: Map<string, SettlementRow[]>,
+  firstPartyIds: Set<string> = new Set(),
+  ourWallets: Set<string> = new Set(),
+  walletOf: Map<string, string | null> = new Map(),
+): SideResult {
   const completed = list.filter(isCompletedJob)
   const counterpartyId = (j: JobRow) => (side === 'seller' ? j.buyerAgentId : j.sellerAgentId)
   const settledPayments = (j: JobRow) => (stl.get(j.id) ?? []).filter((s) => s.kind === 'payment' && s.status === 'settled')
   const refundsOf = (j: JobRow) => (stl.get(j.id) ?? []).filter((s) => s.kind === 'refund')
-  // Counterparties: distinct wallet addresses on paid jobs; agents met only through free jobs count by id.
+  // Counterparties: distinct wallet addresses on paid jobs; agents met only through free jobs count separately.
   const addresses = new Set<string>()
   const thirdPartyAddresses = new Set<string>()
   const paidIds = new Set<string>()
@@ -160,25 +171,48 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
   for (const j of completed) {
     const pays = settledPayments(j)
     const firstParty = firstPartyIds.has(counterpartyId(j))
+    // ADR-45, the same rule as between_outsiders one level down: a payment below the floor is not a purchase, and
+    // money that came from us is not a third party's money - whichever side of the job this agent was on, the
+    // wallet that PAID is the one that has to be independent.
+    const paidTotal = pays.reduce((sum, s) => sum + s.amount, 0)
+    const ourMoney = pays.some((s) => ourWallets.has(s.payerAddress.toLowerCase()))
+    // Volume stays a plain fact: everything that settled, minus refunds, floor or no floor. Only the party COUNTS
+    // carry the floor, because that is where dust bought something - a name in a list a buyer reads as demand.
+    const net = paidTotal - refundsOf(j).reduce((sum, s) => sum + s.amount, 0)
     if (pays.length) {
+      volume += net
+      if (!firstParty && !ourMoney) thirdPartyVolume += net
+    }
+    if (pays.length && paidTotal >= OUTSIDER_PRICE_FLOOR) {
       for (const s of pays) {
         const address = (side === 'seller' ? s.payerAddress : s.payTo).toLowerCase()
         addresses.add(address)
-        if (!firstParty) thirdPartyAddresses.add(address)
+        if (!firstParty && !ourMoney) thirdPartyAddresses.add(address)
       }
       paidIds.add(counterpartyId(j))
-      const net = pays.reduce((sum, s) => sum + s.amount, 0) - refundsOf(j).reduce((sum, s) => sum + s.amount, 0)
-      volume += net
-      if (!firstParty) thirdPartyVolume += net
-    } else if (paidValue(j) === 0) freeIds.add(counterpartyId(j))
+    } else freeIds.add(counterpartyId(j))
   }
+  // ADR-45: counterparties met without money are counted, and named, on their own. They used to be added straight
+  // into third_party_counterparties by agent id - the field GET /v1/commitments calls the honest demand signal -
+  // so N throwaway registrations doing N jobs at a price of zero produced N "third parties that paid this seller".
   const ids = new Set([...freeIds].filter((id) => !paidIds.has(id)))
-  const thirdPartyIds = [...ids].filter((id) => !firstPartyIds.has(id))
+  const thirdPartyIds: string[] = []
   const failed = side === 'seller' ? list.filter(isSellerFailure) : []
   const cancelled = side === 'seller' ? list.filter((j) => j.status === 'cancelled' && j.cancelKind === 'seller_failed') : list.filter(isBuyerCancellation)
-  // answering an order at all (accepting or declining) against letting it die unanswered in one's own window
-  const ignored = side === 'seller' ? list.filter(isSellerNoShow) : []
-  const answered = side === 'seller' ? list.filter((j) => j.acceptedAt != null || j.status === 'declined') : []
+  /*
+   * Answering an order at all (accepting or declining) against letting it die unanswered in one's own window.
+   * ADR-45: counted by distinct BUYER WALLET, and only for buyers that had a wallet bound at all. Ordering costs
+   * nothing, so counting raw orders handed every agent here a weapon: order from a competitor five times, let each
+   * expire, and its public response_rate - printed on every one of its listings - falls to zero at no cost. Now one
+   * buyer can move a seller's record by at most one, and a buyer that could never have paid moves it not at all.
+   */
+  const buyerWallet = (j: JobRow) => walletOf.get(j.buyerAgentId)?.toLowerCase() ?? null
+  const walletsOf = (js: JobRow[]) => new Set(js.map(buyerWallet).filter((w): w is string => w != null))
+  const answered = side === 'seller' ? walletsOf(list.filter((j) => j.acceptedAt != null || j.status === 'declined')) : new Set<string>()
+  // Never answered at all, not "answered less often than it ordered": the two sets are disjoint, so a buyer this
+  // seller has ever replied to does not also count against it. The case ADR-41 was built for is the seller that
+  // leaves a buyer with no answer at all inside its own accept window.
+  const ignored = side === 'seller' ? new Set([...walletsOf(list.filter(isSellerNoShow))].filter((w) => !answered.has(w))) : new Set<string>()
   const disputed = list.filter((j) => j.disputeReason != null)
   const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null)
   const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
@@ -190,14 +224,16 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
     jobs_unpaid: side === 'buyer' ? list.filter(isUnpaidExpiry).length : 0,
     jobs_walked_away: side === 'buyer' ? list.filter(isWalkAway).length : 0,
     deliveries_unpaid: side === 'seller' ? list.filter(isDeliveryUnpaid).length : 0,
-    orders_ignored: side === 'seller' ? ignored.length : 0,
-    response_rate: side === 'seller' && answered.length + ignored.length > 0 ? Math.round((answered.length / (answered.length + ignored.length)) * 100) / 100 : null,
+    orders_ignored: side === 'seller' ? ignored.size : 0,
+    response_rate: side === 'seller' && answered.size + ignored.size > 0 ? Math.round((answered.size / (answered.size + ignored.size)) * 100) / 100 : null,
     refunds_due: side === 'seller' ? list.filter(isRefundDue).length : 0,
     refunds_made: side === 'seller' ? list.filter(isRefunded).length : 0,
     distinct_counterparties: addresses.size + ids.size,
-    // a partition of distinct_counterparties: an address any third party paid from is third-party, the rest is ours
-    first_party_counterparties: addresses.size + ids.size - (thirdPartyAddresses.size + thirdPartyIds.length),
-    third_party_counterparties: thirdPartyAddresses.size + thirdPartyIds.length,
+    // A partition of distinct_counterparties (ADR-45): wallets that paid, split by whose money it was, plus the
+    // counterparties no money ever passed between. first + third + without_payment = distinct.
+    first_party_counterparties: addresses.size - thirdPartyAddresses.size,
+    third_party_counterparties: thirdPartyAddresses.size,
+    counterparties_without_payment: ids.size,
     volume_usdc: Math.max(0, volume),
     third_party_volume_usdc: Math.max(0, thirdPartyVolume),
     rating_avg: bayesianRating(
@@ -275,8 +311,14 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
   const stl = new Map<string, SettlementRow[]>()
   for (const s of stlRows) stl.set(s.jobId, [...(stl.get(s.jobId) ?? []), s])
   const firstParty = await firstPartyAgentIds()
-  const seller = sideFromJobs(all.filter((j) => j.sellerAgentId === agentId), 'seller', revs.filter((r) => r.role === 'buyer'), stl, firstParty)
-  const buyer = sideFromJobs(all.filter((j) => j.buyerAgentId === agentId), 'buyer', revs.filter((r) => r.role === 'seller'), stl, firstParty)
+  // ADR-45: the same "money that came from us" set the headline figure uses, and the counterparties' wallets, so a
+  // buyer that could never have paid cannot damage a seller's public response rate.
+  const ourWallets = await ourFundedWallets(env)
+  const partyIds = [...new Set(all.flatMap((j) => [j.buyerAgentId, j.sellerAgentId]))]
+  const partyRows = partyIds.length ? await db().query.agents.findMany({ where: inArray(agents.id, partyIds), columns: { id: true, walletAddress: true } }) : []
+  const walletOf = new Map(partyRows.map((a) => [a.id, a.walletAddress]))
+  const seller = sideFromJobs(all.filter((j) => j.sellerAgentId === agentId), 'seller', revs.filter((r) => r.role === 'buyer'), stl, firstParty, ourWallets, walletOf)
+  const buyer = sideFromJobs(all.filter((j) => j.buyerAgentId === agentId), 'buyer', revs.filter((r) => r.role === 'seller'), stl, firstParty, ourWallets, walletOf)
   const sellerJobs = all.filter((j) => j.sellerAgentId === agentId)
   const asSeller: ReputationSide = { ...seller.side, categories: categoryCards(sellerJobs, await categoriesOf(sellerJobs), revs.filter((r) => r.role === 'buyer'), stl) }
   const asBuyer: ReputationSide = { ...buyer.side, categories: [] }
@@ -314,8 +356,8 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
  * afterwards stayed null on old rows forever - including, for ADR-41, the very seller whose ignored order made the
  * field necessary. Add new nullable fields here.
  */
-function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null }): boolean {
-  return s.third_party_counterparties == null || s.orders_ignored == null
+function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null; counterparties_without_payment?: number | null }): boolean {
+  return s.third_party_counterparties == null || s.orders_ignored == null || s.counterparties_without_payment == null
 }
 
 export async function backfillReputation(): Promise<{ recomputed: number; errors: number }> {

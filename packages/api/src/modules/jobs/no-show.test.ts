@@ -97,18 +97,62 @@ describe('a seller that never answers (ADR-41)', () => {
     expect(buyerRec.jobs_unpaid).toBe(1)
   })
 
-  it('mixes answered and unanswered orders into a rate a buyer can read', async () => {
+  it('mixes answered and unanswered buyers into a rate a buyer can read', async () => {
     const seller = await createTestAgent(app, { name: 'Half there' })
-    const buyer = await createTestAgent(app, { name: 'Buyer' })
+    const answeredBuyer = await createTestAgent(app, { name: 'Buyer it answered' })
+    const ignoredBuyer = await createTestAgent(app, { name: 'Buyer it ignored' })
     const l = await listing(seller)
-    const answered = await order(buyer, l)
-    await call(app, 'POST', `/v1/jobs/${answered.id}/accept`, { key: seller.api_keys.test, body: {} })
+    const answered = await order(answeredBuyer, l)
+    await call(app, `POST`, `/v1/jobs/${answered.id}/accept`, { key: seller.api_keys.test, body: {} })
+    await order(ignoredBuyer, l)
+    await sweepJobs(Date.now() + 61_000)
+
+    const rec = await sellerRecord(seller)
+    expect(rec.orders_ignored).toBe(1)
+    expect(rec.response_rate).toBe(0.5)
+  })
+
+  /*
+   * ADR-45. Ordering costs nothing, so counting raw orders made this a weapon: an adversarial audit showed that any
+   * agent could order from a competitor N times, let each expire, and drive the response_rate printed on all of its
+   * listings to zero at no cost. Counted by distinct buyer wallet, one buyer can move a seller's record by one.
+   */
+  it('one buyer cannot damage a seller more than once, however many orders it lets expire', async () => {
+    const seller = await createTestAgent(app, { name: 'Target' })
+    const attacker = await createTestAgent(app, { name: 'Attacker' })
+    const l = await listing(seller)
+    for (let i = 0; i < 5; i++) await order(attacker, l)
+    await sweepJobs(Date.now() + 61_000)
+
+    const rec = await sellerRecord(seller)
+    expect(rec.orders_ignored).toBe(1)
+    expect(rec.response_rate).toBe(0)
+  })
+
+  it('a buyer that never bound a wallet, and so could never have paid, does not count against a seller', async () => {
+    const seller = await createTestAgent(app, { name: 'Target' })
+    const walletless = await createTestAgent(app, { name: 'Cannot pay', wallet_address: null })
+    const l = await listing(seller)
+    await order(walletless, l)
+    await sweepJobs(Date.now() + 61_000)
+
+    const rec = await sellerRecord(seller)
+    expect(rec.orders_ignored).toBe(0)
+    expect(rec.response_rate).toBe(null)
+  })
+
+  it('answering a buyer once means its later unanswered orders do not also count against the seller', async () => {
+    const seller = await createTestAgent(app, { name: 'Answers sometimes' })
+    const buyer = await createTestAgent(app, { name: 'Repeat buyer' })
+    const l = await listing(seller)
+    const first = await order(buyer, l)
+    await call(app, `POST`, `/v1/jobs/${first.id}/accept`, { key: seller.api_keys.test, body: {} })
     await order(buyer, l)
     await order(buyer, l)
     await sweepJobs(Date.now() + 61_000)
 
     const rec = await sellerRecord(seller)
-    expect(rec.orders_ignored).toBe(2)
-    expect(rec.response_rate).toBe(0.33)
+    expect(rec.orders_ignored).toBe(0)
+    expect(rec.response_rate).toBe(1)
   })
 })

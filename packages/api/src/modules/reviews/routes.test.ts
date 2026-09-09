@@ -175,7 +175,9 @@ describe('reviews & reputation', () => {
       listing = (await call(app, 'GET', `/v1/listings/${j2.listing_id}`, { key: buyer.api_keys.test })).body
       expect(listing.seller.reputation).toMatchObject({ jobs_completed: 2, distinct_counterparties: 2, third_party_counterparties: 1 })
       lb = (await call(app, 'GET', '/v1/leaderboard?env=test')).body
-      expect(lb.data[0]).toMatchObject({ agent: { id: seller.agent.id }, third_party_counterparties: 1, rank_value: 50_000 })
+      // ADR-45: rank_value is THIRD-PARTY volume x third-party counterparties. It used to be total volume, so this
+      // seller ranked at 50_000 - the 20_000 our own desk paid it counted as demand, which the method text denied.
+      expect(lb.data[0]).toMatchObject({ agent: { id: seller.agent.id }, third_party_counterparties: 1, rank_value: 30_000 })
       expect(lb.method).toContain('third_party_counterparties')
 
       // 3. the desk's own buyer side: the seller is a third party to it
@@ -210,12 +212,14 @@ describe('reviews & reputation', () => {
       const ev = (await call(app, 'GET', '/v1/events?types=review.received', { key: seller.api_keys.test })).body
       expect(ev.data[0].data.machine_generated).toBe(true)
 
-      // 2. free jobs: the desk counts as first party by id, an outsider as third party by id
+      // 2. free jobs count, but on their own (ADR-45): a counterparty that never paid is not a paying third party.
+      // Until then N throwaway registrations doing N jobs at price 0 produced N "third_party_counterparties" - the
+      // very field GET /v1/commitments points buyers at as the honest demand signal.
       const other = await createTestAgent(app, { name: 'Free Rider' })
       await completedJob('test', seller, desk, 0)
       await completedJob('test', seller, other, 0)
       let rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
-      expect(rep.test.as_seller).toMatchObject({ jobs_completed: 3, distinct_counterparties: 2, first_party_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 0 })
+      expect(rep.test.as_seller).toMatchObject({ jobs_completed: 3, distinct_counterparties: 2, first_party_counterparties: 1, third_party_counterparties: 0, counterparties_without_payment: 1, third_party_volume_usdc: 0 })
 
       // 3. the buyer-role leaderboard lists the desk, labelled, with the seller as its third party
       const buyers = (await call(app, 'GET', '/v1/leaderboard?env=test&role=buyer')).body
@@ -224,10 +228,10 @@ describe('reviews & reputation', () => {
       // 4. un-flagging the desk recomputes the seller: everything becomes third party
       expect((await flag(desk.agent.id, false)).status).toBe(200)
       rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
-      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 0, third_party_counterparties: 2, third_party_volume_usdc: 20_000 })
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 0, third_party_counterparties: 1, counterparties_without_payment: 1, third_party_volume_usdc: 20_000 })
       expect((await flag(desk.agent.id, true)).status).toBe(200)
       rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
-      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 1 })
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 0, counterparties_without_payment: 1 })
 
       // 5. a row written before the split reports null (never a made-up 0) until the startup backfill recomputes it
       await db().run(sql`update agent_reputation set as_seller = json_remove(as_seller, '$.third_party_counterparties', '$.first_party_counterparties', '$.third_party_volume_usdc') where agent_id = ${seller.agent.id} and env = 'test'`)
@@ -239,7 +243,7 @@ describe('reviews & reputation', () => {
       expect(lb.data.find((x: any) => x.agent.id === seller.agent.id)).toMatchObject({ third_party_counterparties: null, rank_value: 20_000 * 2 })
       expect(await backfillReputation()).toEqual({ recomputed: 1, errors: 0 })
       rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
-      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 0 })
+      expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 0, counterparties_without_payment: 1, third_party_volume_usdc: 0 })
       expect(await backfillReputation()).toEqual({ recomputed: 0, errors: 0 })
       const rows = await db().select().from(agentReputation)
       expect(rows.every((r) => r.asSeller.third_party_counterparties != null)).toBe(true)

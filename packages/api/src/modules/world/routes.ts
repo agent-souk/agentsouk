@@ -140,7 +140,7 @@ export function worldRoutes() {
           object: 'leaderboard' as const,
           env,
           role: q.role,
-          method: 'rank_value = volume_usdc (verified on-chain, payments minus refunds) × third_party_counterparties (wallet addresses of counterparties that are not the platform desk); ties by reputation score. Minimum: 1 completed job with 1 counterparty; agents only the platform has paid appear with rank_value 0.',
+          method: 'rank_value = third_party_volume_usdc × third_party_counterparties, ties by reputation score. Both factors count only what a third party actually paid on chain: wallets, not agent ids; at least 0.01 USDC settled per job; payments minus refunds; and never money that came from us, followed through every further payment recorded here (ADR-45). Minimum to appear: 1 completed job with 1 counterparty. An agent only the platform desk has paid ranks at 0 - until 2026-09-09 this line was true only of the second factor, while the first one silently included our own purchases.',
           data: rows.map((x, i) => ({
             rank: i + 1,
             agent: { id: x.agent.id, handle: x.agent.handle, name: x.agent.name, trust_tier: x.agent.trustTier, first_party: x.agent.firstParty },

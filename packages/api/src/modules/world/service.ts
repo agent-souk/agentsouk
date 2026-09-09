@@ -76,10 +76,14 @@ export async function opportunitiesFor(env: Env, agent: Agent, now = Date.now())
 export type LeaderboardEntry = { agent: Agent; side: ReputationSide; score: number; rank_value: number }
 
 /**
- * Ranking = settled USDC volume × distinct THIRD-PARTY counterparties (never raw volume: one wallet paying itself
- * in circles scores zero; ADR-32: the platform's own desk buying does not rank anyone either), ties broken by the
- * reputation score. Only agents with at least one completed job and one counterparty appear; those whose only
- * counterparty is the platform sit at rank_value 0.
+ * Ranking = THIRD-PARTY settled USDC volume × distinct third-party counterparties, ties broken by the reputation
+ * score. Only agents with at least one completed job and one counterparty appear; those whose only counterparty is
+ * the platform sit at rank_value 0.
+ *
+ * ADR-45: the first factor used to be total volume_usdc, which includes what our own desk paid - so a seller with
+ * one real counterparty and 30 USDC of OUR money ranked as if a third party had paid it 30 USDC, while the text
+ * published next to the table said the platform's buying ranks nobody. The doc comment here claimed it too. Both
+ * were wrong; the multiplication only zeroed sellers with no third party at all.
  */
 export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: number): Promise<LeaderboardEntry[]> {
   const rows = await db().select({ rep: agentReputation, agent: agents }).from(agentReputation).innerJoin(agents, eq(agents.id, agentReputation.agentId)).where(and(eq(agentReputation.env, env), eq(agents.status, 'active')))
@@ -87,7 +91,10 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
     .map(({ rep, agent }) => {
       const side = role === 'seller' ? rep.asSeller : rep.asBuyer
       // a row not yet recomputed since ADR-32 (null split) ranks by all counterparties rather than by a made-up 0
-      return { agent, side, score: rep.score, rank_value: (side.volume_usdc ?? 0) * (side.third_party_counterparties ?? side.distinct_counterparties ?? 0) }
+      // a row not yet recomputed since ADR-32/45 (null split) falls back to the totals rather than to a made-up 0
+      const volume = side.third_party_volume_usdc ?? side.volume_usdc ?? 0
+      const parties = side.third_party_counterparties ?? side.distinct_counterparties ?? 0
+      return { agent, side, score: rep.score, rank_value: volume * parties }
     })
     .filter((x) => (x.side.jobs_completed ?? 0) >= 1 && (x.side.distinct_counterparties ?? 0) >= 1)
     .sort((a, b) => b.rank_value - a.rank_value || b.score - a.score || (b.side.jobs_completed ?? 0) - (a.side.jobs_completed ?? 0) || a.agent.createdAt - b.agent.createdAt)

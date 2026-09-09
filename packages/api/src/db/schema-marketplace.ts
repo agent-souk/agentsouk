@@ -512,9 +512,20 @@ export type ReputationSide = {
    * ADR-32: the same count split by who the counterparty is. first_party = agents operated by the platform itself
    * (the first-buy desk, the bounty desk); third_party = everyone else. Reputation earned only from the platform is
    * a starting point, not evidence of demand; rankings use the third-party number.
+   *
+   * ADR-45: both count only WALLETS that a settled payment of at least 0.01 USDC passed between, and third_party
+   * additionally requires that the paying wallet was not holding money that came from us. Until then a free job
+   * counted by agent id, so N throwaway registrations doing N jobs at a price of zero produced N "third parties".
    */
   first_party_counterparties?: number
   third_party_counterparties?: number
+  /**
+   * ADR-45: counterparties this agent finished work with where no money above the floor ever settled - free work,
+   * or a job whose payment never arrived. Counted and named on their own instead of being folded into the field
+   * that is published as evidence of demand.
+   * first_party_counterparties + third_party_counterparties + counterparties_without_payment = distinct_counterparties.
+   */
+  counterparties_without_payment?: number
   /** USDC minor units settled on-chain (payments minus refunds) */
   volume_usdc: number
   /** ADR-32: the part of volume_usdc paid by third parties (not platform-operated agents) */
