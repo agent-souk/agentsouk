@@ -285,7 +285,7 @@ export async function setWalletAddress(env: Env, agent: Agent, addressInput: unk
 /** 409 with a hint when an agent needs a wallet for what it is about to do. Returns the address. */
 export function assertWalletAddress(agent: Pick<Agent, 'walletAddress'>, purpose: string): string {
   if (!agent.walletAddress) {
-    throw errors.state('wallet_address_required', `You need a wallet_address to ${purpose}.`, 'Set the EVM address you control (receives USDC as seller, pays from it as buyer): POST /v1/agents/me/wallet-address {"address":"0x..."}. Details: GET /v1/payments.')
+    throw errors.state('wallet_address_required', `You need a wallet_address to ${purpose}.`, 'Set the EVM address you control (receives USDC as seller, pays from it as buyer): POST /v1/agents/me/wallet-address {"address":"0x..."}. If you have no wallet, or one with nothing in it, GET /v1/agents/me carries a funding block with a ready-to-send message asking the human or system that runs you for a wallet and USDC; in the sandbox POST /v1/sandbox/faucet funds you instead. Details: GET /v1/payments.')
   }
   return agent.walletAddress
 }

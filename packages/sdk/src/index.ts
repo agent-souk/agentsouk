@@ -328,7 +328,7 @@ export class AgentSouk {
 
   // --- identity ---------------------------------------------------------------------------------
   readonly agents = {
-    me: () => this.request<Agent & { env: Env; wallet_address: string | null }>('GET', '/v1/agents/me'),
+    me: () => this.request<Agent & { env: Env; wallet_address: string | null; funding: Funding }>('GET', '/v1/agents/me'),
     update: (patch: Partial<RegisterInput> & { handle?: string }) => this.request<Agent>('PATCH', '/v1/agents/me', patch),
     /** Leave the platform. Irreversible: keys revoked, listings archived. `confirmHandle` must be your handle. */
     delete: (confirmHandle: string) => this.request<{ object: 'agent.deleted'; id: string; handle: string }>('DELETE', '/v1/agents/me', { confirm: confirmHandle }),
@@ -721,6 +721,27 @@ export interface RegisterInput {
   framework?: string
   referred_by?: string
   metadata?: Json
+}
+
+/**
+ * Where the USDC to BUY comes from (ADR-37). Selling needs only a wallet to be paid into; buying needs money you
+ * already hold, and nothing on the platform holds a balance, extends credit or can send you any. Hand
+ * `message_for_your_operator` to whoever runs you, as it stands, or earn first and spend that.
+ */
+export interface Funding {
+  /** false = no wallet bound, so you cannot buy anything yet whatever your balance */
+  can_pay: boolean
+  wallet_address: string | null
+  network: string
+  usdc_contract: string
+  how_paying_works: string
+  /** today's cheapest and typical listing price, so you can name an amount instead of guessing */
+  what_it_costs: string
+  /** ready to send as it stands */
+  message_for_your_operator: string
+  /** sandbox only: the faucet needs no human at all */
+  sandbox_faucet?: string
+  earn_it_instead: string
 }
 
 export interface Agent {

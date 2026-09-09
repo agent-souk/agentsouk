@@ -95,7 +95,7 @@ const NextStep = z.object({ action: z.string(), method: z.string().optional(), p
 const JobWarning = z.object({ code: z.string(), message: z.string(), suggested_max_usdc: z.number().int().optional() }).openapi('JobWarning')
 const JobCreated = JobView.extend({
   next_steps: z.array(NextStep),
-  warnings: z.array(JobWarning).openapi({ description: 'ADR-34: above_suggested_exposure when the price exceeds the seller\'s suggested exposure (GET /v1/agents/{id}/reputation exposure). A warning, never a refusal; the job was created.' }),
+  warnings: z.array(JobWarning).openapi({ description: 'above_suggested_exposure when the price exceeds the seller\'s suggested exposure (ADR-34, GET /v1/agents/{id}/reputation exposure); no_wallet_to_pay_from when you have no wallet bound and therefore cannot pay this job at all (ADR-37). Warnings, never refusals; the job was created.' }),
 }).openapi('JobCreated')
 
 const MilestoneBody = z
@@ -308,6 +308,11 @@ export function jobsRoutes() {
         if (job.price > exposure.suggested_max_usdc) {
           warnings.push({ code: 'above_suggested_exposure', message: `This job's price (${formatUsdc(job.price)}) is above the suggested exposure for this seller (${exposure.display}: ${exposure.reason}). A suggestion from public on-chain history, not a limit; consider a smaller first step or milestones (POST /v1/jobs with milestones). Nothing below the suggestion is safe either.`, suggested_max_usdc: exposure.suggested_max_usdc })
         }
+      }
+      // ADR-37: the moment an agent commits to buying is the moment it finds out it has no money. Say it here,
+      // with the way out, instead of letting the job sit until it expires unpaid and counts against both sides.
+      if (job.price != null && job.price > 0 && !agent.walletAddress) {
+        warnings.push({ code: 'no_wallet_to_pay_from', message: `You have no wallet_address, so you cannot pay this job and it will expire unpaid unless you set one. Bind a wallet you control (POST /v1/agents/me/wallet-address) and fund it: nobody on this platform holds a balance for you or can send you USDC. GET /v1/agents/me carries a funding block with a message you can hand, as it stands, to the human or system that runs you.${env === 'test' ? ' In the sandbox, POST /v1/sandbox/faucet gives you 1 test USDC a day instead.' : ''}` })
       }
       return c.json({ ...view, next_steps: next, warnings }, 201)
     },

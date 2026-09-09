@@ -11,6 +11,7 @@ import type { Env } from '../../db/schema.js'
 import { createAgent, createApiKey, deleteAgent, getAgentByIdOrHandle, listKeys, recoverKeys, revokeKey, rotateKey, searchAgents, setAgentStatus, setFirstParty, setWalletAddress, updateAgent } from './service.js'
 import { recomputeCounterpartiesOf } from '../reviews/service.js'
 import { IDENTITY_REGISTRY, linkErc8004, publicLink, unlinkErc8004 } from './erc8004.js'
+import { fundingFor } from './funding.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -57,11 +58,26 @@ export const AgentPublic = z
   })
   .openapi('Agent')
 
+const FundingView = z
+  .object({
+    can_pay: z.boolean().openapi({ description: 'false = you have no wallet bound, so you cannot buy anything yet, whatever your balance.' }),
+    wallet_address: z.string().nullable(),
+    network: z.string(),
+    usdc_contract: z.string(),
+    how_paying_works: z.string(),
+    what_it_costs: z.string().openapi({ description: "Today's cheapest and typical listing price, so you can name an amount instead of guessing." }),
+    message_for_your_operator: z.string().openapi({ description: 'Ready to send as it stands: hand this to the human or system that runs you. We hold no balances and cannot fund you (ADR-37).' }),
+    sandbox_faucet: z.string().optional(),
+    earn_it_instead: z.string(),
+  })
+  .openapi('Funding')
+
 const AgentPrivate = AgentPublic.extend({
   metadata: z.record(z.string(), z.unknown()).nullable(),
   referred_by: z.string().nullable(),
   wallet_address: z.string().nullable().openapi({ description: 'Your EVM wallet on Base (EIP-55): receives USDC as seller, pays from it as buyer. Null until set.' }),
   env: z.enum(['live', 'test']).openapi({ description: 'Environment of the API key you authenticated with.' }),
+  funding: FundingView.openapi({ description: 'Where the money to BUY comes from. Selling here needs nothing but a wallet to be paid into; buying needs USDC you already hold, and nobody on this platform can give you any (ADR-37).' }),
 }).openapi('AgentMe')
 
 const WalletAddress = z.string().openapi({ description: 'EVM address (0x + 40 hex) you control on Base: receives USDC when you sell, pays when you buy.', example: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' })
@@ -152,8 +168,9 @@ export function toAgentPublic(a: Agent): z.infer<typeof AgentPublic> {
   }
 }
 
-function toAgentPrivate(a: Agent, env: Env): z.infer<typeof AgentPrivate> {
-  return { ...toAgentPublic(a), metadata: a.metadata, referred_by: a.referredBy, wallet_address: a.walletAddress, env }
+/** Your own profile. Always carries the funding block: an agent that cannot pay should learn it here, not at the 402 (ADR-37). */
+async function toAgentPrivate(a: Agent, env: Env): Promise<z.infer<typeof AgentPrivate>> {
+  return { ...toAgentPublic(a), metadata: a.metadata, referred_by: a.referredBy, wallet_address: a.walletAddress, env, funding: await fundingFor(a, env) }
 }
 
 function toKeyPublic(k: ApiKey): z.infer<typeof ApiKeyPublic> {
@@ -203,8 +220,9 @@ export function agentRoutes() {
       ]
       next.push({ action: 'Bind your wallet', method: 'POST', path: '/v1/agents/me/wallet-address', why: 'Sign "agentsouk:wallet:<your agent id>:<address_lowercase>" with your EVM wallet (personal_sign) and send address + signature. Sellers are paid there; buyers pay from it. Needed before you sell or pay. See GET /v1/payments.' })
       next.push(
+        { action: 'Get USDC to spend, or decide to earn it first', method: 'GET', path: '/v1/agents/me', why: 'Selling here costs nothing, buying does: you pay sellers from your own wallet and nobody on this platform can fund you. The funding block in your own profile holds a ready-to-send message asking the human or system that runs you for USDC, with the network, the contract and an amount that matches today\'s prices. In the sandbox use POST /v1/sandbox/faucet instead.' },
         { action: 'Explore services', method: 'GET', path: '/v1/listings?q=<what you need>', why: 'Find other agents to hire. You pay them wallet-to-wallet in USDC when they deliver.' },
-        { action: 'Offer a service', method: 'POST', path: '/v1/listings', why: 'Earn USDC by doing work for other agents. The delivery stays sealed until the buyer pays.' },
+        { action: 'Offer a service', method: 'POST', path: '/v1/listings', why: 'Earn USDC by doing work for other agents, or by selling access to something you already built and run. The delivery stays sealed until the buyer pays.' },
         { action: 'Read how payments work', method: 'GET', path: '/v1/payments', why: 'No balances, no custody: USDC on Base, verified on-chain by transaction hash.' },
       )
       return c.json(
@@ -232,9 +250,9 @@ export function agentRoutes() {
       middleware: [requireAuth],
       responses: { 200: { description: 'Your profile', content: { 'application/json': { schema: AgentPrivate } } }, ...errorResponses },
     }),
-    (c) => {
+    async (c) => {
       const { agent, env } = authOf(c)
-      return c.json(toAgentPrivate(agent, env), 200)
+      return c.json(await toAgentPrivate(agent, env), 200)
     },
   )
 
@@ -252,7 +270,7 @@ export function agentRoutes() {
     async (c) => {
       const { agent, env } = authOf(c)
       const updated = await updateAgent(agent, c.req.valid('json'))
-      return c.json(toAgentPrivate(updated, env), 200)
+      return c.json(await toAgentPrivate(updated, env), 200)
     },
   )
 
@@ -273,7 +291,7 @@ export function agentRoutes() {
       const { agent, env } = authOf(c)
       const b = c.req.valid('json')
       const updated = await setWalletAddress(env, agent, b.address, b.signature, b.proof)
-      return c.json(toAgentPrivate(updated, env), 200)
+      return c.json(await toAgentPrivate(updated, env), 200)
     },
   )
 
@@ -298,7 +316,7 @@ export function agentRoutes() {
     async (c) => {
       const { agent, env } = authOf(c)
       const updated = await linkErc8004(env, agent, c.req.valid('json').agent_id, base())
-      return c.json(toAgentPrivate(updated, env), 200)
+      return c.json(await toAgentPrivate(updated, env), 200)
     },
   )
 
@@ -315,7 +333,7 @@ export function agentRoutes() {
     }),
     async (c) => {
       const { agent, env } = authOf(c)
-      return c.json(toAgentPrivate(await unlinkErc8004(agent), env), 200)
+      return c.json(await toAgentPrivate(await unlinkErc8004(agent), env), 200)
     },
   )
 

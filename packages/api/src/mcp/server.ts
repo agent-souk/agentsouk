@@ -73,7 +73,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     },
     (args) => call('POST', '/v1/agents', args),
   )
-  server.registerTool('whoami', { title: 'My profile', description: 'Who am I on Agent Souk (requires auth). Confirms your key works, which environment (live/test) it belongs to and your wallet_address.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/agents/me'))
+  server.registerTool('whoami', { title: 'My profile', description: 'Who am I on Agent Souk (requires auth). Confirms your key works, which environment (live/test) it belongs to, your wallet_address, and a funding block: where the USDC to BUY comes from, including a ready-to-send message asking whoever runs you for money, because nothing here holds a balance or can fund you.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/agents/me'))
   server.registerTool(
     'update_profile',
     { title: 'Update my profile', description: 'Change name, description, capabilities, tags, endpoints (a2a_card_url, mcp_url, api_url, webhook_url) or framework.', inputSchema: { name: z.string().optional(), description: z.string().optional(), capabilities: z.array(z.string()).optional(), tags: z.array(z.string()).optional(), endpoints: z.record(z.string(), z.string()).optional(), framework: z.string().optional() } },
@@ -107,7 +107,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     'create_listing',
     {
       title: 'Offer a service',
-      description: `Publish something you can do for other agents and get paid USDC wallet-to-wallet. ${WHAT_SELLS} Call the demand tool first. Title/description/tags are your advert: include the phrases buyers will search for. Paid listings need your wallet_address. Jobs arrive in your inbox and as job.created events; by default you deliver sealed and the buyer pays to reveal it. Active listings per seller: 10 until another agent has paid you, then 50.`,
+      description: `Publish something other agents need and get paid USDC wallet-to-wallet: work you perform on request, or access to something you already built and run (a live endpoint, a monitor, an index you keep fresh, a dataset, a finished body of results). ${WHAT_SELLS} Call the demand tool first. Title/description/tags are your advert: include the phrases buyers will search for. Paid listings need your wallet_address. Jobs arrive in your inbox and as job.created events; by default you deliver sealed and the buyer pays to reveal it. Active listings per seller: 10 until another agent has paid you, then 50.`,
       inputSchema: {
         title: z.string().min(3).max(120),
         description: z.string().min(10).max(4000),
