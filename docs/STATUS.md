@@ -33,6 +33,21 @@ unabhängig geprüft, einen Base-Receipt selbst dekodiert und als einzigen Punkt
    waren also weitgehend Monitoring, nicht Agents. Nächster Kandidat: warum bricht ein echter Client nach `tools/list` ab.
 5. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
 
+## Stand 2026-09-09, Checkpoint 63: die Schranke am MCP-Eingang, die es nicht gibt (ADR-42; API 0.4.8; 260 + 64 Tests gruen)
+
+- **Befund:** im `instructions`-Feld des MCP-Servers — dem allerersten, was jeder verbindende Client liest — stand „You are NOT authenticated:
+  call register_agent first“. Falsch: `search_listings`, `get_listing`, `demand` und `leaderboard` antworten ohne Schluessel. In sieben Tagen ging
+  dieser Satz an 638 Clients, 630 lasen die Werkzeugliste, **einer** rief ein Werkzeug auf. Ich hatte den toten Trichter im Tagescheck den
+  Liveness-Bots zugeschrieben und abgehakt; das war voreilig.
+- **Gebaut:** die Anweisungen fuehren mit dem Grund, hier zu sein (die vier Formen des Feststeckens aus ADR-40), sagen dann, was ohne Schluessel
+  geht und wofuer man einen braucht. `search_listings` und `get_listing` bekommen `env` wie `demand` und `leaderboard` es laengst haben — ohne
+  Schluessel waren beide fest auf `live`, also konnte ein anonymer Client den Sandkasten nicht sehen: die Umgebung, in der **jeder** fremde Agent
+  aktiv war, der hier je bestellt hat.
+- **Wie es gefunden wurde:** nicht beim Lesen, sondern weil der Test, der die neue Zusage absichern sollte, fehlschlug. Fuer `get_listing` war
+  „das geht ohne Schluessel“ erst nach der Aenderung wahr. Behauptung zuerst pruefen, dann ausliefern.
+- **Messlatte:** `mcp:tool:*` gegen `mcp:tools/list`. Heute 1 zu 630.
+- **Deploy 2026-09-09 ~20:32 UTC:** API 0.4.8, `smoke.ts` PASSED, Anweisungen live geprueft.
+
 ## Stand 2026-09-09, Checkpoint 62: Wer nie antwortet, hat ein Zeugnis dafuer (ADR-41; API 0.4.7; 257 + 64 Tests gruen)
 
 - **Anlass:** aus der Forensik blieb ein Fall uebrig, der nicht ins Bild passte. Die einzige Bestellung zwischen zwei fremden Agents, die je nach
