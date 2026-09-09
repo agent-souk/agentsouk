@@ -12,16 +12,20 @@ Fremdkäufer (dann 50), Verkäufer-Verschränkung im Standard-Ranking (offengele
 Treffer, alle Suchbegriffe, offene Bounties), leere Suche antwortet mit `post_a_bounty`, `opportunities.unmet_searches`, MCP-Tool `demand`.
 API 0.4.2; SDKs unverändert 0.4.1. Deployt und live geprüft (Details unten).
 
-**Für Nick (dringend, in dieser Reihenfolge):**
-1. **Anthropic-Guthaben aufladen** (console.anthropic.com → Plans & Billing): der Judge-Rauchtest schlug um ~10:55 UTC bei allen sechs Aufrufen mit
-   400 „Your credit balance is too low" fehl. Solange das so ist, kann die Desk weder Erstkäufe screenen noch die Security-Lieferung von
-   `juan-codex-research` triagieren noch bewerten; sie kauft dann nichts (Screening transient) und antwortet Verkäufern nicht. Danach
-   `npm run smoke:judge -w packages/agents` (muss PASSED melden).
-2. **Platte:** 0,1 GB frei um 10:40 UTC; ich habe 235 MB Testdatenbanken und den npm-Cache (~1,7 GB) gelöscht, jetzt ~1,5 GB frei. Die
-   Google-Play-Games-Notiz (80 GB) aus Checkpoint 57 gilt weiter; unter ~1 GB scheitern Tests mit `SQLITE_FULL`.
-3. **Offener 10-USDC-Security-Anspruch:** `juan-codex-research` arbeitet seit 01:23 UTC an `job_01M21W77PHMVKW5QCSW2RWZ0R5` (Bounty security-finding,
-   noch nicht geliefert). Wenn geliefert und der Judge „zahlbar" sagt, braucht die Auszahlung deine Bestätigung (Memory-Key `operator/confirm/<job>`).
-   Budget: 30,72 von 50 USDC verbraucht, Wallet 19,27 USDC; mit dem Anspruch faktisch 40,72 gebunden.
+**Nicks Antworten (2026-09-09 ~10:30 UTC) und was daraus folgt:**
+1. **Anthropic-Guthaben ist aufgeladen.** `npm run smoke:judge -w packages/agents` danach PASSED (alle Aufrufe, inkl. Screening: YAML→JSON =
+   `self_doable`, x402-Probe = `eligible`; 0,24 USD). Die Desk hat bis 10:30 UTC noch nichts gescreent, weil jeder fremde Verkäufer in der
+   24-h-Abkühlzeit nach seinem letzten Kauf steckt (veriton bis 16:19 UTC, moneymaker 21:08, juan 22:11, receipt-workbench 02:48, graywill 04:48):
+   kein Fehler, `firstbuy.screened` füllt sich beim ersten Kandidaten. Beim nächsten Tagescheck prüfen.
+2. **Platte:** auf Nicks Anweisung den Datenordner von Google Play Games gelöscht; die „80 GB“ waren ein Sparse-Image mit 3,8 GB echter
+   Belegung → 4,5 GB gewonnen, jetzt 5,9 GB frei. Service und Uninstaller brauchen Admin-Rechte (Zugriff verweigert), die App (2,9 GB) muss Nick
+   selbst deinstallieren; die echten Brocken bleiben seine (FTMORESEARCH 48 GB, MetaQuotes 33 GB; Checkliste aktualisiert).
+3. **Auszahlung des Security-Anspruchs ist von Nick vorab bestätigt** („Auszahlung hab meine Bestätigung“): `juan-codex-research`,
+   `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, in Arbeit bis 2026-09-14 01:23 UTC, noch nicht geliefert. **Nick nicht mehr fragen.** Aber die
+   Reihenfolge bleibt die öffentlich zugesagte (Commitments: „fixed before it is paid; the report stays sealed until the fix is deployed“), darum
+   ist der Memory-Key noch **nicht** gesetzt: Lieferung → Desk loggt ATTENTION mit Preview (`operators.live.bounties[security-finding].needs_operator`)
+   → Fund nachstellen, fixen, deployen → `PUT /v1/memory/operator/confirm/job_01M21W77PHMVKW5QCSW2RWZ0R5` = `true` (Operator-Key) → Desk zahlt im
+   nächsten Tick. Budget: 30,72 von 50 USDC, Wallet 19,27; mit dem Anspruch faktisch 40,72 gebunden.
 
 **Live-Zahlen (08:05 UTC, Tagescheck):** 33 Agents (+5; neu u. a. `nol-ai-enterprise`, OpenAI Codex, „autonomous AI enterprise, 60-day experiment"),
 41 aktive Listings (veriton 26, davon 18 zwischen 06:21 und 07:23 UTC), 11 abgeschlossene Live-Jobs = 30,72 USDC, **alle mit der Desk auf einer Seite**
