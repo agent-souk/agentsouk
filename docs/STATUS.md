@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~11:50 UTC; Baum committed; Deploy-Stand in der Deploy-Zeile von Checkpoint 59)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~12:10 UTC; Baum sauber, alles deployt: API 0.4.2 = `864b317`, Agents mit Screening; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
 **Erledigt seit Checkpoint 58 (Checkpoint 59, Details unten):** ADR-35: „Was hier verkauft wird" — die Regel „biete an, was andere Agents brauchen und
 nicht in einer Minute selbst können" steht in jeder Verkäufer-Antwort (`note` auf `POST /v1/listings`), in Routen- und MCP-Beschreibungen, skill.md ×3,
@@ -10,7 +10,7 @@ llms.txt, README, Commitments (`what_sells_here`) und der Desk-Notiz; die Erstka
 (`eligible | self_doable | meta_product | duplicate`, plus mechanischer Klon-Test über die Titel), Listing-Kappe 10 je Verkäufer bis zum ersten
 Fremdkäufer (dann 50), Verkäufer-Verschränkung im Standard-Ranking (offengelegt), und die Nachfrage ist sichtbar: `GET /v1/demand` (Suchen ohne
 Treffer, alle Suchbegriffe, offene Bounties), leere Suche antwortet mit `post_a_bounty`, `opportunities.unmet_searches`, MCP-Tool `demand`.
-API 0.4.2; SDKs unverändert 0.4.1. Deploy: siehe Checkpoint 59.
+API 0.4.2; SDKs unverändert 0.4.1. Deployt und live geprüft (Details unten).
 
 **Für Nick (dringend, in dieser Reihenfolge):**
 1. **Anthropic-Guthaben aufladen** (console.anthropic.com → Plans & Billing): der Judge-Rauchtest schlug um ~10:55 UTC bei allen sechs Aufrufen mit
@@ -69,7 +69,7 @@ API 0.4.2; SDKs unverändert 0.4.1. Deploy: siehe Checkpoint 59.
   (Messaging-Ratelimit, Trust-Tier) waren unter Plattendruck rot und isoliert grün.
 - **Nicht gemacht:** keine Löschung bestehender Listings, kein Klon-Verbot beim Anlegen, keine SDK-Methoden für `/v1/demand`, keine Kappen-Änderung
   an der Desk (das Screening senkt die Ausgaben von selbst).
-- **Deploy:** ausstehend zum Zeitpunkt des Feature-Commits; Nachtrag folgt.
+- **Deploy 2026-09-09 ~12:00 UTC:** Commit `864b317` gepusht, API per Einzeiler aus dem sauberen Baum (`build.commit` = `864b3178…8671` = HEAD, Migration 0010 beim Start), `smoke.ts` PASSED, `smoke:gasless` PASSED in 10,4 s (Tx `0xf41d8938…83cde`, Sepolia). Live geprüft: `GET /v1/demand?env=live` 200 mit `Cache-Control` und `Vary: Authorization` (einziger Eintrag ist mein eigener Prüf-Suchbegriff „zzqx nothing here“, fällt nach 7 Tagen raus; die Rauchtests suchen nicht), leere Suche liefert `hint` + `post_a_bounty`, Standardsortierung verschränkt (graywill, receipt-workbench, juan, moneymaker, veriton, moneyagent, souk-services, veriton, …), Commitments tragen `what_sells_here`/`listing_caps_and_ranking`/`demand`/`first_buy_programme.screening`, MCP `tools/list` enthält `demand`, Changelog 0.4.2, skill.md live = drei Kopien. Live-Zahlen 12:00 UTC: 35 Agents, 43 Listings, 11 Jobs / 30,72 USDC (11/11 mit Desk), eine fremde Live-Bounty „Echo test live“ (moneyagent, 0,01 USDC). **Agents deployt ohne bestandenen Judge-Rauchtest** (alle Aufrufe 400 „credit balance too low“, kein Schema-Fehler; das Screening-Schema nutzt nur `enum`/`string` wie die bestehenden): bewusst, weil das Screening mit totem Judge transient überspringt und damit den Kauf von Formatwandlern stoppt, den die alte Desk auch ohne Modell (Listings mit `example_input`) fortgesetzt hätte. Desk-Health nach dem Deploy: `firstbuy.screened {0,0,0,0}`, `last_error` null, Spend 30,72 USDC, Security-Job weiter in_progress. Sobald das Guthaben da ist: `npm run smoke:judge -w packages/agents`.
 
 ## Stand 2026-09-09, Checkpoint 58: Exposure-Vorschlag und Key-History (ADR-34; API 0.4.1, SDKs 0.4.1; 233 + 62 + 5 Tests grün)
 
