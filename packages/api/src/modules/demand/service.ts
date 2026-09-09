@@ -199,7 +199,7 @@ registerSweep('search-demand', async (now) => {
 
 export type DemandTerm = { term: string; searches: number; zero_results: number; searchers: number; last_day: string }
 /** What the searches in the window turned into. The numbers a seller should weigh a search list against (ADR-36). */
-export type SearchOutcome = { searches: number; terms: number; terms_published: number; terms_withheld: number; bounties_posted: number; jobs_started: number }
+export type SearchOutcome = { searches: number; terms: number; terms_published: number; terms_withheld: number; most_clients_on_one_term: number; bounties_posted: number; jobs_started: number }
 export type DemandSummary = {
   window_days: number
   searched: DemandTerm[]
@@ -218,7 +218,7 @@ export type DemandSummary = {
  * is the most clients that searched the term on any ONE day of the window, never the sum over days: the same
  * client searching on Monday and Tuesday is one client, and counting it as two would be the error this fixes.
  */
-export async function searchedTerms(env: Env, days: number, now: number): Promise<{ searched: DemandTerm[]; unmet: DemandTerm[]; searches: number; terms: number; withheld: number }> {
+export async function searchedTerms(env: Env, days: number, now: number): Promise<{ searched: DemandTerm[]; unmet: DemandTerm[]; searches: number; terms: number; withheld: number; mostSearchers: number }> {
   const since = dayOf(now - (days - 1) * 86_400_000)
   const rows = await db()
     .select({ day: searchDemand.day, term: searchDemand.term, searches: searchDemand.searches, zeroResults: searchDemand.zeroResults, searchers: searchDemand.searchers })
@@ -242,7 +242,7 @@ export async function searchedTerms(env: Env, days: number, now: number): Promis
     .filter((t) => t.zero_results > 0)
     .sort((a, b) => b.searchers - a.searchers || b.zero_results - a.zero_results || b.searches - a.searches || a.term.localeCompare(b.term))
     .slice(0, MAX_DEMAND_TERMS)
-  return { searched, unmet, searches, terms: all.length, withheld: all.length - shown.length }
+  return { searched, unmet, searches, terms: all.length, withheld: all.length - shown.length, mostSearchers: all.reduce((m, t) => Math.max(m, t.searchers), 0) }
 }
 
 /**
@@ -271,7 +271,7 @@ export async function searchOutcome(env: Env, days: number, now: number): Promis
  * the searching produced.
  */
 export async function demandSummary(env: Env, days = 7, now = Date.now()): Promise<DemandSummary> {
-  const { searched, unmet, searches, terms, withheld } = await searchedTerms(env, days, now)
+  const { searched, unmet, searches, terms, withheld, mostSearchers } = await searchedTerms(env, days, now)
   const produced = await searchOutcome(env, days, now)
   const open = await db()
     .select({ bounty: bounties, buyerHandle: agents.handle, buyerFirstParty: agents.firstParty })
@@ -291,7 +291,7 @@ export async function demandSummary(env: Env, days = 7, now = Date.now()): Promi
     window_days: days,
     searched,
     unmet,
-    outcome: { searches, terms, terms_published: searched.length, terms_withheld: withheld, ...produced },
+    outcome: { searches, terms, terms_published: searched.length, terms_withheld: withheld, most_clients_on_one_term: mostSearchers, ...produced },
     open_bounties: open.map((r) => ({ ...r.bounty, buyer_handle: r.buyerHandle, buyer_first_party: r.buyerFirstParty })),
     by_category: byCategory.map((d) => ({ category: d.category, open_bounties: d.n, budget_total: d.budget })),
   }

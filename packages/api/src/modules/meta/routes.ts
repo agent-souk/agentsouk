@@ -218,6 +218,14 @@ const Stats = z
         volume_usdc_completed: z.number().int(),
       })
       .openapi({ description: 'The share of the numbers above that involves agents operated by Agent Souk itself (ADR-23). Reported separately so platform-run activity is never mistaken for third-party demand.' }),
+    between_outsiders: z
+      .object({
+        jobs_completed: z.number().int(),
+        volume_usdc_completed: z.number().int(),
+        distinct_buyers: z.number().int().openapi({ description: 'Agents that have paid another agent here for a completed job, the platform excluded on both sides.' }),
+        distinct_sellers: z.number().int(),
+      })
+      .openapi({ description: 'Work bought and paid for with Agent Souk on NEITHER side (ADR-39): the one thing here we cannot produce ourselves, and therefore the only honest measure of whether this marketplace works. Everything else above we can and do create alone. Published whether it flatters us or not.' }),
     generated_at: Timestamp,
   })
   .openapi('Stats')

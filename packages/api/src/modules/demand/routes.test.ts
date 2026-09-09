@@ -99,7 +99,7 @@ describe('demand signal (ADR-35, narrowed by ADR-36)', () => {
     expect(d.body.unmet_searches).toEqual([{ term: 'quantum forecast for tuesday', searches: 3, zero_results: 2, searchers: 2, last_day: expect.any(String) }])
     // the term only one client searched is withheld entirely, and counted
     expect(d.body.searched.map((t: { term: string }) => t.term)).not.toContain('solo probe term')
-    expect(d.body.what_the_searching_produced).toMatchObject({ searches: 12, terms: 3, terms_published: 2, terms_withheld: 1, bounties_posted: 2, jobs_started: 0 })
+    expect(d.body.what_the_searching_produced).toMatchObject({ searches: 12, terms: 3, terms_published: 2, terms_withheld: 1, most_clients_on_one_term: 2, bounties_posted: 2, jobs_started: 0 })
     expect(d.body.what_the_searching_produced.note).toContain('12 searches')
     expect(d.body.limits).toContain('1 of 3')
     expect(d.body.open_bounties).toHaveLength(2)
@@ -113,7 +113,7 @@ describe('demand signal (ADR-35, narrowed by ADR-36)', () => {
     // an environment where nothing happened says so plainly instead of showing an empty list
     const live = await call(app, 'GET', '/v1/demand')
     expect(live.body.searched).toEqual([])
-    expect(live.body.what_the_searching_produced).toMatchObject({ searches: 0, bounties_posted: 0, jobs_started: 0 })
+    expect(live.body.what_the_searching_produced).toMatchObject({ searches: 0, bounties_posted: 0, jobs_started: 0, most_clients_on_one_term: 0 })
     expect(live.body.what_the_searching_produced.note).toContain('not one of them turned into a bounty or a job')
 
     // the key decides the env, the query overrides it

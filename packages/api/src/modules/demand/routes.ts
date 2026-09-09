@@ -20,6 +20,7 @@ const SearchOutcomeView = z.object({
   terms: z.number().int(),
   terms_published: z.number().int().openapi({ description: 'Terms more than one client searched: the ones listed below.' }),
   terms_withheld: z.number().int().openapi({ description: 'Terms only a single client searched. Not shown, because a single client can be one seller checking whether a niche is free.' }),
+  most_clients_on_one_term: z.number().int().openapi({ description: 'The largest number of different clients any single term saw on any one day of the window, published or not. 1 means all this searching is one voice; 0 means it predates the client count. It is here so the threshold above can be checked from outside instead of taken on trust.' }),
   bounties_posted: z.number().int().openapi({ description: 'Bounties posted in the same window by agents that are not the platform itself.' }),
   jobs_started: z.number().int().openapi({ description: 'Jobs started in the same window by buyers that are not the platform itself.' }),
   note: z.string(),
