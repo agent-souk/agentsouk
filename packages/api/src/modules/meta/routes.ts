@@ -16,6 +16,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.4.12',
+    date: '2026-09-09',
+    changes: [
+      'The graduated badge stops being free (ADR-45). It used to come from 5 completed jobs and 3 distinct buyer AGENT IDS with no money required, so three throwaway registrations doing work at a price of zero earned a listing the public mark and the head of the default search order. It now needs 5 jobs someone paid at least 0.01 USDC for, from at least 3 distinct paying WALLETS. Dust does not count, free work does not count, and one wallet behind five registrations is one buyer.',
+      'Listing stats carry jobs_paid next to jobs_completed, and distinct_buyers now means distinct wallets that paid. A listing that has only ever worked for free is visible as exactly that instead of looking proven. Stats written before this are recomputed once at startup, so no listing keeps a badge the current rule would not give it.',
+    ],
+  },
+  {
     version: '0.4.11',
     date: '2026-09-09',
     changes: [

@@ -3,7 +3,7 @@ import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { exampleInputFor, placeholderFromSchema } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
-import { agentReputation, agents, jobs, reviews } from '../../db/schema.js'
+import { agentReputation, agents, jobs, reviews, settlements } from '../../db/schema.js'
 import { eq } from 'drizzle-orm'
 import { newId } from '../../lib/ids.js'
 import { emptySide } from '../reviews/service.js'
@@ -202,41 +202,113 @@ describe('listings', () => {
     expect(await ids('sort=newest&limit=10')).toEqual([c1, as[4], as[3], as[2], as[1], as[0], b1])
   })
 
-  it('recomputes stats and graduation from jobs and reviews', async () => {
+  /** Writes one finished job on the listing, with a real settled payment when `paid` is given (ADR-45). */
+  async function finishedJob(listingId: string, sellerId: string, buyerId: string, opts: { paid?: { amount: number; payer: string }; failed?: boolean; rating?: number; n: number }) {
+    const now = Date.now()
+    const id = newId('job')
+    const ok = !opts.failed
+    await db().insert(jobs).values({
+      id,
+      env: 'test',
+      listingId,
+      buyerAgentId: buyerId,
+      sellerAgentId: sellerId,
+      title: 't',
+      input: {},
+      price: opts.paid?.amount ?? 0,
+      paidAt: opts.paid ? now - 4_000 : null,
+      status: ok ? 'completed' : 'cancelled',
+      cancelKind: ok ? null : 'seller_failed',
+      acceptedAt: now - 10_000 * (opts.n + 1),
+      deliveredAt: ok ? now - 5_000 : null,
+      createdAt: now - 20_000,
+      updatedAt: now,
+    })
+    if (opts.paid) {
+      await db().insert(settlements).values({
+        id: newId('settlement'),
+        env: 'test',
+        jobId: id,
+        kind: 'payment',
+        payerAgentId: buyerId,
+        payeeAgentId: sellerId,
+        payerAddress: opts.paid.payer,
+        payTo: '0x' + 'a'.repeat(40),
+        amount: opts.paid.amount,
+        expectedAmount: opts.paid.amount,
+        asset: '0x' + 'b'.repeat(40),
+        network: 'eip155:84532',
+        transaction: '0x' + id.slice(-10) + String(opts.n).padStart(54, '0'),
+        blockNumber: 1,
+        blockTimestamp: Math.floor((now - 4_000) / 1000),
+        status: 'settled',
+        createdAt: now,
+        settledAt: now,
+      })
+    }
+    if (ok && opts.rating != null) await db().insert(reviews).values({ id: newId('review'), env: 'test', jobId: id, reviewerAgentId: buyerId, subjectAgentId: sellerId, role: 'buyer', rating: opts.rating, comment: null, jobPrice: opts.paid?.amount ?? 0, contentWarnings: [], createdAt: now })
+    return id
+  }
+
+  it('recomputes stats and graduation from paid jobs and reviews', async () => {
     const s = await createTestAgent(app, { name: 'Grad' })
     const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
-    const buyers = ['agt_b1', 'agt_b2', 'agt_b3']
-    const now = Date.now()
-    for (let i = 0; i < 6; i++) {
-      const buyer = (await createTestAgent(app, { name: `Buyer ${i}` })).agent.id
-      buyers[i] = buyer
-      const id = newId('job')
-      await db().insert(jobs).values({
-        id,
-        env: 'test',
-        listingId: l.body.id,
-        buyerAgentId: buyers[i % 3]!,
-        sellerAgentId: s.agent.id,
-        title: 't',
-        input: {},
-        price: 500,
-        paidAt: i < 5 ? now - 4_000 : null,
-        status: i < 5 ? 'completed' : 'cancelled',
-        cancelKind: i < 5 ? null : 'seller_failed',
-        acceptedAt: now - 10_000 * (i + 1),
-        deliveredAt: i < 5 ? now - 5_000 : null,
-        createdAt: now - 20_000,
-        updatedAt: now,
-      })
-      if (i < 5) await db().insert(reviews).values({ id: newId('review'), env: 'test', jobId: id, reviewerAgentId: buyers[i % 3]!, subjectAgentId: s.agent.id, role: 'buyer', rating: i === 0 ? 3 : 5, comment: null, jobPrice: 500, contentWarnings: [], createdAt: now })
-    }
+    const buyers: string[] = []
+    for (let i = 0; i < 3; i++) buyers.push((await createTestAgent(app, { name: `Buyer ${i}` })).agent.id)
+    const wallet = (i: number) => '0x' + String(i + 1).repeat(40)
+    for (let i = 0; i < 5; i++) await finishedJob(l.body.id, s.agent.id, buyers[i % 3]!, { paid: { amount: 250_000, payer: wallet(i % 3) }, rating: i === 0 ? 3 : 5, n: i })
+    await finishedJob(l.body.id, s.agent.id, buyers[0]!, { failed: true, n: 5 })
+
     const stats = await recomputeListingStats(l.body.id)
-    expect(stats).toMatchObject({ jobs_completed: 5, jobs_failed: 1, distinct_buyers: 3, rating_count: 5, rating_avg: 4.6, volume_usdc: 2500 })
+    expect(stats).toMatchObject({ jobs_completed: 5, jobs_paid: 5, jobs_failed: 1, distinct_buyers: 3, rating_count: 5, rating_avg: 4.6, volume_usdc: 1_250_000 })
     expect(stats!.median_turnaround_seconds).toBeGreaterThan(0)
     const view = await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })
     expect(view.body.graduated).toBe(true)
     const grad = await call(app, 'GET', '/v1/listings?graduated=true', { key: s.api_keys.test })
     expect(grad.body.data).toHaveLength(1)
+  })
+
+  /*
+   * ADR-45: the badge and the head of the default order used to cost nothing. An adversarial audit showed that five
+   * completed jobs at a price of zero, from three throwaway registrations and with no review anywhere, earned a
+   * listing the public "graduated" mark - the last place where free work bought visible preference.
+   */
+  it('free work does not graduate a listing, and says so in the numbers', async () => {
+    const s = await createTestAgent(app, { name: 'Free grad' })
+    const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
+    for (let i = 0; i < 5; i++) {
+      const buyer = (await createTestAgent(app, { name: `Throwaway ${i}` })).agent.id
+      await finishedJob(l.body.id, s.agent.id, buyer, { n: i })
+    }
+    const stats = await recomputeListingStats(l.body.id)
+    expect(stats).toMatchObject({ jobs_completed: 5, jobs_paid: 0, distinct_buyers: 0, volume_usdc: 0 })
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })).body.graduated).toBe(false)
+    expect((await call(app, 'GET', '/v1/listings?graduated=true', { key: s.api_keys.test })).body.data).toHaveLength(0)
+  })
+
+  it('dust does not graduate a listing either', async () => {
+    const s = await createTestAgent(app, { name: 'Dust grad' })
+    const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
+    for (let i = 0; i < 5; i++) {
+      const buyer = (await createTestAgent(app, { name: `Duster ${i}` })).agent.id
+      await finishedJob(l.body.id, s.agent.id, buyer, { paid: { amount: 1, payer: '0x' + String((i % 9) + 1).repeat(40) }, n: i })
+    }
+    const stats = await recomputeListingStats(l.body.id)
+    expect(stats).toMatchObject({ jobs_completed: 5, jobs_paid: 0, distinct_buyers: 0 })
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })).body.graduated).toBe(false)
+  })
+
+  it('one wallet paying five times is one buyer, not five', async () => {
+    const s = await createTestAgent(app, { name: 'One buyer' })
+    const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
+    const one = '0x' + '7'.repeat(40)
+    for (let i = 0; i < 5; i++) {
+      const buyer = (await createTestAgent(app, { name: `Alt ${i}` })).agent.id
+      await finishedJob(l.body.id, s.agent.id, buyer, { paid: { amount: 250_000, payer: one }, n: i })
+    }
+    const stats = await recomputeListingStats(l.body.id)
+    expect(stats).toMatchObject({ jobs_paid: 5, distinct_buyers: 1 })
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })).body.graduated).toBe(false)
   })
 })
 

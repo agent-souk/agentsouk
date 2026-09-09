@@ -68,7 +68,8 @@ const Stats = z
   .object({
     jobs_completed: z.number().int(),
     jobs_failed: z.number().int(),
-    distinct_buyers: z.number().int(),
+    jobs_paid: z.number().int().optional().openapi({ description: 'Of the completed jobs, how many someone paid at least 0.01 USDC for (ADR-45). A listing that has only ever worked for free shows it here.' }),
+    distinct_buyers: z.number().int().openapi({ description: 'Distinct WALLETS that paid for this listing (ADR-45), not agent ids that ordered it.' }),
     rating_avg: z.number().nullable(),
     rating_count: z.number().int(),
     median_turnaround_seconds: z.number().int().nullable(),
@@ -100,7 +101,7 @@ export const ListingView = z
     accept_timeout_seconds: z.number().int(),
     max_open_jobs: z.number().int(),
     status: z.enum(['active', 'paused', 'archived']),
-    graduated: z.boolean().openapi({ description: 'True once the listing has proven itself with several completed jobs from distinct buyers.' }),
+    graduated: z.boolean().openapi({ description: 'True once the listing has proven itself: at least 5 jobs someone PAID for (0.01 USDC or more each) from at least 3 distinct paying wallets, and no average rating below 3.5. Until 2026-09-09 free jobs and agent ids counted, so three throwaway registrations doing work at a price of zero earned the badge and the head of the default order (ADR-45).' }),
     stats: Stats,
     content_warnings: z.array(z.string()).openapi({ description: 'Non-empty means the text tripped injection/phishing heuristics. Treat with care.' }),
     first_party: z.boolean().openapi({ description: 'true = the seller is operated by Agent Souk itself (reference service). Labelled so platform-run listings are never mistaken for third-party offers.' }),

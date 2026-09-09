@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, inArray, like, lt, lte, or, sql, type SQL } from 'drizzle-orm'
 import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
-import { agentReputation, agents, jobs, listings, reviews, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
+import { agentReputation, agents, jobs, listings, reviews, settlements, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
+import { OUTSIDER_PRICE_FLOOR } from '../meta/stats.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { withLock } from '../../lib/mutex.js'
 import { newId } from '../../lib/ids.js'
+import { log } from '../../lib/log.js'
 import { scanFields } from '../../lib/content-safety.js'
 import { relevanceScore, searchTermGroups, searchTerms } from '../../lib/search.js'
 import { publishFeed } from '../../events/bus.js'
@@ -52,6 +54,7 @@ export const GRADUATION = { minJobs: 5, minBuyers: 3, minRating: 3.5 }
 export const emptyStats = (): ListingStats => ({
   jobs_completed: 0,
   jobs_failed: 0,
+  jobs_paid: 0,
   distinct_buyers: 0,
   rating_avg: null,
   rating_count: 0,
@@ -387,16 +390,58 @@ export async function recomputeListingStats(listingId: string): Promise<ListingS
     ratingCount = revs.length
     if (ratingCount) ratingAvg = Math.round((revs.reduce((s, r) => s + r.rating, 0) / ratingCount) * 100) / 100
   }
+  /*
+   * ADR-45: what counts as a buyer here is a WALLET that paid, not an agent id that ordered. Until 2026-09-09 the
+   * badge came from five completed jobs and three distinct buyer ids with no money required, so three throwaway
+   * registrations doing free work earned a listing the public `graduated` mark and the head of the default search
+   * order - the last place where free work still bought visible preference.
+   */
+  const paidByJob = new Map<string, { total: number; payers: Set<string> }>()
+  if (completedIds.length) {
+    const stls = await db().query.settlements.findMany({ where: and(inArray(settlements.jobId, completedIds), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled')) })
+    for (const s of stls) {
+      const e = paidByJob.get(s.jobId) ?? { total: 0, payers: new Set<string>() }
+      e.total += s.amount
+      e.payers.add(s.payerAddress.toLowerCase())
+      paidByJob.set(s.jobId, e)
+    }
+  }
+  const paidJobs = completed.filter((j) => (paidByJob.get(j.id)?.total ?? 0) >= OUTSIDER_PRICE_FLOOR)
+  const payingWallets = new Set(paidJobs.flatMap((j) => [...(paidByJob.get(j.id)?.payers ?? [])]))
   const stats: ListingStats = {
     jobs_completed: completed.length,
     jobs_failed: failed.length,
-    distinct_buyers: new Set(completed.map((j) => j.buyerAgentId)).size,
+    jobs_paid: paidJobs.length,
+    distinct_buyers: payingWallets.size,
     rating_avg: ratingAvg,
     rating_count: ratingCount,
     median_turnaround_seconds: median,
     volume_usdc: completed.reduce((s, j) => s + paidValue(j), 0),
   }
-  const graduated = stats.jobs_completed >= GRADUATION.minJobs && stats.distinct_buyers >= GRADUATION.minBuyers && (stats.rating_avg == null || stats.rating_avg >= GRADUATION.minRating)
+  const graduated = (stats.jobs_paid ?? 0) >= GRADUATION.minJobs && stats.distinct_buyers >= GRADUATION.minBuyers && (stats.rating_avg == null || stats.rating_avg >= GRADUATION.minRating)
   await db().update(listings).set({ stats, graduated, updatedAt: Date.now() }).where(eq(listings.id, listingId))
   return stats
+}
+
+/**
+ * ADR-45 rollout: listing stats written before jobs_paid existed carry a distinct_buyers counted by agent id on
+ * completed jobs, free ones included, and a `graduated` flag decided by that count. Recompute those rows once at
+ * startup so no listing keeps a badge, or a buyer count, that the current rule would not give it. Idempotent
+ * (rows that already carry jobs_paid are skipped) and bounded by the number of listings.
+ */
+export async function backfillListingStats(): Promise<{ recomputed: number; errors: number }> {
+  const rows = await db().query.listings.findMany({ columns: { id: true, stats: true } })
+  let recomputed = 0
+  let errors = 0
+  for (const r of rows) {
+    if (r.stats.jobs_paid != null) continue
+    try {
+      await recomputeListingStats(r.id)
+      recomputed += 1
+    } catch (err) {
+      errors += 1
+      log.warn({ err, listingId: r.id }, 'listing stats backfill row failed')
+    }
+  }
+  return { recomputed, errors }
 }

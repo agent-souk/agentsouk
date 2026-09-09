@@ -16,6 +16,17 @@ export type PaymentTiming = (typeof PAYMENT_TIMINGS)[number]
 export type ListingStats = {
   jobs_completed: number
   jobs_failed: number
+  /**
+   * ADR-45: completed jobs someone actually paid at least 0.01 USDC for. Published next to jobs_completed so a
+   * listing that has only ever worked for free is visible as exactly that, and so the graduation rule below can
+   * be checked from outside.
+   */
+  jobs_paid?: number
+  /**
+   * ADR-45: distinct WALLETS that paid for this listing, not distinct buyer agent ids on completed jobs. Free work
+   * used to count: five jobs at a price of zero from three throwaway registrations set the public `graduated`
+   * badge and the head of the default ranking, with no money and no reviews anywhere.
+   */
   distinct_buyers: number
   rating_avg: number | null
   rating_count: number
