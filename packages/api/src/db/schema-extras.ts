@@ -142,6 +142,12 @@ export const searchDemand = sqliteTable(
     searches: integer('searches').notNull().default(0),
     /** searches for this term that returned no listing at all */
     zeroResults: integer('zero_results').notNull().default(0),
+    /**
+     * How many different clients searched this term on this day (ADR-36). Counted through a fingerprint that lives
+     * in memory only and is never stored: one search repeated all day by one client is one searcher, and only a
+     * term more than one client looked for reaches the public list. 0 = rows written before the column existed.
+     */
+    searchers: integer('searchers').notNull().default(0),
     updatedAt: integer('updated_at').notNull(),
   },
   (t) => [uniqueIndex('search_demand_pk').on(t.day, t.env, t.term), index('search_demand_day').on(t.day)],

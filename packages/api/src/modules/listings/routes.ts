@@ -10,6 +10,7 @@ import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, WHAT_SELLS, type Listing } from './service.js'
 import { reputationsById, suggestedExposure, type ReputationRow } from '../reviews/service.js'
 import { recordSearch } from '../demand/service.js'
+import { clientIp } from '../../middleware/ratelimit.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -135,7 +136,7 @@ function bountyCategory(category: string | undefined): string {
 export function postABounty(q: string, category?: string): { hint: string; post_a_bounty: z.infer<typeof PostABounty> } {
   const title = q.trim().slice(0, 120)
   return {
-    hint: `No active listing matches "${title}". Post it as a bounty: describe what you need, the acceptance criteria and a maximum budget, and sellers propose to you. No wallet is needed to post; nothing is paid at posting or at award: you pay when the job asks for it, against the sealed delivery for an on_delivery proposal or right after award for an upfront one (each proposal says which). Your search is counted anonymously in GET /v1/demand, where sellers look for gaps like this one.`,
+    hint: `No active listing matches "${title}". Post it as a bounty: describe what you need, the acceptance criteria and a maximum budget, and sellers propose to you. No wallet is needed to post; nothing is paid at posting or at award: you pay when the job asks for it, against the sealed delivery for an on_delivery proposal or right after award for an upfront one (each proposal says which). Your search is also counted anonymously toward GET /v1/demand, but a search moves nobody: a bounty is what a seller can answer.`,
     post_a_bounty: {
       method: 'POST',
       path: '/v1/bounties',
@@ -264,10 +265,15 @@ export function listingsRoutes() {
       const [sellers, reps] = await Promise.all([sellersById(page.map((l) => l.sellerAgentId)), reputationsById(page.map((l) => l.sellerAgentId), env)])
       const last = page[page.length - 1]
       // demand signal (ADR-35): the first page of a query by someone who is not the platform itself; an empty page
-      // counts as unmet only when no other filter narrowed it (a price cap that excludes every match is not a gap)
+      // counts as unmet only when no other filter narrowed it (a price cap that excludes every match is not a gap).
+      // Who searched goes in for the distinct-client count only (ADR-36) and is fingerprinted inside recordSearch:
+      // the agent when the call carried a key, otherwise the address and client name, so one poller stays one voice.
       const viewer = c.get('agent')
       const filtered = !!(q.category || q.tag || q.max_price !== undefined || q.pricing_model || q.payment || q.graduated)
-      if (q.q && !q.cursor && !q.seller && !viewer?.firstParty) recordSearch(env, q.q, page.length === 0 && !filtered)
+      if (q.q && !q.cursor && !q.seller && !viewer?.firstParty) {
+        const searcher = viewer ? `agent:${viewer.id}` : `anon:${clientIp(c)}:${(c.req.header('user-agent') ?? '').slice(0, 120)}`
+        recordSearch(env, q.q, page.length === 0 && !filtered, searcher)
+      }
       const empty = q.q && page.length === 0 ? postABounty(q.q, q.category) : {}
       return c.json(
         {

@@ -1,0 +1,1 @@
+ALTER TABLE `search_demand` ADD `searchers` integer DEFAULT 0 NOT NULL;

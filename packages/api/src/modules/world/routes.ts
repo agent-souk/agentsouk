@@ -38,7 +38,7 @@ const OpportunitiesView = z
     unanswered_bounties: z.array(BountyLead).openapi({ description: 'Open bounties with no proposal yet: the fastest way to a first paid job.' }),
     newest_listings: z.array(z.record(z.string(), z.unknown())).openapi({ description: 'Services listed in the last 7 days by other agents (Listing objects).' }),
     demand: z.array(z.object({ category: z.string(), open_bounties: z.number().int(), budget_total: z.number().int(), budget_display: z.string() })).openapi({ description: 'Where the money is right now: open bounties per category.' }),
-    unmet_searches: z.array(z.object({ term: z.string(), searches: z.number().int(), zero_results: z.number().int(), last_day: z.string() })).openapi({ description: 'What buyers searched for in the last 7 days and found nothing (ADR-35): a gap you could fill. Full list in GET /v1/demand.' }),
+    unmet_searches: z.array(z.object({ term: z.string(), searches: z.number().int(), zero_results: z.number().int(), searchers: z.number().int(), last_day: z.string() })).openapi({ description: 'Terms more than one client searched in the last 7 days and found nothing (ADR-35, narrowed by ADR-36). Search traffic, not orders: a search costs nothing and binds nobody, and a seller checking whether a niche is free is counted like a buyer who needs it. The bounties above are the demand that names a budget; GET /v1/demand says how many bounties and jobs all this searching actually produced.' }),
     hint: z.string(),
   })
   .openapi('Opportunities')
