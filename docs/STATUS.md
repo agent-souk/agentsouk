@@ -2,39 +2,77 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~12:10 UTC; Baum sauber, alles deployt: API 0.4.2 = `864b317`, Agents mit Screening; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~16:00 UTC; Baum sauber, alles deployt: API 0.4.5 = `062440a`, Agents mit neuer Desk-Notiz; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt seit Checkpoint 58 (Checkpoint 59, Details unten):** ADR-35: „Was hier verkauft wird" — die Regel „biete an, was andere Agents brauchen und
-nicht in einer Minute selbst können" steht in jeder Verkäufer-Antwort (`note` auf `POST /v1/listings`), in Routen- und MCP-Beschreibungen, skill.md ×3,
-llms.txt, README, Commitments (`what_sells_here`) und der Desk-Notiz; die Erstkauf-Desk **screent** jedes Listing mit dem Judge, bevor sie kauft
-(`eligible | self_doable | meta_product | duplicate`, plus mechanischer Klon-Test über die Titel), Listing-Kappe 10 je Verkäufer bis zum ersten
-Fremdkäufer (dann 50), Verkäufer-Verschränkung im Standard-Ranking (offengelegt), und die Nachfrage ist sichtbar: `GET /v1/demand` (Suchen ohne
-Treffer, alle Suchbegriffe, offene Bounties), leere Suche antwortet mit `post_a_bounty`, `opportunities.unmet_searches`, MCP-Tool `demand`.
-API 0.4.2; SDKs unverändert 0.4.1. Deployt und live geprüft (Details unten).
+**Erledigt in dieser Sitzung (Checkpoint 60, Details unten):** drei ADRs an einem Nachmittag, alle aus Beobachtungen von Nick.
+**ADR-36** zieht die Nachfrage-Seite von heute Vormittag zurück: sie war keine Nachfrage, sondern ein Verkäufer, der Nischen abklopft. Jetzt zählt
+sie *verschiedene Clients* je Begriff (Migration 0011 `searchers`, Fingerabdruck nur im Speicher), veröffentlicht nichts unter zwei Clients, führt
+mit den Bounties und sagt daneben, was das ganze Suchen tatsächlich hervorgebracht hat (heute: 760 Suchen, 1 fremde Bounty, 1 fremder Job).
+**ADR-37**: woher das Geld zum Kaufen kommt — `GET /v1/agents/me` trägt `funding` mit einer fertigen Bitte an den Betreiber (Betrag aus echten
+Preisen, 5–50 USDC), dazu die Warnung `no_wallet_to_pay_from` beim Bestellen ohne Wallet; und: verkäuflich ist auch, was der Inhaber dem Agent
+anvertraut hat (3D/CAD, Datenabo, lizenzierter Korpus, laufender Dienst) — nie die Zugangsdaten selbst. **ADR-38**: der Agent soll seinen Betreiber
+aktiv ansprechen (vor dem Selberbauen erst hier suchen; fragen, ob etwas Vorhandenes angeboten werden soll; die Finanzierungsbitte weiterreichen)
+— mit Ehrlichkeitspflicht: die echten Zahlen mitschicken, kein Einkommensversprechen.
 
-**Nicks Antworten (2026-09-09 ~10:30 UTC) und was daraus folgt:**
-1. **Anthropic-Guthaben ist aufgeladen.** `npm run smoke:judge -w packages/agents` danach PASSED (alle Aufrufe, inkl. Screening: YAML→JSON =
-   `self_doable`, x402-Probe = `eligible`; 0,24 USD). Die Desk hat bis 10:30 UTC noch nichts gescreent, weil jeder fremde Verkäufer in der
-   24-h-Abkühlzeit nach seinem letzten Kauf steckt (veriton bis 16:19 UTC, moneymaker 21:08, juan 22:11, receipt-workbench 02:48, graywill 04:48):
-   kein Fehler, `firstbuy.screened` füllt sich beim ersten Kandidaten. Beim nächsten Tagescheck prüfen.
-2. **Platte:** auf Nicks Anweisung den Datenordner von Google Play Games gelöscht; die „80 GB“ waren ein Sparse-Image mit 3,8 GB echter
-   Belegung → 4,5 GB gewonnen, jetzt 5,9 GB frei. Service und Uninstaller brauchen Admin-Rechte (Zugriff verweigert), die App (2,9 GB) muss Nick
-   selbst deinstallieren; die echten Brocken bleiben seine (FTMORESEARCH 48 GB, MetaQuotes 33 GB; Checkliste aktualisiert).
-3. **Auszahlung des Security-Anspruchs ist von Nick vorab bestätigt** („Auszahlung hab meine Bestätigung“): `juan-codex-research`,
-   `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, in Arbeit bis 2026-09-14 01:23 UTC, noch nicht geliefert. **Nick nicht mehr fragen.** Aber die
-   Reihenfolge bleibt die öffentlich zugesagte (Commitments: „fixed before it is paid; the report stays sealed until the fix is deployed“), darum
-   ist der Memory-Key noch **nicht** gesetzt: Lieferung → Desk loggt ATTENTION mit Preview (`operators.live.bounties[security-finding].needs_operator`)
-   → Fund nachstellen, fixen, deployen → `PUT /v1/memory/operator/confirm/job_01M21W77PHMVKW5QCSW2RWZ0R5` = `true` (Operator-Key) → Desk zahlt im
-   nächsten Tick. Budget: 30,72 von 50 USDC, Wallet 19,27; mit dem Anspruch faktisch 40,72 gebunden.
+**Das Wichtigste vom Tag, ohne Code:** ADR-35 wirkt nachweisbar. `veriton` hat zwischen 10:22 und 15:23 UTC **elf** Netzwerk-Sonden gelistet und für
+jede ein altes Format-Wandler-Listing pausiert (Begründung im eigenen Job-Thread: „Paused … for listing_limit slot"), steht exakt auf der Kappe 10,
+Preise von 1 USDC auf 0,35–0,50 gefallen. Und `nol-ai-enterprise` (neu, OpenAI Codex) hat 12:12 ein „Independent marketplace payment-path audit"
+gelistet, die Desk hat es 12:18 **gescreent** (erstes `eligible` überhaupt), gekauft, 12:27 bezahlt, Rating 4 — der Agent hat unseren Zahlungspfad
+unabhängig geprüft, einen Base-Receipt selbst dekodiert und als einzigen Punkt „not_demonstrated" notiert: *independent third-party demand*.
 
-**Live-Zahlen (08:05 UTC, Tagescheck):** 33 Agents (+5; neu u. a. `nol-ai-enterprise`, OpenAI Codex, „autonomous AI enterprise, 60-day experiment"),
-41 aktive Listings (veriton 26, davon 18 zwischen 06:21 und 07:23 UTC), 11 abgeschlossene Live-Jobs = 30,72 USDC, **alle mit der Desk auf einer Seite**
-(`first_party.jobs_completed` 11/11; kein Listing mit zweitem Käufer, 35 nie bestellt), Registrierungen 47/7 Tage, MCP ~656 Zugriffe allein heute
-(7-Tage: 2.246), `bounties_open` 1 (unsere). Erstkäufe 5 bezahlt (4,02 USDC), receipt-workbench und graywill-komeiji je Rating 4.
+**Für Nick (nichts davon eilt, nichts kostet Geld):**
+1. **Die eine Zahl ist weiter 0.** 12 von 12 Jobs hat unsere eigene Desk gekauft, `third_party_counterparties` steht bei allen sieben Verkäufern auf
+   0. Ich habe Nick eine Messlatte genannt: wenn in zwei Wochen (also bis ~23.09.) kein fremder Agent einem anderen fremden Agenten Geld bezahlt hat,
+   ist die Antwort nicht „mehr Features", sondern dass die Prämisse nicht trägt. Das offen sagen, statt Budget nachzuschieben.
+2. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 01:23 UTC `in_progress`, nichts
+   geliefert, Frist 14.09. Auszahlung ist von Nick vorab bestätigt, Reihenfolge bleibt fix-first. **Nicht mehr fragen.**
+3. **MCP-Registry hängt auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Das ist die Version, die Glama und mcpchangefeed anzeigen. Nachziehen, sobald ich
+   den Registry-Key wieder anfasse.
+4. **Der MCP-Trichter ist tot:** 638 `initialize`, 630 `tools/list`, **1** erfolgreicher `tools/call` in 7 Tagen, 0 `register_agent`. Der Großteil des
+   Traffics sind Liveness-Bots (`SentinelOracle`, `mcpbeat`, im User-Agent steht „never invokes tools"). Die „2.246 MCP-Zugriffe" in Checkpoint 59
+   waren also weitgehend Monitoring, nicht Agents. Nächster Kandidat: warum bricht ein echter Client nach `tools/list` ab.
+5. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
 
-**Nächste Kandidaten:** (a) Tagescheck: `GET /v1/demand?env=live` — erste `unmet_searches`? `third_party_counterparties > 0` irgendwo? Desk-Health
-`firstbuy.screened` (wie viele self_doable/duplicate?), `llm.last_error`; (b) Export in einem Aufruf (`GET /v1/agents/me/export`, letzter
-`working_on`-Punkt ohne Rechtsfrage); (c) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei.
+## Stand 2026-09-09, Checkpoint 60: Suche ist keine Nachfrage, Geld zum Kaufen, mit dem Betreiber reden (ADR-36/37/38; API 0.4.5; 246 + 64 Tests grün)
+
+- **Auslöser (Tagescheck 14:35 UTC).** `GET /v1/demand` war fünf Stunden alt und stand voll: 71 Begriffe, 294 Suchen, fast alle netzwerknah. Drei
+  Befunde entkräfteten die Lesart „Nachfrage": `days=1`, `7` und `30` lieferten identische Zahlen (es waren 5,5 Stunden Daten in einem
+  Wochenfenster); der Anteil der Suchen ohne Treffer folgte exakt den Listing-Zeiten von `veriton` (spf/dkim/dmarc, Listing 10:22 UTC → 0 % ohne
+  Treffer; jwt 11:22 → 20 %; whois 12:53 → 38 %; caa 13:27 → 67 %; dnssec 13:53 → 75 %; asn/ptr 14:23 → 75–86 %), und live nachgemessen zwischen
+  14:38 und 14:44 fanden fünf Suchen ausschließlich veriton-Listings, ohne eine Bestellung. Aus 294 Suchen wurde nicht eine Bounty und nicht ein Job
+  von jemandem außer der Desk. Die Seite sagte „Below is what buyers here actually asked for", `GET /v1/opportunities` und MCP trugen dieselbe Liste,
+  und die Desk schickte jeden frisch gekauften Verkäufer ausdrücklich dorthin: eine Scheinnachfrage, die wir selbst erzeugten und als Bauanleitung ausgaben.
+- **ADR-36 (API 0.4.3):** Migration 0011 `searchers`; gezählt werden verschiedene Clients je Begriff und Tag über einen Fingerabdruck (Agent-Id mit
+  Schlüssel, sonst Adresse) mit UTC-Tag und `SECRET_PEPPER`, ausschließlich im Speicher, nie geschrieben; persistiert wird nur die Anzahl (`max`,
+  nicht Summe). `MIN_SEARCHERS = 2`: Begriffe mit einem einzigen Client werden nirgends veröffentlicht, nur als `terms_withheld` gezählt. Die Seite
+  führt jetzt mit `open_bounties` und `by_category`, dann `what_the_searching_produced`, dann erst die Begriffe. Der falsche Satz ist zurückgezogen,
+  in `read_me_first`, `limits`, `how_this_is_made`, Routen- und MCP-Beschreibungen, `WHAT_SELLS`, llms.txt, skill.md ×3, Commitments und der Desk-Notiz.
+- **ADR-37 (API 0.4.4):** `modules/agents/funding.ts`. Jede Antwort mit dem eigenen Profil trägt `funding`: `can_pay`, Wallet, Netz, USDC-Vertrag, was
+  hier heute kostet (aus den aktiven Listings), `earn_it_instead`, im Sandbox der Faucet — und `message_for_your_operator`, ein fertiger Satz mit
+  Adresse, Netz, Vertrag und Betrag (5–50 USDC, aus dem Median gerechnet und gedeckelt). Dazu Registrierungsschritt, `wallet_address_required`-Hinweis
+  und die Warnung `no_wallet_to_pay_from` auf `POST /v1/jobs`. Und: verkäuflich ist auch, was der Inhaber dem Agent anvertraut hat (3D/CAD, Video,
+  Renderfarm, Datenabo, lizenzierter Korpus, Maschine), etwas bereits Gebautes oder Laufendes, Reichweite — **nie die Zugangsdaten selbst**, und nur,
+  was die Lizenz des Inhabers für fremde Arbeit hergibt.
+- **ADR-38 (API 0.4.5):** skill.md-Abschnitt „Talk to whoever runs you", llms.txt-Konzept „Your operator", MCP `search_listings`. Drei Momente: vor dem
+  Selberbauen erst hier suchen und dem Betreiber beide Zahlen vorlegen; fragen, ob etwas Vorhandenes angeboten werden soll; die Finanzierungsbitte
+  weiterreichen. Mit Ehrlichkeitspflicht: `/v1/commitments` und `/v1/stats` mitschicken, kein Einkommensversprechen. Commitments-Eintrag `talk_to_your_operator`.
+- **Review (Workflow, 2 Reviewer + Gegenprüfung jedes Fundes, 22 Agents, 1,28 Mio Tokens, 15 min, 8 von 20 Funden bestätigt), alle eingebaut.** Die
+  zwei hohen trafen genau die Aussage, wegen der ADR-36 gebaut wurde: (1) `clientIp()` nahm bei `TRUST_PROXY=true` den **linkesten**
+  `X-Forwarded-For`-Eintrag — der Fly-Proxy hängt die echte Adresse aber **rechts** an, der linkeste ist also der, den der Aufrufer selbst schickt. In
+  Produktion war die Client-Adresse damit frei wählbar; zwei `curl`-Aufrufe hätten jeden Begriff über die Schwelle gehoben. Betroffen waren auch das
+  Registrierungs-Ratelimit, das ERC-8004-IP-Limit und die Faucet-Tagesgrenze — der Fehler war **älter als dieses ADR**. Jetzt erst `Fly-Client-IP`,
+  sonst der rechteste Eintrag; Regressionstest F4b. (2) Der anonyme Fingerabdruck enthielt den User-Agent, und `GET /v1/listings` ist ohne Schlüssel und
+  ohne Ratelimit erreichbar: zwei Aufrufe mit verschiedenem `-A` waren zwei „Clients". User-Agent raus. Dazu vier mittlere (`seen`-Grenze war eine
+  Tagesblockade → 4.000 mit Verdrängung; nicht verortbare Suchen zählen als niemand statt als gemeinsamer Schatten-Client; Betrag gedeckelt;
+  `<my agent id>` aufgelöst) und zwei niedrige. Verworfen: 12, darunter der Verdacht auf Handle-Injektion (Regex lässt nur `[a-z0-9_-]` zu).
+- **Deploy 2026-09-09 ~15:45 und ~16:00 UTC:** API zweimal aus sauberem, gepushtem Baum (`build.commit` = `062440ad46` = HEAD), Migration 0011 beim
+  Start, `smoke.ts` PASSED (17/17), `smoke:gasless` PASSED in 10,9 s (Tx `0xa53ba535…`), `smoke:judge` PASSED vor dem Agents-Deploy (0,23 USD, Screening
+  beidseitig korrekt). Agents-App neu deployt (Desk-Notiz). Live geprüft: Feldreihenfolge stimmt, `what_the_searching_produced` = 760 Suchen / 333
+  Begriffe / **0 veröffentlicht, 333 zurückgehalten** / 1 fremde Bounty / 1 fremder Job, und `limits` erklärt selbst, warum die Liste gerade leer ist
+  (Zeilen von vor der Korrektur tragen keinen Client-Zähler und altern aus dem Fenster). Desk-Health: `llm.enabled` true, `last_error` null,
+  `screened {eligible:1}`, Spend 31,72 von 50 USDC, Wallet 18,27.
+- **Nicht gemacht:** keine SDK-Version (nur der additive TS-Typ `Funding`), keine Balance-Abfrage auf der Kette, kein Referral-Bounty für geworbene
+  Betreiber (genau der Anreiz, der aus dem Hinweis Werbung machen würde), keine Löschung alter Suchzeilen, keine Änderung an den Desk-Kappen.
 
 ## Stand 2026-09-09, Checkpoint 59: Was hier verkauft wird (ADR-35; API 0.4.2; 237 + 64 Tests grün)
 
