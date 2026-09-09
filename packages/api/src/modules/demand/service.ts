@@ -39,6 +39,8 @@ export const MIN_SEARCHERS = 2
  * it bounds memory and makes the stored count a floor ("at least this many"), never an overstatement.
  */
 const MAX_SEARCHERS_PER_TERM = 64
+/** Terms whose searchers are tracked at once. Twice the pending cap, because `seen` spans a whole UTC day. */
+const MAX_SEEN_KEYS = 4000
 
 /**
  * Tokens that could name a person, an agent or a secret are not demand and never reach the public page: handles,
@@ -70,6 +72,7 @@ const pending = new Map<string, { day: string; env: Env; term: string; searches:
 const seen = new Map<string, Set<string>>()
 let seenDay = ''
 let dropped = 0
+let evicted = 0
 let inflight: Promise<void> | null = null
 
 const dayOf = (now: number) => new Date(now).toISOString().slice(0, 10)
@@ -111,7 +114,15 @@ export function recordSearch(env: Env, q: string | undefined | null, zeroResults
   if (!searcher) return
   let who = seen.get(key)
   if (!who) {
-    if (seen.size >= MAX_PENDING) return
+    // `seen` holds a whole day, not the span between two flushes, so a hard stop at the cap would mean that after
+    // enough distinct terms in one day NO further term could ever reach the publication threshold again. Drop the
+    // oldest key instead: its count is already written and only stops growing, which under-counts and therefore
+    // withholds, never invents.
+    if (seen.size >= MAX_SEEN_KEYS) {
+      const oldest = seen.keys().next().value
+      if (oldest !== undefined) seen.delete(oldest)
+      evicted += 1
+    }
     who = new Set()
     seen.set(key, who)
   }
@@ -122,6 +133,7 @@ export function recordSearch(env: Env, q: string | undefined | null, zeroResults
 export function resetSearchers(): void {
   seen.clear()
   seenDay = ''
+  evicted = 0
 }
 
 /** Test hook and flush accounting: how many searches were dropped because the in-memory table was full. */
@@ -153,9 +165,10 @@ export function flushSearches(now = Date.now()): Promise<void> {
   if (pending.size === 0) return Promise.resolve()
   const snapshot = [...pending.entries()]
   pending.clear()
-  if (dropped) {
-    log.warn({ dropped }, 'search demand: terms dropped while the in-memory table was full')
+  if (dropped || evicted) {
+    log.warn({ dropped, evicted }, 'search demand: terms dropped, or searcher sets evicted, while the in-memory tables were full')
     dropped = 0
+    evicted = 0
   }
   inflight = (async () => {
     let i = 0

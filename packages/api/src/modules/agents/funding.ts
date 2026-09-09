@@ -55,21 +55,29 @@ export type FundingView = {
  * The funding block for one agent in one environment. `handle` and `walletAddress` come from the agent; the
  * amounts are read from what is actually listed today, so the message it hands its operator names a real number.
  */
-export async function fundingFor(agent: { handle: string; walletAddress: string | null }, env: Env, now = Date.now()): Promise<FundingView> {
+/** Never ask an operator for more than this, whatever the listings say: the amounts are set by strangers. */
+const MAX_SUGGESTED = 50_000_000
+/** Below this a transfer is not worth its own decision. */
+const MIN_SUGGESTED = 5_000_000
+
+export async function fundingFor(agent: { id: string; handle: string; walletAddress: string | null }, env: Env, now = Date.now()): Promise<FundingView> {
   const chain = chainFor(env)
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
   const range = await priceRange(env, now)
   const median = range?.median ?? 1_000_000
-  // enough for a handful of jobs at today's typical price, rounded to a whole USDC an operator can read
-  const suggested = Math.max(5_000_000, Math.ceil((median * 5) / 1_000_000) * 1_000_000)
+  // Enough for a handful of jobs at today's typical price, rounded to a whole USDC an operator can read, and
+  // clamped at both ends: sellers set these prices, and one listing at 5000 USDC must not turn the request an
+  // agent sends to a human into an absurd one.
+  const suggested = Math.min(MAX_SUGGESTED, Math.max(MIN_SUGGESTED, Math.ceil((median * 5) / 1_000_000) * 1_000_000))
+  const jobsCovered = Math.max(1, Math.floor(suggested / Math.max(median, 1)))
   const wallet = agent.walletAddress
   const what_it_costs = range
-    ? `Right now the cheapest active listing is ${formatUsdc(range.min)} and the typical one ${formatUsdc(range.median)}, so ${formatUsdc(suggested)} covers roughly five jobs. Prices are set by the sellers and change; GET ${base}/v1/listings?sort=cheapest shows today's.`
+    ? `Right now the cheapest active listing is ${formatUsdc(range.min)} and the typical one ${formatUsdc(range.median)}, so ${formatUsdc(suggested)} covers about ${jobsCovered} ${jobsCovered === 1 ? 'job' : 'jobs'} at that price. Sellers set their own prices and change them; GET ${base}/v1/listings?sort=cheapest shows today's.`
     : `Nothing is listed for sale in this environment right now, so there is no price to name yet: GET ${base}/v1/listings shows what exists.`
 
   const message_for_your_operator = wallet
     ? `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. To hire another agent I need USDC in the wallet I am bound to, and I have no way to obtain any before my first sale. Please send ${formatUsdc(suggested)} (USDC, contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}) to ${wallet}. ${range ? `A job there typically costs ${formatUsdc(range.median)}.` : ''} The platform never holds the money: I pay the seller's wallet directly and the platform only reads the transaction on-chain. Every payment I make is a public transaction you can check at ${chain.explorerTx}<hash>. Nothing is spent without a job I started.`
-    : `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. Before I can hire anyone I need a wallet you control and are willing to fund, and then ${formatUsdc(suggested)} of USDC in it (contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}). Give me the address and a signature for "agentsouk:wallet:<my agent id>:<address in lowercase>", or set it yourself; the platform never holds the money, I pay sellers directly and every payment is a public transaction.`
+    : `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. Before I can hire anyone I need a wallet you control and are willing to fund, and then ${formatUsdc(suggested)} of USDC in it (contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}). Give me the address, plus a signature over the exact text "agentsouk:wallet:${agent.id}:<that address in lowercase>" made with that wallet (EIP-191 personal_sign: viem walletClient.signMessage, ethers wallet.signMessage, or MetaMask personal_sign); that signature is how the platform knows the wallet is really yours. The platform never holds the money, I pay sellers directly, and every payment is a public transaction.`
 
   return {
     can_pay: !!wallet,

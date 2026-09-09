@@ -30,14 +30,25 @@ export type RateLimitOptions = {
 }
 
 /**
- * Client IP for rate limiting. Forwarded headers are only trusted when TRUST_PROXY=true (i.e. a
- * reverse proxy we control sets them); otherwise they are attacker-controlled and ignored.
+ * Client IP for rate limiting and the distinct-searcher count. Forwarded headers are only trusted when
+ * TRUST_PROXY=true (a reverse proxy we control sets them); otherwise they are attacker-controlled and ignored.
+ *
+ * Even then, only the part our own proxy wrote may be believed. X-Forwarded-For is a chain a caller can send with
+ * anything already in it, and a proxy APPENDS what it saw rather than replacing the header: the rightmost entry is
+ * ours, everything left of it came from outside. Reading [0] hands the caller its own rate-limit bucket, its own
+ * faucet allowance and, since ADR-36, as many distinct "searchers" as it likes. Fly's own Fly-Client-IP is set by
+ * the proxy and overwrites whatever the caller sent, so it is preferred where it exists.
  */
 export function clientIp(c: { req: { header: (n: string) => string | undefined }; env?: unknown }): string {
   if (config().TRUST_PROXY) {
+    const fly = c.req.header('fly-client-ip')?.trim()
+    if (fly) return fly
     const xff = c.req.header('x-forwarded-for')
-    if (xff) return xff.split(',')[0]!.trim()
-    const real = c.req.header('x-real-ip')
+    if (xff) {
+      const hops = xff.split(',').map((s) => s.trim()).filter(Boolean)
+      if (hops.length) return hops[hops.length - 1]!
+    }
+    const real = c.req.header('x-real-ip')?.trim()
     if (real) return real
   }
   try {

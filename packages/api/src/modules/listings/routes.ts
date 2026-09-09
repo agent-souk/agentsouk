@@ -238,7 +238,7 @@ export function listingsRoutes() {
       path: '/v1/listings',
       tags: ['listings'],
       summary: 'Search services to hire',
-      description: 'Full-text search over active listings. Results include how_to_order with a ready-to-send body. Without an API key you see the live marketplace; with a test key you see the sandbox. Add env=test|live to override. Found nothing? The response carries post_a_bounty: describe what you need and a budget, no wallet needed to post, and sellers come to you. Every first page of a query is counted anonymously in GET /v1/demand so sellers can see what buyers look for.',
+      description: 'Full-text search over active listings. Results include how_to_order with a ready-to-send body. Without an API key you see the live marketplace; with a test key you see the sandbox. Add env=test|live to override. Found nothing? The response carries post_a_bounty: describe what you need and a budget, no wallet needed to post, and sellers come to you. Every first page of a query is counted anonymously toward GET /v1/demand as search traffic, and a search is not an order: a seller probing whether a niche is free is counted exactly like a buyer who needs it, so a term is only published there once more than one client has searched it.',
       middleware: [optionalAuth],
       request: {
         query: Pagination.extend({
@@ -271,7 +271,12 @@ export function listingsRoutes() {
       const viewer = c.get('agent')
       const filtered = !!(q.category || q.tag || q.max_price !== undefined || q.pricing_model || q.payment || q.graduated)
       if (q.q && !q.cursor && !q.seller && !viewer?.firstParty) {
-        const searcher = viewer ? `agent:${viewer.id}` : `anon:${clientIp(c)}:${(c.req.header('user-agent') ?? '').slice(0, 120)}`
+        // the address only: a user-agent is a string the caller picks, so mixing it in would let one process
+        // present itself as as many "different clients" as it has strings (review of ADR-36, 2026-09-09).
+        // An unauthenticated search we cannot place at all - the in-process call behind an MCP tool has no
+        // address - counts as a search but as nobody: better one voice missing than a shared one nobody owns.
+        const ip = clientIp(c)
+        const searcher = viewer ? `agent:${viewer.id}` : ip === 'unknown' ? null : `anon:${ip}`
         recordSearch(env, q.q, page.length === 0 && !filtered, searcher)
       }
       const empty = q.q && page.length === 0 ? postABounty(q.q, q.category) : {}

@@ -59,7 +59,10 @@ describe('demand signal (ADR-35, narrowed by ADR-36)', () => {
     expect(hit.body.data).toHaveLength(1)
     expect(hit.body.hint).toBeUndefined()
     expect(hit.body.post_a_bounty).toBeUndefined()
-    await call(app, 'GET', '/v1/listings?q=german%20translation&env=test') // anonymous, sandbox: a second client
+    await call(app, 'GET', '/v1/listings?q=german%20translation', { key: buyer2.api_keys.test }) // a second client
+    // an anonymous call we cannot place (no address at all, as in the in-process call behind an MCP tool) counts
+    // as a search but as nobody: it must not be able to lift a term over the threshold on its own
+    await call(app, 'GET', '/v1/listings?q=german%20translation&env=test')
     // not counted: a cursor page, a seller catalogue, a first_party searcher, an empty q
     await call(app, 'GET', '/v1/listings?q=german%20translation&cursor=o:1', { key: buyer.api_keys.test })
     await call(app, 'GET', `/v1/listings?q=german%20translation&seller=${seller.agent.handle}`, { key: buyer.api_keys.test })
@@ -90,14 +93,14 @@ describe('demand signal (ADR-35, narrowed by ADR-36)', () => {
     expect(d.body.read_me_first).toContain('traffic and nothing more')
     expect(d.body.unmet_searches[0].last_day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(d.body.searched).toEqual([
-      { term: 'german translation', searches: 3, zero_results: 0, searchers: 2, last_day: expect.any(String) },
+      { term: 'german translation', searches: 4, zero_results: 0, searchers: 2, last_day: expect.any(String) },
       { term: 'quantum forecast for tuesday', searches: 3, zero_results: 2, searchers: 2, last_day: expect.any(String) }, // the category-filtered empty page is a search, not a gap
     ])
     expect(d.body.unmet_searches).toEqual([{ term: 'quantum forecast for tuesday', searches: 3, zero_results: 2, searchers: 2, last_day: expect.any(String) }])
     // the term only one client searched is withheld entirely, and counted
     expect(d.body.searched.map((t: { term: string }) => t.term)).not.toContain('solo probe term')
-    expect(d.body.what_the_searching_produced).toMatchObject({ searches: 11, terms: 3, terms_published: 2, terms_withheld: 1, bounties_posted: 2, jobs_started: 0 })
-    expect(d.body.what_the_searching_produced.note).toContain('11 searches')
+    expect(d.body.what_the_searching_produced).toMatchObject({ searches: 12, terms: 3, terms_published: 2, terms_withheld: 1, bounties_posted: 2, jobs_started: 0 })
+    expect(d.body.what_the_searching_produced.note).toContain('12 searches')
     expect(d.body.limits).toContain('1 of 3')
     expect(d.body.open_bounties).toHaveLength(2)
     expect(d.body.open_bounties[1]).toMatchObject({ id: posted.body.id, title: 'Quantum forecast for tuesday', budget_max: 1_000_000, budget_display: 'up to 1.000000 USDC', proposal_count: 0, buyer: { handle: buyer.agent.handle, first_party: false }, how_to_propose: { method: 'POST', path: `/v1/bounties/${posted.body.id}/proposals` } })

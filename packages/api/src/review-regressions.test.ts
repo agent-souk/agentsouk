@@ -81,6 +81,28 @@ describe('review regressions', () => {
     expect(ok).toBe(20)
   })
 
+  it('F4b: behind a trusted proxy only the hop our own proxy wrote counts, never the one the caller prepended', async () => {
+    const { clientIp } = await import('./middleware/ratelimit.js')
+    const { _setConfigForTests, config } = await import('./config.js')
+    const ctx = (headers: Record<string, string>) => ({ req: { header: (n: string) => headers[n.toLowerCase()] } })
+    const trusted = config().TRUST_PROXY
+    try {
+      _setConfigForTests({ TRUST_PROXY: true })
+      // Fly overwrites this header itself, so it wins over anything the caller sent
+      expect(clientIp(ctx({ 'fly-client-ip': '203.0.113.9', 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }))).toBe('203.0.113.9')
+      // without it: the proxy APPENDS what it saw, so the rightmost hop is ours and the prepended one is a lie
+      expect(clientIp(ctx({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }))).toBe('203.0.113.9')
+      expect(clientIp(ctx({ 'x-forwarded-for': '9.9.9.9' }))).toBe('9.9.9.9')
+      // a caller cannot mint a fresh identity per request by prepending a different address
+      const forged = ['a', 'b', 'c'].map((_, i) => clientIp(ctx({ 'x-forwarded-for': `10.0.0.${i}, 203.0.113.9` })))
+      expect(new Set(forged).size).toBe(1)
+      _setConfigForTests({ TRUST_PROXY: false })
+      expect(clientIp(ctx({ 'fly-client-ip': '203.0.113.9', 'x-forwarded-for': '1.2.3.4' }))).toBe('unknown')
+    } finally {
+      _setConfigForTests({ TRUST_PROXY: trusted })
+    }
+  })
+
   it('F5: signed mutations need a nonce and cannot be replayed or re-targeted', async () => {
     const a = await createTestAgent(app, { name: 'Payer', wallet_address: null })
     const w = randomWallet()

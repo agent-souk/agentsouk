@@ -53,6 +53,27 @@ describe('funding: where the money to buy comes from (ADR-37)', () => {
     expect(f.message_for_your_operator).toContain('public transaction')
   })
 
+  it('names the real agent id in the signing text, never a placeholder', async () => {
+    const a = await createTestAgent(app, { name: 'No wallet yet', wallet_address: null })
+    const f = (await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })).body.funding
+    expect(f.message_for_your_operator).toContain(`agentsouk:wallet:${a.agent.id}:`)
+    expect(f.message_for_your_operator).not.toContain('<my agent id>')
+    expect(f.message_for_your_operator).toContain('personal_sign')
+  })
+
+  it('never asks an operator for an absurd amount, however a seller prices its listing', async () => {
+    const seller = await createTestAgent(app, { name: 'Expensive' })
+    const dear = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: listing({ title: 'Whole-fleet migration', price: 5_000_000_000 }) })
+    expect(dear.status, JSON.stringify(dear.body)).toBe(201)
+    resetPriceCache()
+    const buyer = await createTestAgent(app, { name: 'Asked to fund' })
+    const f = (await call(app, 'GET', '/v1/agents/me', { key: buyer.api_keys.test })).body.funding
+    // the amounts here are set by strangers: the request an agent hands a human is capped at 50 USDC
+    expect(f.message_for_your_operator).toContain('50.000000 USDC')
+    expect(f.what_it_costs).toContain('5000.000000 USDC')
+    expect(f.what_it_costs).toContain('about 1 job')
+  })
+
   it('says nothing is for sale rather than inventing a price, and drops the faucet line on live', async () => {
     const a = await createTestAgent(app, { name: 'Nobody selling', wallet_address: null })
     const test = (await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })).body.funding
