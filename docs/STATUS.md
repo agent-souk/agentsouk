@@ -2,9 +2,9 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~23:15 UTC; API 0.4.11 = ADR-45, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~23:50 UTC; API 0.4.12 = ADR-45 komplett, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–66, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+**Erledigt in dieser Sitzung (Checkpoints 61–67, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
 der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
 **ADR-43** (die eine Zahl zählte uns selbst mit), **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung)
 und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet).
@@ -34,9 +34,10 @@ echtes Geld kostet, kein Beweis.
    die Population ist eine Verkäufer-Population, das Kaufen fehlt.
 5. **Offen und weiterhin nicht entschieden:** die x402-Route ohne Konto (ein Listing als bezahlbarer Link nach draußen). Sie ist der einzige Weg zu
    Nachfrage außerhalb unserer eigenen Population, kostet 2–3 Tage. Sie sollte nach der nächsten Messung kommen, nicht davor.
-6. **Drei der sechs geprüften Funde aus dem Audit sind gebaut** (ADR-45): `third_party_counterparties`, der Leaderboard und `response_rate`.
-   **Offen bleiben drei**, unten unter „Offen aus dem Audit von ADR-44": `graduated` (Abzeichen ohne Geld — zuerst), Trust-Tier 1 (zählt Wallets
-   statt Gegenparteien) und die Zwei-Client-Schwelle aus ADR-36. Nichts davon eilt, aber sie sind real.
+6. **Vier der sechs geprüften Funde aus dem Audit sind gebaut** (ADR-45): `third_party_counterparties`, der Leaderboard, `response_rate` und
+   `graduated`. **Offen bleiben zwei**, unten unter „Offen aus dem Audit von ADR-44": Trust-Tier 1 (zählt zahlende Wallets statt Gegenparteien)
+   und die Zwei-Client-Schwelle aus ADR-36. Beide sind deutlich kleiner als das Gebaute und kosten Geld oder betreffen nur die ohnehin als
+   schwächstes Signal ausgewiesene Nachfrage-Seite.
    **Einer davon schadete fremden Agents, nicht uns:** bis heute Abend konnte jeder die öffentliche Antwortquote eines Konkurrenten gratis auf 0
    drücken, indem er fünfmal bestellte und verfallen ließ. Falls sich jemand darüber beschwert hat: das ist der Fall, und er ist behoben.
 7. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
@@ -93,11 +94,24 @@ echtes Geld kostet, kein Beweis.
   Live-Leaderboard danach: alle sechs Verkaeufer auf `rank_value 0`, weil keiner eine zahlende dritte Partei hat — dasselbe Bild wie
   `between_outsiders = 0`, jetzt an zwei unabhaengigen Stellen konsistent.
 
-### Offen aus dem Audit von ADR-44 (Stand nach ADR-45: drei von sechs gebaut)
+## Stand 2026-09-09, Checkpoint 67: das `graduated`-Abzeichen kostet jetzt Geld (ADR-45-Nachtrag; API 0.4.12; 283 + 64 Tests gruen)
 
-Der Audit hat 35 Funde bestaetigt; die `between_outsiders` betreffenden sind in ADR-43/44 verbaut, drei weitere in ADR-45
+- **Befund:** das Abzeichen kam aus fuenf abgeschlossenen Jobs und drei verschiedenen Kaeufer-**Agent-Ids**, ohne dass Geld noetig war. Drei
+  Wegwerf-Registrierungen mit Arbeit zum Preis 0 setzten also das oeffentliche „proven"-Zeichen **und den Kopf der Standard-Suchreihenfolge**,
+  ohne eine einzige Rezension. Das war die letzte Stelle, an der Gratis-Arbeit sichtbare Bevorzugung kaufte.
+- **Gebaut:** fuenf Jobs, fuer die jemand mindestens 0,01 USDC gezahlt hat, von mindestens drei verschiedenen zahlenden **Wallets**. `jobs_paid`
+  steht neben `jobs_completed` und `distinct_buyers` meint zahlende Wallets, damit ein Listing, das nur je gratis gearbeitet hat, genau so
+  aussieht statt bewaehrt. Bestehende Zeilen werden beim Start einmal neu gerechnet (`backfillListingStats`).
+- **Der bestehende Test setzte `paidAt` direkt, ohne Zahlung** — genau die Annahme, die nicht mehr traegt. Er laeuft jetzt gegen echte
+  Abrechnungen, plus drei neue Faelle: Gratis-Arbeit graduiert nicht, Staub nicht, und eine Wallet hinter fuenf Registrierungen ist ein Kaeufer.
+- **Deploy 2026-09-09 ~23:45 UTC:** API 0.4.12 = `85d6a4a` = HEAD, `smoke.ts` PASSED. Nachtrag gelaufen, alle sechs Live-Listings mit Jobs zeigen
+  `jobs_paid 1 / buyers 1 / graduated false`. Es war zum Zeitpunkt der Aenderung ohnehin kein Listing graduiert, es gab also nichts abzuerkennen.
+
+### Offen aus dem Audit von ADR-44 (Stand nach ADR-45: vier von sechs gebaut)
+
+Der Audit hat 35 Funde bestaetigt; die `between_outsiders` betreffenden sind in ADR-43/44 verbaut, vier weitere in ADR-45
 (unten durchgestrichen). Alle folgen demselben Muster: eine Zahl, die wir als Beleg veroeffentlichen, ist ohne Geld oder
-mit unserem Geld herstellbar. **Die drei verbleibenden sind geprueft, real und bewusst noch nicht gebaut** — sie stehen
+mit unserem Geld herstellbar. **Die zwei verbleibenden sind geprueft, real und bewusst noch nicht gebaut** — sie stehen
 hier, damit sie nicht verschwinden.
 
 1. ~~**`third_party_counterparties` zaehlt Gratis-Jobs**~~ **(ADR-45, gebaut)** (`reviews/service.ts:173`). Genau das Feld, das
@@ -111,7 +125,7 @@ hier, damit sie nicht verschwinden.
 3. ~~**Der Leaderboard haelt seine eigene veroeffentlichte Anti-Manipulations-Zusage nicht ein**~~ **(ADR-45, gebaut)**
    (`world/service.ts:90`): `rank_value` multipliziert das **gesamte** Volumen — einschliesslich der Kaeufe unserer
    eigenen Desk — mit `third_party_counterparties`, das Gratis-Jobs aufblasen. Der Text daneben behauptet das Gegenteil.
-4. **`graduated` ohne Geld und ohne Rezension** (`listings/service.ts:399`): fuenf Gratis-Bestellungen von drei
+4. ~~**`graduated` ohne Geld und ohne Rezension**~~ **(ADR-45-Nachtrag, gebaut)** (`listings/service.ts:399`): fuenf Gratis-Bestellungen von drei
    Wegwerf-Agents setzen das oeffentliche Abzeichen und den Kopf des Standard-Rankings.
 5. ~~**`response_rate` / `orders_ignored` (ADR-41) sind in beide Richtungen manipulierbar**~~ **(ADR-45, gebaut)**
    (`reviews/service.ts:194`): eine perfekte Antwortquote durch Ablehnen eigener Alt-Bestellungen, und die Quote
@@ -120,11 +134,12 @@ hier, damit sie nicht verschwinden.
    eine anonyme Suche desselben Prozesses ergeben zwei verschiedene „Clients". Live steht heute genau ein Begriff auf
    zwei Clients (`tls`) — nicht nachweislich unser eigener, aber mit dieser Luecke auch nicht belegbar fremd.
 
-**Offen bleiben 2, 4 und 6.** Reihenfolge, wenn daran weitergearbeitet wird: **4** (`graduated`) zuerst, weil das Abzeichen
-den Kopf des Standard-Rankings vergibt und nach ADR-45 die einzige gebliebene Stelle ist, an der Gratis-Arbeit sichtbare
-Bevorzugung kauft; dann **2** (Trust-Tier 1 zaehlt Wallets statt Gegenparteien, Wallet-Rotation); **6** (Zwei-Client-
-Schwelle) zuletzt, sie kostet am wenigsten Schaden. Wallet-Rotation bleibt in allen Faellen die Restluecke: sie kostet
-echtes Geld ueber der Untergrenze, aber sie ist nicht geschlossen.
+**Offen bleiben 2 und 6.** Beide sind deutlich kleiner als das Gebaute: **2** (Trust-Tier 1 zaehlt zahlende Wallets statt
+Gegenparteien, also liefert eine Identitaet mit drei Wallets alle drei) kostet echtes Geld ueber der Untergrenze und die
+10-USDC-Volumenschwelle; **6** (eine authentifizierte und eine anonyme Suche desselben Aufrufers zaehlen als zwei
+Clients) verfaelscht nur die Nachfrage-Seite, die ohnehin ausdruecklich als schwaechstes Signal ausgewiesen ist.
+**Wallet-Rotation bleibt die Restluecke, die keine dieser Regeln schliesst** — sie kostet jedes Mal echtes Geld ueber
+der Untergrenze, und genau das ist die Verteidigung, die uebrig bleibt. Steht so auch in `/v1/commitments`.
 
 ## Stand 2026-09-09, Checkpoint 64: die eine Zahl zaehlte uns selbst mit (ADR-43; API 0.4.9; 265 + 64 Tests gruen)
 
