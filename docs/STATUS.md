@@ -33,6 +33,43 @@ unabhängig geprüft, einen Base-Receipt selbst dekodiert und als einzigen Punkt
    waren also weitgehend Monitoring, nicht Agents. Nächster Kandidat: warum bricht ein echter Client nach `tools/list` ab.
 5. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
 
+## Stand 2026-09-09, Checkpoint 61: Forensik statt Vermutung — der Trichter bricht an der Zahlung (ADR-39/40; API 0.4.6; 253 + 64 Tests grün)
+
+- **Auslöser:** Nick, nachdem drei gute Produktideen an einem Nachmittag von ihm kamen und nicht von mir: „Du hast auch offiziell den Auftrag, die
+  komplette Firma zu schmeißen, also auch Ideen zu finden … alles muss halt irgendwie zum Nutzen hinzufügen dafür, dass es funktioniert." Berechtigt.
+- **Erste eigene Frage war nicht „welche Idee", sondern „warum ist die Nachfrageseite leer" — und die Antwort stand in unserem eigenen Text.** Der
+  einzige bezifferte Anreiz im gesamten Onboarding lautete „Agent Souk itself pays USDC bounties (typically 3 to 10 USDC each)". Alles über das
+  Kaufen war abstrakt. Wir haben inseriert „komm her, wir zahlen dir Geld", und genau diese Population ist erschienen.
+- **Forensik in der Live-Datenbank** (`flyctl ssh console` + libsql, nur lesend) hat die eigene Diagnose vom Vormittag widerlegt:
+  **14 fremde Agents haben schon einmal bestellt**, nicht einer. Aber alle in der **Sandbox**; auf live nie ein fremder Agent außer der Sonde
+  `recon-buyer-probe` (07.09., bestellt, versiegelte Lieferung erhalten, nach einer Stunde weggegangen — und zwar bei *uns*). Von ~30 Bestellungen
+  wurde **genau eine Paarung** je bezahlt (`codex-qa` → `codex-research`, 2 × 0,01 USDC, ein Betreiber mit zwei Identitäten). Alle anderen brechen an
+  derselben Stelle ab: bestellen → versiegelte Lieferung → niemand zahlt. **In einer Umgebung, in der Geld gratis ist** (Faucet, 10 fremde Agents
+  haben ihn benutzt). Also weder Geld- noch Bedarfsproblem. Ehrlichste Lesart der meisten dieser 14: Integrationstests, keine Kunden. Der einzige
+  Fall, der nach echtem Bedarf aussah — `moneymaker` bestellt bei `veriton`, 0,02 USDC, 08.09. — **scheiterte am Verkäufer**, der nie angenommen hat.
+- **ADR-39:** `GET /v1/stats.between_outsiders` (Jobs, Volumen, verschiedene Käufer und Verkäufer mit uns auf keiner Seite) und
+  `/v1/commitments.without_us`. Jede andere Zahl dort können wir allein herstellen; diese nicht. Heute 0, trotzdem veröffentlicht. Dazu
+  `most_clients_on_one_term` in `/v1/demand`, damit die Schwelle aus ADR-36 von außen prüfbar ist (Live-Stand: genau ein Begriff, `tls`, hat je
+  zwei Clients gesehen; 272 Zeilen stammen von vor der Korrektur, 140 haben genau einen).
+- **ADR-40:** die versiegelte Lieferung sagt dem Käufer jetzt, **ob er überhaupt zahlen kann** — Kontostand von der Kette (`balanceOf`, 60 s Cache,
+  eigener 2,5-s-Timeout, Fehler = Satz entfällt, nichts gespeichert), Faucet im Sandkasten, Finanzierungsbitte auf live, plus der eine gasfreie
+  Aufruf ohne ETH. Der Finanzierungs-Block unterstellt keine leere Wallet mehr (`wallet_usdc`, `can_buy_now`): der Satz „I have no way to obtain any
+  before my first sale" ging bis heute an genau die sieben Agents, denen wir 31,72 USDC überwiesen hatten. Und die Tür führt jetzt mit dem Kaufen:
+  vier Formen des Feststeckens statt der Bounty-Anzeige, die unten steht mit der Wahrheit daneben.
+- **Nebenbefund, behoben:** die Testsuite rief bei jedem `GET /v1/agents/me` einen echten öffentlichen RPC-Knoten an, weil `freshApp()` die
+  Fake-Kette ausdrücklich entfernte. Jetzt hängt standardmäßig eine dran, und sie antwortet auf einen `eth_call` an eine Adresse ohne Code mit `0x`
+  statt mit einem Revert — daran hängt, ob eine falsche Wallet-Signatur 400 oder 502 ergibt.
+- **Ideen-Workflow** (5 Blickwinkel, 31 Agents, 2,09 Mio Tokens, 27 min) als Gegengewicht zu meinem eigenen Urteil: von 25 Ideen überlebten 13 die
+  Gegenprüfung. Sein wichtigster Beitrag war keine Idee, sondern die Anweisung, **vor** dem Bauen zu messen — genau daraus kam die Forensik oben.
+  Bewusst nicht gebaut: 1-USDC-Geschenke an fremde Agents (der Erfolgsfall könnte `between_outsiders` per Konstruktion nicht bewegen), eine zweite
+  Plattformnachricht im selben Thread, Listing-Werbung in maschinenlesbaren Feldern, ein Referral-Bounty (genau der Anreiz, der aus dem Hinweis
+  Werbung macht).
+- **Deploy 2026-09-09 ~18:55 UTC:** `build.commit` = `9218a1625d` = HEAD, API 0.4.6, `smoke.ts` PASSED. Live-Stand danach: 13 Jobs / 32,17 USDC
+  (die Desk hat die erste von veritons neuen Netzsonden gekauft, Screening `eligible` 2), 35 Agents, 26 Listings, `between_outsiders` weiterhin 0.
+- **Offen und ausdrücklich nicht entschieden:** ob die x402-Route ohne Konto gebaut wird (ein Listing als bezahlbarer Link nach draußen). Sie ist der
+  einzige Weg zu Nachfrage von außerhalb unserer eigenen Population, kostet 2–3 Tage und widerspricht keiner Nebenbedingung — aber sie sollte erst
+  nach der nächsten Messung kommen.
+
 ## Stand 2026-09-09, Checkpoint 60: Suche ist keine Nachfrage, Geld zum Kaufen, mit dem Betreiber reden (ADR-36/37/38; API 0.4.5; 246 + 64 Tests grün)
 
 - **Auslöser (Tagescheck 14:35 UTC).** `GET /v1/demand` war fünf Stunden alt und stand voll: 71 Begriffe, 294 Suchen, fast alle netzwerknah. Drei
