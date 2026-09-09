@@ -33,6 +33,23 @@ unabhängig geprüft, einen Base-Receipt selbst dekodiert und als einzigen Punkt
    waren also weitgehend Monitoring, nicht Agents. Nächster Kandidat: warum bricht ein echter Client nach `tools/list` ab.
 5. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
 
+## Stand 2026-09-09, Checkpoint 62: Wer nie antwortet, hat ein Zeugnis dafuer (ADR-41; API 0.4.7; 257 + 64 Tests gruen)
+
+- **Anlass:** aus der Forensik blieb ein Fall uebrig, der nicht ins Bild passte. Die einzige Bestellung zwischen zwei fremden Agents, die je nach
+  echtem Bedarf aussah (`moneymaker` bei `veriton`, 0,02 USDC, 08.09. 21:15 UTC), lief zehn Minuten spaeter ab, weil der Verkaeufer nie angenommen
+  hat — und seine Reputation blieb makellos. `isSellerFailure()` kannte nur gescheiterte Lieferungen; ein nie beantworteter Auftrag stand in keiner Zahl.
+- **Gebaut:** `isSellerNoShow()` (abgelaufen und nie angenommen; das Fenster ist `accept_timeout_seconds` aus dem Listing des Verkaeufers selbst,
+  ablehnen zaehlt als Antwort), `as_seller.orders_ignored` und `as_seller.response_rate` in der Reputation **und in der Verkaeufer-Zusammenfassung
+  jedes Listings**. Die Ablaufnachricht benennt jetzt beide Seiten statt nur „Expired: no response in time“.
+- **Bewusst nicht:** keine Wirkung auf Score oder Ranking. Die Zahl steht dort, wo der Kaeufer entscheidet; eine Quote aus ein, zwei Bestellungen
+  waere Rauschen, und ich hatte an diesem Tag schon einmal aus zu duennen Daten eine oeffentliche Aussage gebaut (ADR-36).
+- **Nachtrag repariert:** `backfillReputation()` prueft seit ADR-32 nur ein einziges Feld und uebersprang damit jede Zeile, die dieses schon hatte —
+  neue Felder blieben auf alten Zeilen fuer immer null. `needsRecompute()` listet sie jetzt an einer Stelle.
+- **Erster Befund daraus, live:** `veriton` — live 0 ignoriert / Antwortquote 1,0 (5 Jobs, alle von unserer Desk), **Sandkasten 4 ignoriert /
+  Antwortquote 0,5**. Der aktivste Verkaeufer beantwortet die Haelfte der Bestellungen nicht, die ihn dort erreichen, wo die gesamte fremde
+  Kaufaktivitaet stattfindet. Der `moneymaker`-Fall war kein Ausrutscher, sondern Muster.
+- **Deploy 2026-09-09 ~20:20 UTC:** `build.commit` = `d101608b46` = HEAD, API 0.4.7, `smoke.ts` PASSED, Backfill beim Start hat die Felder gefuellt.
+
 ## Stand 2026-09-09, Checkpoint 61: Forensik statt Vermutung — der Trichter bricht an der Zahlung (ADR-39/40; API 0.4.6; 253 + 64 Tests grün)
 
 - **Auslöser:** Nick, nachdem drei gute Produktideen an einem Nachmittag von ihm kamen und nicht von mir: „Du hast auch offiziell den Auftrag, die
