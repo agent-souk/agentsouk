@@ -5,6 +5,7 @@ import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import { db } from '../../db/client.js'
 import { agents, faucetClaims } from '../../db/schema.js'
 import { newId } from '../../lib/ids.js'
+import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
 
 let app: App
@@ -58,7 +59,7 @@ describe('between_outsiders: the one number we cannot manufacture (ADR-39)', () 
     const buyer = await createTestAgent(app, { name: 'Outside buyer' })
 
     // an empty marketplace reports zero rather than omitting the field
-    expect((await stats()).between_outsiders).toEqual({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0, excluded: { no_money_moved: 0, funded_by_our_faucet: 0 } })
+    expect((await stats()).between_outsiders).toEqual({ jobs_completed: 0, volume_usdc_completed: 0, gross_volume_usdc: 0, distinct_buyers: 0, distinct_sellers: 0, excluded: { no_money_moved: 0, below_price_floor: 0, funded_by_us: 0, refunded: 0 } })
 
     // the platform desk buying from an outside seller is NOT it: this is the number that has been flattering us
     const l = await listing(seller)
@@ -102,7 +103,7 @@ describe('between_outsiders: it must not count what we produced ourselves (ADR-4
     const s = await stats()
     expect(s.jobs_completed).toBe(1) // it happened, and the headline number still says so
     expect(s.between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
-    expect(s.between_outsiders.excluded).toEqual({ no_money_moved: 1, funded_by_our_faucet: 0 })
+    expect(s.between_outsiders.excluded).toEqual({ no_money_moved: 1, below_price_floor: 0, funded_by_us: 0, refunded: 0 })
   })
 
   it('does not count a buyer that is spending USDC our own faucet handed it', async () => {
@@ -117,12 +118,12 @@ describe('between_outsiders: it must not count what we produced ourselves (ADR-4
     expect(s.jobs_completed).toBe(1)
     expect(s.volume_usdc_completed).toBe(PRICE) // the payment was real and stays in the headline volume
     expect(s.between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
-    expect(s.between_outsiders.excluded).toEqual({ no_money_moved: 0, funded_by_our_faucet: 1 })
+    expect(s.between_outsiders.excluded).toEqual({ no_money_moved: 0, below_price_floor: 0, funded_by_us: 1, refunded: 0 })
 
     // and a buyer that never took our money, on the same seller, still counts
     const real = await createTestAgent(app, { name: 'Buyer with its own money' })
     await tradeOnce(real, seller, l)
-    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 1, distinct_buyers: 1, distinct_sellers: 1, excluded: { funded_by_our_faucet: 1 } })
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 1, distinct_buyers: 1, distinct_sellers: 1, excluded: { funded_by_us: 1 } })
   })
 
   it('counts parties by wallet, so one operator with two registrations is one buyer', async () => {
@@ -157,7 +158,7 @@ describe('between_outsiders: it must not count what we produced ourselves (ADR-4
 
     await tradeOnce(spender, seller, await listing(seller))
 
-    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, distinct_buyers: 0, excluded: { funded_by_our_faucet: 1 } })
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, distinct_buyers: 0, excluded: { funded_by_us: 1 } })
   })
 
   it('publishes the counting rule with the number, so the subtraction can be checked from outside', async () => {
@@ -169,7 +170,117 @@ describe('between_outsiders: it must not count what we produced ourselves (ADR-4
     const c = await call(app, 'GET', '/v1/commitments?env=test')
     expect(c.status).toBe(200)
     const said = c.body.the_operator_is_a_participant.without_us_is_counted_like_this as string
-    expect(said).toContain('1 paid jobs whose buyer was spending USDC our own sandbox faucet')
-    expect(said).toContain('by wallet, not by agent id')
+    expect(said).toContain('1 bought with money that came from us')
+    expect(said).toContain('net position, not gross transfers')
+  })
+})
+
+/**
+ * ADR-44. Every case here is an attack an adversarial audit of ADR-43 actually confirmed against the running
+ * code on 2026-09-09 - four of them by executing it. Two were ours (the flag we could flip, the money we had
+ * already handed out); the rest cost an outsider nearly nothing.
+ */
+describe('between_outsiders: it must not be ours to move, and it must cost an outsider real money (ADR-44)', () => {
+  it('a job keeps the classification it had when it was created, so un-flagging the desk afterwards changes nothing', async () => {
+    _setConfigForTests({ ADMIN_TOKEN: 'test-admin-token' })
+    try {
+    const desk = await createTestAgent(app, { name: 'Platform desk' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    await tradeOnce(desk, seller, await listing(seller))
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, distinct_buyers: 0 })
+
+    // one admin call used to reclassify the platform's entire purchase history as work between outsiders
+    const r = await call(app, 'POST', `/v1/admin/agents/${desk.agent.id}/first-party`, { headers: { 'x-admin-token': 'test-admin-token' }, body: { first_party: false } })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.first_party).toBe(false)
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
+    } finally {
+      _setConfigForTests({ ADMIN_TOKEN: undefined })
+    }
+  })
+
+  it('does not count a buyer spending USDC our own desk paid it, however many hops it takes inside the marketplace', async () => {
+    const desk = await createTestAgent(app, { name: 'Platform desk' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const a = await createTestAgent(app, { name: 'Seller we paid' })
+    const bb = await createTestAgent(app, { name: 'Second hand' })
+    const c = await createTestAgent(app, { name: 'Third hand' })
+
+    await tradeOnce(desk, a, await listing(a)) // our money leaves us and lands on A's wallet
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0 })
+
+    await tradeOnce(a, bb, await listing(bb)) // A spends it on B - our money, one hop out
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, distinct_buyers: 0, excluded: { funded_by_us: 1 } })
+
+    await tradeOnce(bb, c, await listing(c)) // B spends the same money on C - two hops out
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 0, distinct_buyers: 0, excluded: { funded_by_us: 2 } })
+  })
+
+  it('does not treat one millionth of a dollar as a purchase', async () => {
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    const buyer = await createTestAgent(app, { name: 'Outside buyer' })
+    await tradeOnce(buyer, seller, await listing(seller, 1), 1) // 0.000001 USDC, two free registrations
+
+    const s = await stats()
+    expect(s.between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
+    expect(s.between_outsiders.excluded.below_price_floor).toBe(1)
+  })
+
+  it('reports nothing for a ring of wallets passing the same coin around, and shows the gross next to it', async () => {
+    const a = await createTestAgent(app, { name: 'Ring A' })
+    const bb = await createTestAgent(app, { name: 'Ring B' })
+    const c = await createTestAgent(app, { name: 'Ring C' })
+    const [la, lb, lc] = [await listing(a), await listing(bb), await listing(c)]
+    await tradeOnce(a, bb, lb)
+    await tradeOnce(bb, c, lc)
+    await tradeOnce(c, a, la)
+
+    const s = await stats()
+    // every wallet ends where it started, so nobody bought anything and nobody earned anything
+    expect(s.between_outsiders).toMatchObject({ volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
+    // the jobs and the gross are still published, so the shape of it is visible rather than hidden
+    expect(s.between_outsiders.jobs_completed).toBe(3)
+    expect(s.between_outsiders.gross_volume_usdc).toBe(3 * PRICE)
+  })
+
+  it('reports nothing for two wallets trading the same coin back and forth', async () => {
+    const a = await createTestAgent(app, { name: 'Wash A' })
+    const bb = await createTestAgent(app, { name: 'Wash B' })
+    const [la, lb] = [await listing(a), await listing(bb)]
+    await tradeOnce(a, bb, lb)
+    await tradeOnce(bb, a, la)
+
+    expect((await stats()).between_outsiders).toMatchObject({ volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0, gross_volume_usdc: 2 * PRICE })
+  })
+
+  it('a real purchase still counts, and the net figure equals what actually changed hands', async () => {
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    const buyer = await createTestAgent(app, { name: 'Outside buyer' })
+    await tradeOnce(buyer, seller, await listing(seller))
+
+    expect((await stats()).between_outsiders).toMatchObject({
+      jobs_completed: 1,
+      volume_usdc_completed: PRICE,
+      gross_volume_usdc: PRICE,
+      distinct_buyers: 1,
+      distinct_sellers: 1,
+      excluded: { no_money_moved: 0, below_price_floor: 0, funded_by_us: 0, refunded: 0 },
+    })
+  })
+
+  it('a purchase refunded in full does not stand', async () => {
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    const buyer = await createTestAgent(app, { name: 'Outside buyer' })
+    const id = await tradeOnce(buyer, seller, await listing(seller))
+    expect((await stats()).between_outsiders).toMatchObject({ jobs_completed: 1, distinct_buyers: 1 })
+
+    const back = chain.pay(seller.wallet_address!, buyer.wallet_address!, PRICE)
+    const r = await call(app, 'POST', `/v1/jobs/${id}/refund`, { key: seller.api_keys.test, body: { transaction: back } })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+
+    const s = await stats()
+    expect(s.between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
+    expect(s.between_outsiders.excluded.refunded).toBe(1)
   })
 })

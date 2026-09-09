@@ -20,19 +20,91 @@ export type PlatformStats = {
    * side. Everything else here can be produced by us alone - we can register, list, buy and pay, and we do. Only
    * this cannot. It is published whether it flatters us or not; on 2026-09-09 every field was zero.
    *
-   * ADR-43: a job only counts once money the buyer owned actually moved. Three subtractions, each published in
-   * `excluded` so the arithmetic can be checked from outside: a completed job nobody paid for is not a purchase;
-   * USDC our own faucet handed out is not the buyer's money; and parties are counted by wallet, not by agent id,
-   * so one operator with two registrations is one party.
+   * ADR-43/44: a job only counts once money the buyer owned actually moved and stayed moved. Every subtraction
+   * is published in `excluded` so the arithmetic can be checked from outside rather than believed. See
+   * betweenOutsiders() for the rule; `volume_usdc_completed` is NET (gross is next to it, so wash trading is
+   * visible as the gap between them).
    */
   between_outsiders: {
     jobs_completed: number
     volume_usdc_completed: number
+    gross_volume_usdc: number
     distinct_buyers: number
     distinct_sellers: number
-    excluded: { no_money_moved: number; funded_by_our_faucet: number }
+    excluded: { no_money_moved: number; below_price_floor: number; funded_by_us: number; refunded: number }
   }
   generated_at: string
+}
+
+/**
+ * ADR-44: below this, a "purchase" is not evidence of anything. Two free registrations and one millionth of a
+ * dollar used to be enough to move every headline field of between_outsiders off zero.
+ */
+export const OUTSIDER_PRICE_FLOOR = 10_000 // 0.01 USDC
+
+/**
+ * The one figure the go/no-go decision reads, computed so that neither we nor a single operator with two
+ * registrations can move it for free (ADR-39, corrected by ADR-43 and ADR-44).
+ *
+ * A job counts only if all of these hold:
+ *   - neither party was operated by Agent Souk WHEN THE JOB WAS CREATED (the frozen jobs.first_party_involved,
+ *     never the live agents.first_party, which one admin call could flip to reclassify our whole history);
+ *   - at least OUTSIDER_PRICE_FLOOR of USDC was actually settled on chain for it;
+ *   - the buyer was not spending money that came from us - our sandbox faucet, or anything our own agents have
+ *     paid out, followed through every further payment we can see;
+ *   - it was not refunded in full.
+ *
+ * Buyers, sellers and volume are then counted on NET position, not on gross transfers: a wallet is a buyer only
+ * if it ended up poorer across the counted set, a seller only if it ended up richer. A ring of wallets passing
+ * one coin around nets to zero for everyone and therefore reports nothing, which is what it is.
+ */
+async function betweenOutsiders(env: Env): Promise<PlatformStats['between_outsiders']> {
+  // Wallets holding money that came from us: the sandbox faucet, plus everything our own agents have paid out,
+  // followed through every subsequent payment recorded here. Only hops we can see - an off-platform transfer
+  // breaks the trail, and GET /v1/commitments says so rather than implying this is complete.
+  const ours = sql`
+    with recursive ours(addr) as (
+        select lower(fc.address) from faucet_claims fc
+      union
+        select lower(st.pay_to) from settlements st join agents a on a.id = st.payer_agent_id
+         where st.env = ${env} and st.kind = 'payment' and st.status = 'settled' and a.first_party = 1
+      union
+        select lower(s2.pay_to) from settlements s2, ours
+         where s2.env = ${env} and s2.kind = 'payment' and s2.status = 'settled' and lower(s2.payer_address) = ours.addr
+    )`
+  const paidOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled')`
+  const refundedOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'refund' and st.status = 'settled')`
+  const fromUs = sql`exists (select 1 from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled' and lower(st.payer_address) in (select addr from ours))`
+  const outsiderJobs = sql`from jobs j where j.env = ${env} and j.status in ('completed','resolved') and j.first_party_involved = 0`
+
+  const row = await db().get<{ jobs: number; buyers: number; sellers: number; net: number; gross: number; ex_no_money: number; ex_floor: number; ex_ours: number; ex_refunded: number }>(sql`
+    ${ours},
+    counted as (select j.id ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} < ${paidOn}),
+    flows as (
+        select lower(st.payer_address) addr, -st.amount delta from settlements st join counted c on c.id = st.job_id where st.status = 'settled'
+      union all
+        select lower(st.pay_to) addr, st.amount delta from settlements st join counted c on c.id = st.job_id where st.status = 'settled'
+    ),
+    net as (select addr, sum(delta) n from flows group by addr)
+    select
+      (select count(*) from counted) jobs,
+      (select count(*) from net where n < 0) buyers,
+      (select count(*) from net where n > 0) sellers,
+      (select coalesce(-sum(n), 0) from net where n < 0) net,
+      (select coalesce(sum(st.amount), 0) from settlements st join counted c on c.id = st.job_id where st.kind = 'payment' and st.status = 'settled') gross,
+      (select count(*) ${outsiderJobs} and ${paidOn} = 0) ex_no_money,
+      (select count(*) ${outsiderJobs} and ${paidOn} > 0 and ${paidOn} < ${OUTSIDER_PRICE_FLOOR}) ex_floor,
+      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and ${fromUs}) ex_ours,
+      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} >= ${paidOn}) ex_refunded
+  `)
+  return {
+    jobs_completed: row?.jobs ?? 0,
+    volume_usdc_completed: row?.net ?? 0,
+    gross_volume_usdc: row?.gross ?? 0,
+    distinct_buyers: row?.buyers ?? 0,
+    distinct_sellers: row?.sellers ?? 0,
+    excluded: { no_money_moved: row?.ex_no_money ?? 0, below_price_floor: row?.ex_floor ?? 0, funded_by_us: row?.ex_ours ?? 0, refunded: row?.ex_refunded ?? 0 },
+  }
 }
 
 /**
@@ -62,30 +134,7 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
     count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
   ])
-  // jobs with no first_party agent on either side: the only activity we cannot manufacture ourselves
-  const outsiderCompleted = and(eq(jobs.env, env), completed, sql`not ${firstPartyInvolved}`)
-  // ADR-43: a completed job nobody ever paid for is not a purchase. It was counted until 2026-09-09.
-  const moneyMoved = sql`exists (select 1 from settlements st where st.job_id = ${jobs.id} and st.kind = 'payment' and st.status = 'settled' and st.amount > 0)`
-  // ADR-43: USDC our own sandbox faucet handed out is our money, not the buyer's. Our deploy smoke test paid
-  // itself with it once per deploy and every one of those runs was counted here as an outside buyer.
-  const paidWithOurMoney = sql`exists (
-    select 1 from settlements st join faucet_claims fc on lower(fc.address) = lower(st.payer_address)
-    where st.job_id = ${jobs.id} and st.kind = 'payment' and st.status = 'settled'
-  )`
-  const outsidersOnly = and(outsiderCompleted, moneyMoved, sql`not ${paidWithOurMoney}`)
-  const [outsiderJobs, outsiderPaid, outsiderRefunded, outsiderParties, exNoMoney, exOurMoney] = await Promise.all([
-    count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(outsidersOnly)),
-    count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), outsidersOnly))),
-    count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), outsidersOnly))),
-    // ADR-43: by wallet, not by agent id - two registrations behind one wallet are one party (same rule as reputation, ADR-22)
-    db()
-      .select({ buyers: sql<number>`count(distinct lower(${settlements.payerAddress}))`, sellers: sql<number>`count(distinct lower(${settlements.payTo}))` })
-      .from(settlements)
-      .innerJoin(jobs, eq(jobs.id, settlements.jobId))
-      .where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), outsidersOnly)),
-    count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(outsiderCompleted, sql`not ${moneyMoved}`))),
-    count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(outsiderCompleted, moneyMoved, paidWithOurMoney))),
-  ])
+  const outsiders = await betweenOutsiders(env)
   const seriesRows = await db().select({ status: jobSeries.status, n: sql<number>`count(*)` }).from(jobSeries).where(eq(jobSeries.env, env)).groupBy(jobSeries.status)
   const seriesCount = (status: string) => seriesRows.find((r) => r.status === status)?.n ?? 0
   return {
@@ -101,13 +150,7 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     settlements: settlementCount,
     series: { active: seriesCount('active'), completed: seriesCount('completed'), stopped: seriesCount('stopped') },
     first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded) },
-    between_outsiders: {
-      jobs_completed: outsiderJobs,
-      volume_usdc_completed: Math.max(0, outsiderPaid - outsiderRefunded),
-      distinct_buyers: outsiderParties[0]?.buyers ?? 0,
-      distinct_sellers: outsiderParties[0]?.sellers ?? 0,
-      excluded: { no_money_moved: exNoMoney, funded_by_our_faucet: exOurMoney },
-    },
+    between_outsiders: outsiders,
     generated_at: new Date(now).toISOString(),
   }
 }

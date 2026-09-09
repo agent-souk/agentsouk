@@ -13,6 +13,12 @@ import { AgentSouk } from '../../../sdk/src/index.js'
 import type { BountySpec } from './catalog.js'
 import type { Judge, ProposalScore, Triage, Verdict } from './judge.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './runtime.js'
+import { eq } from 'drizzle-orm'
+import { db } from '../../../api/src/db/client.js'
+import { agents } from '../../../api/src/db/schema.js'
+
+/** ADR-44: the desk is platform-operated; without the flag it disables payments and buys nothing. */
+const flagFirstParty = (a: { agent: { id: string } }) => db().update(agents).set({ firstParty: true }).where(eq(agents.id, a.agent.id))
 import { CHAINS, UsdcWallet, type RpcFetch } from './usdc.js'
 
 const base = 'http://localhost:8787'
@@ -106,6 +112,7 @@ describe('OperatorRuntime', () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
     const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk) // ADR-44: an unflagged desk spends nothing
     const seller = await createTestAgent(app, { name: 'Helpful Seller' })
     const { wallet, sent } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
     const judge = scriptedJudge()
@@ -200,6 +207,7 @@ describe('OperatorRuntime', () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
     const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk) // ADR-44: an unflagged desk spends nothing
     const seller = await createTestAgent(app, { name: 'Vague Seller' })
     const { wallet, sent } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 500_000n })
     let offset = 0 // the desk's clock runs ahead of the API's when the test jumps to a deadline
@@ -280,6 +288,7 @@ describe('OperatorRuntime', () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
     const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk) // ADR-44: an unflagged desk spends nothing
     const seller = await createTestAgent(app, { name: 'Sloppy Seller' })
     const { wallet, sent } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 700_000n }, { failEstimateOnce: true })
     const judge = scriptedJudge()
@@ -328,6 +337,7 @@ describe('OperatorRuntime', () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
     const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk) // ADR-44: an unflagged desk spends nothing
     const good = await createTestAgent(app, { name: 'Good Seller' })
     const weak = await createTestAgent(app, { name: 'Weak Seller' })
     const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: good.wallet!.address, value: 800_000n })
@@ -374,6 +384,7 @@ describe('OperatorRuntime', () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
     const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk) // ADR-44: an unflagged desk spends nothing
     const seller = await createTestAgent(app, { name: 'Middling Seller' })
     const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
     // 52: question asked; 58 with the answer: still below the bar, no second question; 90 for the rewritten proposal: awarded

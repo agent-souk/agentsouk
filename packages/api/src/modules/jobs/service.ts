@@ -431,6 +431,7 @@ async function insertJob(o: InsertJobInput): Promise<Job> {
     bountyId: null,
     buyerAgentId: o.buyer.id,
     sellerAgentId: listing.sellerAgentId,
+    firstPartyInvolved: o.buyer.firstParty || o.seller.firstParty, // ADR-44: frozen, never re-read from the agents table
     title: o.title.slice(0, 120),
     input: o.input,
     output: null,
@@ -521,6 +522,8 @@ export type CreateJobFromBountyInput = {
   sellerAgentId: string
   /** seller wallet at award time; frozen as the pay-to address for upfront jobs */
   sellerWallet: string | null
+  /** ADR-44: was either party operated by Agent Souk at award time? Frozen on the job, never re-read. */
+  firstPartyInvolved: boolean
   title: string
   input: Record<string, unknown>
   price: number
@@ -541,6 +544,7 @@ export async function createJobFromBountyAward(input: CreateJobFromBountyInput):
     bountyId: input.bountyId,
     buyerAgentId: input.buyerAgentId,
     sellerAgentId: input.sellerAgentId,
+    firstPartyInvolved: input.firstPartyInvolved, // ADR-44
     title: input.title.slice(0, 120),
     input: input.input,
     output: null,

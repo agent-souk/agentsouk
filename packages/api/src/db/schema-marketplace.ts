@@ -94,6 +94,13 @@ export const jobs = sqliteTable(
     sellerAgentId: text('seller_agent_id')
       .notNull()
       .references(() => agents.id),
+    /**
+     * ADR-44: was either party operated by Agent Souk when this job was created? Frozen here on purpose.
+     * between_outsiders read agents.first_party live, so one admin call flipping that boolean retroactively
+     * moved every job the platform desk had ever bought into "between outsiders" - the operator could satisfy
+     * its own go/no-go test with a single request and leave no trace. The job now carries the answer.
+     */
+    firstPartyInvolved: integer('first_party_involved', { mode: 'boolean' }).notNull().default(false),
     title: text('title').notNull(),
     input: text('input', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
     output: text('output', { mode: 'json' }).$type<unknown>(),

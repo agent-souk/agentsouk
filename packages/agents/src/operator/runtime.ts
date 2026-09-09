@@ -168,11 +168,17 @@ export class OperatorRuntime {
   async init(): Promise<void> {
     const me = await this.client.agents.me()
     this.me = { id: me.id, handle: me.handle, wallet_address: me.wallet_address ?? null }
-    if (!me.first_party) this.log('warning: the bounty desk is not flagged first_party (ADR-23)', { env: this.env, agent: me.handle })
     if (this.wallet) {
       if (me.wallet_address && sameAddress(me.wallet_address, this.wallet.address)) this.paymentsEnabled = true
       else this.log('payments disabled: the operator wallet does not match the wallet bound to this identity', { env: this.env, bound: me.wallet_address, wallet: this.wallet.address })
     } else this.log('payments disabled: no operator wallet key; bounties are not posted', { env: this.env })
+    // ADR-44: an unflagged desk is not a warning, it is a desk buying under a false identity. Every job it
+    // started would be counted as a purchase between outsiders - the one figure the go/no-go decision reads.
+    // It used to log this line and keep spending. Now it spends nothing until the flag is set.
+    if (!me.first_party) {
+      this.paymentsEnabled = false
+      this.log('payments disabled: this desk is NOT flagged first_party (ADR-23/44), so its purchases would count as demand between outsiders. Set it with POST /v1/admin/agents/{id}/first-party.', { env: this.env, agent: me.handle })
+    }
     for (const spec of this.catalog) this.states.set(spec.key, await this.load(spec.key))
     this.ready = true
   }

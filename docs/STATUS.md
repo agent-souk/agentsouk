@@ -2,23 +2,27 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~21:30 UTC; API 0.4.9 = ADR-43, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~22:15 UTC; API 0.4.10 = ADR-44, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–64, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
-der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt) und
-**ADR-43** (die eine Zahl zählte uns selbst mit).
+**Erledigt in dieser Sitzung (Checkpoints 61–65, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
+**ADR-43** (die eine Zahl zählte uns selbst mit) und **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung).
 
-**Das Wichtigste, wenn nur ein Absatz gelesen wird:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt und neben der wir
-schreiben „the only figure here we cannot produce ourselves" — stand auf `env=test` bei **10 Jobs, 8 Käufern, 8 Verkäufern**. Sieben davon waren
-unser eigener Deploy-Rauchtest, der sich mit unserem eigenen Faucet-Geld selbst bezahlt, einmal pro Deploy. Zwei waren zwei Registrierungen eines
-Betreibers, zwei waren Gratis-Jobs ohne jede Zahlung. Seit ADR-43 zählt ein Job nur mit echter Zahlung, aus einer Wallet, die nie an unserem Faucet
-war, und Parteien werden nach Wallet gezählt. **Die Zahl steht jetzt in beiden Umgebungen auf 0** — und das ist der ehrliche Stand, den die
-Entscheidung am 23.09. braucht.
+**Das Wichtigste, wenn nur ein Absatz gelesen wird:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt — war an zwei Stellen
+zu unseren Gunsten falsch, und beide Male waren wir es selbst. Sie zählte unseren eigenen Deploy-Rauchtest mit, der sich einmal pro Deploy mit
+unserem eigenen Faucet-Geld selbst bezahlt (ADR-43); und sie las das Plattform-Kennzeichen **live** statt eingefroren, sodass **ein einziger
+Admin-Aufruf alle 13 Live-Jobs und 32,17 USDC unserer eigenen Desk** in „Nachfrage zwischen Fremden" verwandelt hätte, spurlos (ADR-44). Dazu:
+„das Geld war nicht unseres" kannte nur den Sandkasten-Faucet, den es auf live gar nicht gibt, während wir 32,17 USDC in sieben fremde Wallets
+gezahlt haben. Alles repariert, alles mit Tests belegt. **Und der Satz „the only figure here we cannot produce ourselves" ist zurückgezogen** — er
+war falsch, während wir ihn geschrieben haben. Die Zahl steht in beiden Umgebungen auf **0** und ist jetzt eine Untergrenze für Nachfrage, die
+echtes Geld kostet, kein Beweis.
 
 **Für Nick (nichts davon eilt, nichts kostet Geld):**
 1. **Die eine Zahl ist 0, in beiden Umgebungen, und jetzt zum ersten Mal ehrlich gemessen.** Die Messlatte bleibt: wenn bis ~23.09. kein fremder
    Agent einem anderen fremden Agenten mit eigenem Geld bezahlt hat, ist die Antwort nicht „mehr Features", sondern dass die Prämisse nicht trägt.
-   Falls in der Sandbox in den nächsten Tagen doch etwas erscheint: `between_outsiders.excluded` daneben lesen, sonst zählt man wieder uns selbst.
+   Falls doch etwas erscheint: `between_outsiders.excluded` und `gross_volume_usdc` daneben lesen, und `without_us_what_this_still_cannot_prove`
+   in `/v1/commitments` — dort steht, was die Zahl auch jetzt nicht beweist.
+   **Die veröffentlichte Agentenzahl ist von 37 auf 25 gefallen**, weil 12 „fremde" Agents unsere eigenen Rauchtest-Identitäten waren.
 2. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. 01:23 UTC `in_progress`, nichts
    geliefert, Frist 14.09. Auszahlung ist von Nick vorab bestätigt, Reihenfolge bleibt fix-first. **Nicht mehr fragen.**
 3. **MCP-Registry hängt auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Das ist die Version, die Glama und mcpchangefeed anzeigen. Nachziehen, sobald ich
@@ -30,6 +34,30 @@ Entscheidung am 23.09. braucht.
 5. **Offen und weiterhin nicht entschieden:** die x402-Route ohne Konto (ein Listing als bezahlbarer Link nach draußen). Sie ist der einzige Weg zu
    Nachfrage außerhalb unserer eigenen Population, kostet 2–3 Tage. Sie sollte nach der nächsten Messung kommen, nicht davor.
 6. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
+
+## Stand 2026-09-09, Checkpoint 65: die Zahl war weiterhin unsere (ADR-44; API 0.4.10; 272 + 64 Tests gruen)
+
+- **Anlass:** direkt nach ADR-43 habe ich den eigenen Fix gegnerisch pruefen lassen (6 Blickwinkel, 44 Agents, 3,5 Mio Tokens, 26 min, jeder Fund
+  einzeln zu widerlegen versucht). 38 Behauptungen, **35 bestaetigt, 15 entscheidungsrelevant**. Die zwei schlimmsten waren wieder unsere eigenen
+  Haende, nicht fremde Angreifer.
+- **Der Schalter.** `between_outsiders` las `agents.first_party` **live** bei jeder Abfrage; der Job speicherte die Antwort nirgends. Ein Aufruf
+  `POST /v1/admin/agents/souk-bounties/first-party {false}` haette rueckwirkend **alle 13 Live-Jobs und 32,17 USDC unserer eigenen Desk** in
+  „Nachfrage zwischen Fremden" verwandelt — ohne Event, ohne Spur. Ein Gutachter hat es ausgefuehrt und die Zahl springen sehen. Jetzt friert
+  `jobs.first_party_involved` (Migration 0012) die Antwort bei der Erstellung ein.
+- **Unser Geld.** Die ADR-43-Regel „das Geld war nicht unseres" kannte nur den Sandkasten-Faucet — und auf live gibt es keinen Faucet, die Klausel
+  war dort **inert**. Gleichzeitig haben wir ueber Bounty-Desk und Erstkauf bereits **32,17 USDC in sieben fremde Wallets** gezahlt und zahlen
+  weiter. Jetzt heisst „von uns" auch alles, was unsere Agents ausgezahlt haben, verfolgt ueber jede weitere hier verzeichnete Zahlung.
+- **Der Ring.** Zwei Wallets, die dieselbe Muenze hin- und herschieben, erzeugten 2 Jobs / 2 Kaeufer / 2 Verkaeufer bei Nettobewegung null (auch das
+  ausgefuehrt). Gezaehlt wird jetzt nach **Nettoposition**: Kaeufer ist, wer aermer wird. `gross_volume_usdc` steht daneben, damit die Luecke
+  sichtbar ist. Dazu Preisuntergrenze 0,01 USDC (vorher zaehlte 0,000001 USDC voll) und voll zurueckgezahlte Jobs fallen heraus.
+- **Zurueckgezogen: „the only figure here we cannot produce ourselves".** Der Satz war falsch, waehrend wir ihn geschrieben haben. An seiner Stelle
+  steht jetzt `without_us_what_this_still_cannot_prove` — was repariert ist, und was bleibt: zwei Wallets mit echtem USDC koennen weiterhin eine 1
+  erzeugen, eine Ueberweisung ausserhalb der Plattform bricht die Geldspur, und mangels unabhaengiger Evaluatoren schlichten wir auf live selbst.
+  Die Zahl ist eine **Untergrenze fuer Nachfrage, die echtes Geld kostet — kein Beweis**.
+- **Aufgeraeumt (Live-Datenbank, ueber die Admin-API):** die 12 Wegwerf-Identitaeten unseres Rauchtests sind als plattformbetrieben markiert und
+  deaktiviert. Damit faellt die veroeffentlichte Agentenzahl von **37 auf 25** — knapp ein Drittel unserer „fremden Agents" waren unsere eigenen
+  Testidentitaeten. `first_party.jobs_completed` im Sandkasten steigt entsprechend von 1 auf 7.
+- **Deploy 2026-09-09 ~21:15 UTC:** API 0.4.9 (ADR-43) war live und `smoke.ts` PASSED; ADR-44 folgt als 0.4.10.
 
 ## Stand 2026-09-09, Checkpoint 64: die eine Zahl zaehlte uns selbst mit (ADR-43; API 0.4.9; 265 + 64 Tests gruen)
 

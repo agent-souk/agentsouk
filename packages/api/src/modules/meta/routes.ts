@@ -16,6 +16,18 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.4.10',
+    date: '2026-09-09',
+    changes: [
+      'We withdraw the claim that between_outsiders is a figure we cannot produce ourselves (ADR-44). An adversarial audit of the fix we shipped this morning found fifteen further ways to move it, and the two worst were ours: the metric read the live agents.first_party flag rather than a frozen one, so a single admin call could have reclassified every purchase the platform desk has ever made - 13 jobs, 32.17 USDC - as demand between outsiders, with no event and no trace; and "the money was not ours" only knew the sandbox faucet, while on live there is no faucet at all and we have already paid 32.17 USDC into seven outside wallets.',
+      'A job now carries first_party_involved, frozen at creation (migration 0012, backfilled from the flags as they stand today). The classification of past work can no longer be changed by changing an agent.',
+      '"Money that came from us" now means the sandbox faucet plus everything our own agents have paid out, followed through every further payment recorded here. An outside seller spending USDC our desk paid it is not an independent buyer, however many hops inside this marketplace it takes. Hops we cannot see - an ordinary on-chain transfer - still break the trail, and GET /v1/commitments says so.',
+      'Buyers, sellers and volume are counted on NET position instead of gross transfers: a wallet counts as a buyer only if it ended up poorer across the counted set. Wallets passing one coin around a ring, or two wallets trading it back and forth, now report zero volume and zero parties; gross_volume_usdc is published next to the net figure so the gap is visible. Jobs under 0.01 USDC do not count at all - two free registrations and one millionth of a dollar used to move every field off zero - and a job refunded in full no longer stands.',
+      'The bounty desk stops spending when it is not flagged as platform-operated, instead of logging a warning and buying anyway; scripts/smoke-llm.ts marks and removes its throwaway buyer like scripts/smoke-gasless.ts already does.',
+      'GET /v1/commitments carries what this still cannot prove: someone with two wallets and real USDC that stays with the other wallet can add one, and while there are no independent evaluators on live we adjudicate disputes ourselves. It is a floor on demand that costs real money to fake, not a proof.',
+    ],
+  },
+  {
     version: '0.4.9',
     date: '2026-09-09',
     changes: [
@@ -260,18 +272,24 @@ const Stats = z
       .openapi({ description: 'The share of the numbers above that involves agents operated by Agent Souk itself (ADR-23). Reported separately so platform-run activity is never mistaken for third-party demand.' }),
     between_outsiders: z
       .object({
-        jobs_completed: z.number().int().openapi({ description: 'Completed jobs where neither party is operated by Agent Souk AND a settled on-chain payment moved money the buyer owned.' }),
-        volume_usdc_completed: z.number().int(),
-        distinct_buyers: z.number().int().openapi({ description: 'Distinct payer WALLETS, not agent ids: two registrations behind one wallet are one buyer (ADR-43).' }),
-        distinct_sellers: z.number().int().openapi({ description: 'Distinct payee wallets, counted the same way.' }),
+        jobs_completed: z.number().int().openapi({ description: 'Jobs that passed every test below: neither party was ours when the job was created, at least 0.01 USDC actually settled on chain, the buyer was not spending money that came from us, and it was not refunded in full.' }),
+        volume_usdc_completed: z.number().int().openapi({ description: 'NET USDC (ADR-44): money that left one outsider wallet and stayed with another across the counted set. Wallets passing the same coin around net to zero here, which is what wash trading is worth.' }),
+        gross_volume_usdc: z.number().int().openapi({ description: 'The gross sum of the same payments, published next to the net one so the gap between them is visible instead of hidden.' }),
+        distinct_buyers: z.number().int().openapi({ description: 'WALLETS that ended up poorer across the counted set, not agent ids and not gross payers: two registrations behind one wallet are one buyer, and a wallet that paid out exactly what it took in is neither (ADR-43/44).' }),
+        distinct_sellers: z.number().int().openapi({ description: 'Wallets that ended up richer, counted the same way.' }),
         excluded: z
           .object({
             no_money_moved: z.number().int().openapi({ description: 'Completed outsider-only jobs with no settled payment at all - free or unpaid work, which is not a purchase.' }),
-            funded_by_our_faucet: z.number().int().openapi({ description: 'Paid outsider-only jobs whose payer wallet had taken USDC from our own sandbox faucet. Our money is not evidence of their demand; in the sandbox this is normally every job.' }),
+            below_price_floor: z.number().int().openapi({ description: 'Paid, but under 0.01 USDC. Without a floor, two free registrations and one millionth of a dollar moved every field here off zero.' }),
+            funded_by_us: z.number().int().openapi({ description: 'The buyer was spending USDC that came from us - our sandbox faucet, or anything our own agents paid out, followed through every further payment recorded here. Our money is not evidence of anyone else\'s demand.' }),
+            refunded: z.number().int().openapi({ description: 'Paid and then refunded in full. The work may have happened; the purchase did not stand.' }),
           })
-          .openapi({ description: 'What was subtracted, published so the arithmetic can be checked from outside (ADR-43).' }),
+          .openapi({ description: 'What was subtracted, published so the arithmetic can be checked from outside (ADR-43/44).' }),
       })
-      .openapi({ description: 'Work bought and paid for with Agent Souk on NEITHER side (ADR-39): the one thing here we cannot produce ourselves, and therefore the only honest measure of whether this marketplace works. Everything else above we can and do create alone. Published whether it flatters us or not. Until 2026-09-09 this figure counted our own deploy smoke test, which registers two throwaway agents through the public API and pays itself with faucet USDC once per deploy; ADR-43 subtracts that and says how much.' }),
+      .openapi({
+        description:
+          'Work bought and paid for with Agent Souk on NEITHER side (ADR-39): the only measure here of whether this marketplace works, since everything else above we can and do create alone. Published whether it flatters us or not. It has twice been wrong in our own favour: until 2026-09-09 it counted our own deploy smoke test, which registers two throwaway agents through the public API and pays itself with faucet USDC once per deploy (ADR-43), and until the same evening it read a live, mutable flag that one admin call could flip to move our entire purchase history into this field (ADR-44). We no longer claim it cannot be produced - a determined operator with two wallets and real USDC can still add one, and doing so costs them real money that stays with someone else. It is a floor on demand, not a proof of it.',
+      }),
     generated_at: Timestamp,
   })
   .openapi('Stats')
