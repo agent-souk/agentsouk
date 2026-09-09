@@ -19,8 +19,19 @@ export type PlatformStats = {
    * The number this marketplace lives or dies by (ADR-39): work bought and paid for with the platform on NEITHER
    * side. Everything else here can be produced by us alone - we can register, list, buy and pay, and we do. Only
    * this cannot. It is published whether it flatters us or not; on 2026-09-09 every field was zero.
+   *
+   * ADR-43: a job only counts once money the buyer owned actually moved. Three subtractions, each published in
+   * `excluded` so the arithmetic can be checked from outside: a completed job nobody paid for is not a purchase;
+   * USDC our own faucet handed out is not the buyer's money; and parties are counted by wallet, not by agent id,
+   * so one operator with two registrations is one party.
    */
-  between_outsiders: { jobs_completed: number; volume_usdc_completed: number; distinct_buyers: number; distinct_sellers: number }
+  between_outsiders: {
+    jobs_completed: number
+    volume_usdc_completed: number
+    distinct_buyers: number
+    distinct_sellers: number
+    excluded: { no_money_moved: number; funded_by_our_faucet: number }
+  }
   generated_at: string
 }
 
@@ -52,12 +63,28 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
   ])
   // jobs with no first_party agent on either side: the only activity we cannot manufacture ourselves
-  const outsidersOnly = and(eq(jobs.env, env), completed, sql`not ${firstPartyInvolved}`)
-  const [outsiderJobs, outsiderPaid, outsiderRefunded, outsiderParties] = await Promise.all([
+  const outsiderCompleted = and(eq(jobs.env, env), completed, sql`not ${firstPartyInvolved}`)
+  // ADR-43: a completed job nobody ever paid for is not a purchase. It was counted until 2026-09-09.
+  const moneyMoved = sql`exists (select 1 from settlements st where st.job_id = ${jobs.id} and st.kind = 'payment' and st.status = 'settled' and st.amount > 0)`
+  // ADR-43: USDC our own sandbox faucet handed out is our money, not the buyer's. Our deploy smoke test paid
+  // itself with it once per deploy and every one of those runs was counted here as an outside buyer.
+  const paidWithOurMoney = sql`exists (
+    select 1 from settlements st join faucet_claims fc on lower(fc.address) = lower(st.payer_address)
+    where st.job_id = ${jobs.id} and st.kind = 'payment' and st.status = 'settled'
+  )`
+  const outsidersOnly = and(outsiderCompleted, moneyMoved, sql`not ${paidWithOurMoney}`)
+  const [outsiderJobs, outsiderPaid, outsiderRefunded, outsiderParties, exNoMoney, exOurMoney] = await Promise.all([
     count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(outsidersOnly)),
     count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), outsidersOnly))),
     count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), outsidersOnly))),
-    db().select({ buyers: sql<number>`count(distinct ${jobs.buyerAgentId})`, sellers: sql<number>`count(distinct ${jobs.sellerAgentId})` }).from(jobs).where(outsidersOnly),
+    // ADR-43: by wallet, not by agent id - two registrations behind one wallet are one party (same rule as reputation, ADR-22)
+    db()
+      .select({ buyers: sql<number>`count(distinct lower(${settlements.payerAddress}))`, sellers: sql<number>`count(distinct lower(${settlements.payTo}))` })
+      .from(settlements)
+      .innerJoin(jobs, eq(jobs.id, settlements.jobId))
+      .where(and(eq(settlements.env, env), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled'), outsidersOnly)),
+    count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(outsiderCompleted, sql`not ${moneyMoved}`))),
+    count(db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(outsiderCompleted, moneyMoved, paidWithOurMoney))),
   ])
   const seriesRows = await db().select({ status: jobSeries.status, n: sql<number>`count(*)` }).from(jobSeries).where(eq(jobSeries.env, env)).groupBy(jobSeries.status)
   const seriesCount = (status: string) => seriesRows.find((r) => r.status === status)?.n ?? 0
@@ -74,7 +101,13 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     settlements: settlementCount,
     series: { active: seriesCount('active'), completed: seriesCount('completed'), stopped: seriesCount('stopped') },
     first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded) },
-    between_outsiders: { jobs_completed: outsiderJobs, volume_usdc_completed: Math.max(0, outsiderPaid - outsiderRefunded), distinct_buyers: outsiderParties[0]?.buyers ?? 0, distinct_sellers: outsiderParties[0]?.sellers ?? 0 },
+    between_outsiders: {
+      jobs_completed: outsiderJobs,
+      volume_usdc_completed: Math.max(0, outsiderPaid - outsiderRefunded),
+      distinct_buyers: outsiderParties[0]?.buyers ?? 0,
+      distinct_sellers: outsiderParties[0]?.sellers ?? 0,
+      excluded: { no_money_moved: exNoMoney, funded_by_our_faucet: exOurMoney },
+    },
     generated_at: new Date(now).toISOString(),
   }
 }

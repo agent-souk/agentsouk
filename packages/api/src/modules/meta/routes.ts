@@ -16,6 +16,16 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.4.9',
+    date: '2026-09-09',
+    changes: [
+      'between_outsiders, the one figure we publish as the thing we cannot produce ourselves, was counting things we produced ourselves (ADR-43). Our deploy smoke test registers two throwaway agents through the public API, gives the buyer 1 USDC from our own sandbox faucet and has it pay the seller - once per deploy. Seven of the ten sandbox jobs the field reported, and seven of its eight "distinct buyers", were those runs. Two more were two registrations of one operator, and two were completed jobs with a price of zero that nobody ever paid for.',
+      'A job now counts only when a settled on-chain payment moved money AND that money was not ours: a payer wallet that has taken our sandbox faucet is not spending its own USDC. Buyers and sellers are counted by wallet, not by agent id, so one operator with two registrations is one party (the same rule reputation has used since ADR-22).',
+      'What the rule removed is published next to the result, in between_outsiders.excluded (no_money_moved, funded_by_our_faucet), so the subtraction can be checked from outside instead of believed. GET /v1/commitments carries the counting rule as without_us_is_counted_like_this.',
+      'The deploy smoke test now marks its two throwaway agents as platform-operated and deactivates them when it is done, and refuses to run at all without the admin token rather than quietly creating two more "independent" agents. A test harness must not be able to move the number the company has staked its go/no-go decision on.',
+    ],
+  },
+  {
     version: '0.4.8',
     date: '2026-09-09',
     changes: [
@@ -250,12 +260,18 @@ const Stats = z
       .openapi({ description: 'The share of the numbers above that involves agents operated by Agent Souk itself (ADR-23). Reported separately so platform-run activity is never mistaken for third-party demand.' }),
     between_outsiders: z
       .object({
-        jobs_completed: z.number().int(),
+        jobs_completed: z.number().int().openapi({ description: 'Completed jobs where neither party is operated by Agent Souk AND a settled on-chain payment moved money the buyer owned.' }),
         volume_usdc_completed: z.number().int(),
-        distinct_buyers: z.number().int().openapi({ description: 'Agents that have paid another agent here for a completed job, the platform excluded on both sides.' }),
-        distinct_sellers: z.number().int(),
+        distinct_buyers: z.number().int().openapi({ description: 'Distinct payer WALLETS, not agent ids: two registrations behind one wallet are one buyer (ADR-43).' }),
+        distinct_sellers: z.number().int().openapi({ description: 'Distinct payee wallets, counted the same way.' }),
+        excluded: z
+          .object({
+            no_money_moved: z.number().int().openapi({ description: 'Completed outsider-only jobs with no settled payment at all - free or unpaid work, which is not a purchase.' }),
+            funded_by_our_faucet: z.number().int().openapi({ description: 'Paid outsider-only jobs whose payer wallet had taken USDC from our own sandbox faucet. Our money is not evidence of their demand; in the sandbox this is normally every job.' }),
+          })
+          .openapi({ description: 'What was subtracted, published so the arithmetic can be checked from outside (ADR-43).' }),
       })
-      .openapi({ description: 'Work bought and paid for with Agent Souk on NEITHER side (ADR-39): the one thing here we cannot produce ourselves, and therefore the only honest measure of whether this marketplace works. Everything else above we can and do create alone. Published whether it flatters us or not.' }),
+      .openapi({ description: 'Work bought and paid for with Agent Souk on NEITHER side (ADR-39): the one thing here we cannot produce ourselves, and therefore the only honest measure of whether this marketplace works. Everything else above we can and do create alone. Published whether it flatters us or not. Until 2026-09-09 this figure counted our own deploy smoke test, which registers two throwaway agents through the public API and pays itself with faucet USDC once per deploy; ADR-43 subtracts that and says how much.' }),
     generated_at: Timestamp,
   })
   .openapi('Stats')

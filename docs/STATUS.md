@@ -2,36 +2,60 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~16:00 UTC; Baum sauber, alles deployt: API 0.4.5 = `062440a`, Agents mit neuer Desk-Notiz; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~21:30 UTC; API 0.4.9 = ADR-43, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoint 60, Details unten):** drei ADRs an einem Nachmittag, alle aus Beobachtungen von Nick.
-**ADR-36** zieht die Nachfrage-Seite von heute Vormittag zurück: sie war keine Nachfrage, sondern ein Verkäufer, der Nischen abklopft. Jetzt zählt
-sie *verschiedene Clients* je Begriff (Migration 0011 `searchers`, Fingerabdruck nur im Speicher), veröffentlicht nichts unter zwei Clients, führt
-mit den Bounties und sagt daneben, was das ganze Suchen tatsächlich hervorgebracht hat (heute: 760 Suchen, 1 fremde Bounty, 1 fremder Job).
-**ADR-37**: woher das Geld zum Kaufen kommt — `GET /v1/agents/me` trägt `funding` mit einer fertigen Bitte an den Betreiber (Betrag aus echten
-Preisen, 5–50 USDC), dazu die Warnung `no_wallet_to_pay_from` beim Bestellen ohne Wallet; und: verkäuflich ist auch, was der Inhaber dem Agent
-anvertraut hat (3D/CAD, Datenabo, lizenzierter Korpus, laufender Dienst) — nie die Zugangsdaten selbst. **ADR-38**: der Agent soll seinen Betreiber
-aktiv ansprechen (vor dem Selberbauen erst hier suchen; fragen, ob etwas Vorhandenes angeboten werden soll; die Finanzierungsbitte weiterreichen)
-— mit Ehrlichkeitspflicht: die echten Zahlen mitschicken, kein Einkommensversprechen.
+**Erledigt in dieser Sitzung (Checkpoints 61–64, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt) und
+**ADR-43** (die eine Zahl zählte uns selbst mit).
 
-**Das Wichtigste vom Tag, ohne Code:** ADR-35 wirkt nachweisbar. `veriton` hat zwischen 10:22 und 15:23 UTC **elf** Netzwerk-Sonden gelistet und für
-jede ein altes Format-Wandler-Listing pausiert (Begründung im eigenen Job-Thread: „Paused … for listing_limit slot"), steht exakt auf der Kappe 10,
-Preise von 1 USDC auf 0,35–0,50 gefallen. Und `nol-ai-enterprise` (neu, OpenAI Codex) hat 12:12 ein „Independent marketplace payment-path audit"
-gelistet, die Desk hat es 12:18 **gescreent** (erstes `eligible` überhaupt), gekauft, 12:27 bezahlt, Rating 4 — der Agent hat unseren Zahlungspfad
-unabhängig geprüft, einen Base-Receipt selbst dekodiert und als einzigen Punkt „not_demonstrated" notiert: *independent third-party demand*.
+**Das Wichtigste, wenn nur ein Absatz gelesen wird:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt und neben der wir
+schreiben „the only figure here we cannot produce ourselves" — stand auf `env=test` bei **10 Jobs, 8 Käufern, 8 Verkäufern**. Sieben davon waren
+unser eigener Deploy-Rauchtest, der sich mit unserem eigenen Faucet-Geld selbst bezahlt, einmal pro Deploy. Zwei waren zwei Registrierungen eines
+Betreibers, zwei waren Gratis-Jobs ohne jede Zahlung. Seit ADR-43 zählt ein Job nur mit echter Zahlung, aus einer Wallet, die nie an unserem Faucet
+war, und Parteien werden nach Wallet gezählt. **Die Zahl steht jetzt in beiden Umgebungen auf 0** — und das ist der ehrliche Stand, den die
+Entscheidung am 23.09. braucht.
 
 **Für Nick (nichts davon eilt, nichts kostet Geld):**
-1. **Die eine Zahl ist weiter 0.** 12 von 12 Jobs hat unsere eigene Desk gekauft, `third_party_counterparties` steht bei allen sieben Verkäufern auf
-   0. Ich habe Nick eine Messlatte genannt: wenn in zwei Wochen (also bis ~23.09.) kein fremder Agent einem anderen fremden Agenten Geld bezahlt hat,
-   ist die Antwort nicht „mehr Features", sondern dass die Prämisse nicht trägt. Das offen sagen, statt Budget nachzuschieben.
-2. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 01:23 UTC `in_progress`, nichts
+1. **Die eine Zahl ist 0, in beiden Umgebungen, und jetzt zum ersten Mal ehrlich gemessen.** Die Messlatte bleibt: wenn bis ~23.09. kein fremder
+   Agent einem anderen fremden Agenten mit eigenem Geld bezahlt hat, ist die Antwort nicht „mehr Features", sondern dass die Prämisse nicht trägt.
+   Falls in der Sandbox in den nächsten Tagen doch etwas erscheint: `between_outsiders.excluded` daneben lesen, sonst zählt man wieder uns selbst.
+2. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. 01:23 UTC `in_progress`, nichts
    geliefert, Frist 14.09. Auszahlung ist von Nick vorab bestätigt, Reihenfolge bleibt fix-first. **Nicht mehr fragen.**
 3. **MCP-Registry hängt auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Das ist die Version, die Glama und mcpchangefeed anzeigen. Nachziehen, sobald ich
    den Registry-Key wieder anfasse.
-4. **Der MCP-Trichter ist tot:** 638 `initialize`, 630 `tools/list`, **1** erfolgreicher `tools/call` in 7 Tagen, 0 `register_agent`. Der Großteil des
-   Traffics sind Liveness-Bots (`SentinelOracle`, `mcpbeat`, im User-Agent steht „never invokes tools"). Die „2.246 MCP-Zugriffe" in Checkpoint 59
-   waren also weitgehend Monitoring, nicht Agents. Nächster Kandidat: warum bricht ein echter Client nach `tools/list` ab.
-5. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
+4. **Der Zulauf kommt nicht über MCP, sondern über REST:** 707 `mcp:initialize`, 704 `tools/list`, **1** erfolgreicher `tools/call` in 7 Tagen —
+   aber **62 Registrierungen** über die HTTP-API im selben Fenster (skill.md, llms.txt, openapi.json). ADR-42 ist seit 18:32 UTC live; die Messlatte
+   dafür (`mcp:tool:*` gegen `mcp:tools/list`) fängt heute bei 1 zu 704 an. Von 35 fremden aktiven Agents haben 15 ein Listing und 17 je bestellt —
+   die Population ist eine Verkäufer-Population, das Kaufen fehlt.
+5. **Offen und weiterhin nicht entschieden:** die x402-Route ohne Konto (ein Listing als bezahlbarer Link nach draußen). Sie ist der einzige Weg zu
+   Nachfrage außerhalb unserer eigenen Population, kostet 2–3 Tage. Sie sollte nach der nächsten Messung kommen, nicht davor.
+6. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
+
+## Stand 2026-09-09, Checkpoint 64: die eine Zahl zaehlte uns selbst mit (ADR-43; API 0.4.9; 265 + 64 Tests gruen)
+
+- **Befund.** `GET /v1/stats?env=test` meldete `between_outsiders` = **10 Jobs, 0,08 USDC, 8 Kaeufer, 8 Verkaeufer**, und
+  `GET /v1/commitments` stellte den Satz daneben: „This is the only figure here we cannot produce ourselves." Sieben dieser zehn Jobs sind
+  `gasless-smoke-buyer-* → gasless-smoke-seller-*`: unser eigener Deploy-Rauchtest, der zwei Wegwerf-Agents ueber die **oeffentliche** API
+  registriert (also ohne `first_party`), den Kaeufer 1 USDC aus **unserem** Faucet ziehen laesst und damit den Verkaeufer bezahlt. Pro Deploy
+  +1 Job, +1 „unabhaengiger Kaeufer", +1 „unabhaengiger Verkaeufer". Zwei weitere sind zwei Registrierungen eines Betreibers (`codex-qa` →
+  `codex-research`, Faucet 42 Sekunden vor der ersten Zahlung), zwei haben Preis 0 und nie eine Zahlung (`astra-*`, ebenfalls ein Betreiber).
+  **Unabhaengig war davon nichts.** Bei ein bis zwei Deploys am Tag haette die Sandbox am 23.09. „20 Jobs zwischen 20 Kaeufern und 20
+  Verkaeufern" gemeldet — genau an dem Tag, an dem diese Zahl die Entscheidung traegt.
+- **Wie es gefunden wurde:** nicht beim Code-Lesen. Die Frage war „wer sind die 62 Registrierungen der Woche"; in der Antwort stand eine Spalte
+  `ever_paid = 6`, und alle sechs hiessen `gasless-smoke-buyer-…`.
+- **Gebaut (ADR-43).** Ein Job zaehlt nur noch, wenn (1) eine abgeschlossene On-Chain-Zahlung > 0 stattfand, (2) die zahlende **Wallet** nie
+  USDC aus unserem Faucet bekommen hat, und (3) Parteien nach Wallet statt nach Agent-Id gezaehlt werden (dieselbe Regel wie in der Reputation
+  seit ADR-22). Die Abzuege werden mitveroeffentlicht: `between_outsiders.excluded.{no_money_moved, funded_by_our_faucet}`, dazu
+  `without_us_is_counted_like_this` in `/v1/commitments` mit dem Grund, warum es die Regel gibt. Der Rauchtest markiert seine Wegwerf-Agents
+  jetzt als plattformbetrieben, deaktiviert sie am Ende und **verweigert den Start ohne Admin-Token**.
+- **Wirkung, an der Live-Datenbank nachgerechnet:** `env=test` faellt von 10/0,08/8/8 auf **0**, mit `excluded = {no_money_moved: 2,
+  funded_by_our_faucet: 8}`. `env=live` war und bleibt 0. Die Messlatte aus ADR-39 ist unveraendert — sie ist jetzt nur ehrlich gemessen.
+- **Offen gelassen und dokumentiert:** ein Betreiber mit zwei *verschiedenen* Wallets (`codex-qa`/`codex-research`) zaehlt weiterhin. Dagegen
+  hilft nur, was Geld kostet; eine Ratehilfe auf Handle-Aehnlichkeit waere eine Zahl, die wir nach Gefuehl kuerzen.
+- **Trichter-Zahlen des Tages (7 Tage):** 707 `mcp:initialize`, 704 `mcp:tools/list`, **1** erfolgreicher `tools/call` (ADR-42 ist erst seit
+  ~18:32 UTC live, die Messung beginnt jetzt). Daneben aber **62 Registrierungen** ueber REST — der Zulauf kommt nicht ueber MCP, sondern
+  ueber skill.md/llms.txt/openapi.json. Von 35 fremden aktiven Agents haben 15 ein Listing, 17 je bestellt, und bezahlt hat kein einziger
+  mit eigenem Geld.
 
 ## Stand 2026-09-09, Checkpoint 63: die Schranke am MCP-Eingang, die es nicht gibt (ADR-42; API 0.4.8; 260 + 64 Tests gruen)
 

@@ -119,19 +119,39 @@ async function settleLive() {
   console.log(`SETTLE-LIVE PASSED: ${chain.facilitator} broadcast an EIP-3009 transfer on Base mainnet and paid the gas; ${r.explorer}`)
 }
 
+/**
+ * ADR-43: these two agents are operated by us. Until 2026-09-09 they were registered through the public API like
+ * anyone else, so they carried first_party = false and every run of this script added one more "independent buyer"
+ * and one more "independent seller" to between_outsiders - the single figure the company's go/no-go decision rests
+ * on. The server no longer counts a buyer that spent our faucet USDC, and this marks them as ours as well, because
+ * a test harness must not be able to move that number by any route. No admin token, no run.
+ */
+function adminToken(): string {
+  const f = join(homedir(), '.agentsouk-ops', 'agentsouk-api.env')
+  if (!existsSync(f)) fail(`${f} missing: this script marks its throwaway agents as platform-operated (ADR-43) and will not register agents without the admin token`)
+  const t = readFileSync(f, 'utf8').match(/^ADMIN_TOKEN=(.+)$/m)?.[1]?.trim()
+  if (!t) fail(`ADMIN_TOKEN missing in ${f}: refusing to register agents that would be counted as outsiders (ADR-43)`)
+  return t!
+}
+
 async function sandboxRoundTrip() {
   step('base url', base)
+  const admin = adminToken()
   const info = (await (await fetch(`${base}/v1/payments?env=test`)).json()) as { gasless?: { settle_url: string }; network: { platform_faucet: string | null } }
   if (!info.gasless?.settle_url) fail('GET /v1/payments has no gasless block', info)
   if (!info.network.platform_faucet) fail('no platform faucet for env=test', info.network)
 
   // --- two throwaway agents with fresh wallets ---------------------------------------------------
+  const throwaway: string[] = []
   const mk = async (name: string) => {
-    const reg = await AgentSouk.register({ name, description: 'Agent Souk gas-free payment smoke test (throwaway)', capabilities: ['ops'] }, { baseUrl: base })
+    const reg = await AgentSouk.register({ name, description: 'Agent Souk gas-free payment smoke test (throwaway, operated by Agent Souk)', capabilities: ['ops'] }, { baseUrl: base })
+    const r = await fetch(`${base}/v1/admin/agents/${reg.agent.id}/first-party`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ first_party: true }) })
+    if (!r.ok) fail(`could not mark ${reg.agent.id} as platform-operated (ADR-43); refusing to leave it counted as an outsider`, await r.text())
     const pk = randomPrivateKey()
     const address = privateKeyToAddress(pk)
     const c = new AgentSouk({ baseUrl: base, apiKey: reg.api_keys.test, userAgent: 'agentsouk-smoke-gasless/1' })
     await c.agents.setWalletAddress(address, personalSign(walletMessage(reg.agent.id, address), pk))
+    throwaway.push(reg.agent.id)
     return { reg, pk, address, c }
   }
   const buyer = await mk('Gasless Smoke Buyer')
@@ -192,6 +212,15 @@ async function sandboxRoundTrip() {
     step('seller sees the settlement', { direction: got.data[0]?.direction, amount: got.data[0]?.amount })
     await seller.c.listings.update(listingId!, { status: 'paused' }).catch(() => undefined)
   }
+
+  // --- leave nothing behind that looks like a participant (ADR-43) ---------------------------------
+  for (const id of throwaway) {
+    const r = await fetch(`${base}/v1/admin/agents/${id}/status`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ status: 'deleted' }) })
+    if (!r.ok) step(`WARNING: could not deactivate throwaway agent ${id}`, await r.text())
+  }
+  step('throwaway agents marked platform-operated and deactivated', { agents: throwaway.length })
+  const s = (await (await fetch(`${base}/v1/stats?env=test`)).json()) as { between_outsiders: { jobs_completed: number; distinct_buyers: number; excluded: { funded_by_our_faucet: number } } }
+  step('between_outsiders after this run (must not have moved: this job was ours, paid with our faucet USDC)', s.between_outsiders)
   console.log(`SMOKE-GASLESS PASSED in ${((Date.now() - t0) / 1000).toFixed(1)}s: faucet -> sealed delivery -> EIP-3009 signature -> facilitator -> verified on-chain -> revealed, no ETH, no human.`)
 }
 
