@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { freshApp, call, createTestAgent, setWallet, randomWallet } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { resetPriceCache } from './funding.js'
+import { installFakeChain } from '../../test/chain.js'
 
 let app: App
 beforeEach(async () => {
@@ -32,7 +33,9 @@ describe('funding: where the money to buy comes from (ADR-37)', () => {
     expect(f.earn_it_instead).toContain('bounty')
   })
 
-  it('names the wallet once one is bound, and prices the ask against what is actually listed', async () => {
+  it('asks for money only when the wallet is actually empty, and prices the ask against what is listed', async () => {
+    const chain = installFakeChain('test')
+    chain.usdcBalanceOf = () => 0n
     const seller = await createTestAgent(app, { name: 'Seller' })
     expect((await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: listing() })).status).toBe(201)
     resetPriceCache() // the price scan is cached for a minute, so a listing created just now can be a minute late
@@ -45,12 +48,45 @@ describe('funding: where the money to buy comes from (ADR-37)', () => {
 
     const f = (await call(app, 'GET', '/v1/agents/me', { key: buyer.api_keys.test })).body.funding
     expect(f.can_pay).toBe(true)
+    expect(f.can_buy_now).toBe(false)
+    expect(f.wallet_usdc).toBe(0)
     expect(f.wallet_address).toBe(bw.address)
     expect(f.message_for_your_operator).toContain(bw.address)
     // the only listing costs 0.4 USDC, so the ask is the 5 USDC floor and the typical price is named
     expect(f.what_it_costs).toContain('0.400000 USDC')
     expect(f.message_for_your_operator).toContain('5.000000 USDC')
     expect(f.message_for_your_operator).toContain('public transaction')
+  })
+
+  it('stops asking for money when the agent already holds some: it reads the chain instead of assuming', async () => {
+    const chain = installFakeChain('test')
+    chain.usdcBalanceOf = () => 12_000_000n
+    const seller = await createTestAgent(app, { name: 'Seller' })
+    expect((await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: listing() })).status).toBe(201)
+    resetPriceCache()
+    const earner = await createTestAgent(app, { name: 'Already paid' })
+
+    const f = (await call(app, 'GET', '/v1/agents/me', { key: earner.api_keys.test })).body.funding
+    expect(f.can_buy_now).toBe(true)
+    expect(f.wallet_usdc).toBe(12_000_000)
+    expect(f.wallet_usdc_display).toBe('12.000000 USDC')
+    // the sentence that was false for every agent we had already paid is gone
+    expect(f.message_for_your_operator).toContain('Nothing is needed from you right now')
+    expect(f.message_for_your_operator).toContain('12.000000 USDC')
+    expect(f.message_for_your_operator).not.toContain('Please send')
+    // and it still says whose money it is and that the platform cannot touch it
+    expect(f.message_for_your_operator).toContain('it is your money in my hands')
+  })
+
+  it('says nothing about a balance when the chain cannot be reached, instead of guessing', async () => {
+    const chain = installFakeChain('test')
+    chain.down = true
+    const a = await createTestAgent(app, { name: 'No node' })
+    const f = (await call(app, 'GET', '/v1/agents/me', { key: a.api_keys.test })).body.funding
+    expect(f.wallet_usdc).toBeNull()
+    expect(f.wallet_usdc_display).toBeNull()
+    expect(f.can_buy_now).toBe(false)
+    expect(f.can_pay).toBe(true) // a bound wallet is still a bound wallet
   })
 
   it('names the real agent id in the signing text, never a placeholder', async () => {

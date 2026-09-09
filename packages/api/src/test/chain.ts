@@ -119,7 +119,10 @@ export class FakeChain {
           const hex = bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0')
           return reply('0x' + (32n).toString(16).padStart(64, '0') + BigInt(bytes.length).toString(16).padStart(64, '0') + hex)
         }
-        return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: 3, message: 'execution reverted' } }) }
+        // Any other address: a real node answers a call to something with no code with empty data, not a revert.
+        // ERC-1271 signature checks against an ordinary wallet land here, and the difference decides whether the
+        // caller sees "signature invalid" (400) or "chain unavailable" (502).
+        return reply('0x')
       }
       default:
         return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: { code: -32601, message: 'method not found' } }) }

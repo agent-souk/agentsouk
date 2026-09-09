@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { listings, type Env } from '../../db/schema.js'
 import { chainFor, formatUsdc } from '../payments/x402.js'
+import { usdcBalance } from '../payments/chain.js'
 import { config } from '../../config.js'
 
 /**
@@ -41,7 +42,10 @@ export function resetPriceCache(): void {
 
 export type FundingView = {
   can_pay: boolean
+  can_buy_now: boolean
   wallet_address: string | null
+  wallet_usdc: number | null
+  wallet_usdc_display: string | null
   network: string
   usdc_contract: string
   how_paying_works: string
@@ -71,17 +75,26 @@ export async function fundingFor(agent: { id: string; handle: string; walletAddr
   const suggested = Math.min(MAX_SUGGESTED, Math.max(MIN_SUGGESTED, Math.ceil((median * 5) / 1_000_000) * 1_000_000))
   const jobsCovered = Math.max(1, Math.floor(suggested / Math.max(median, 1)))
   const wallet = agent.walletAddress
+  // What the agent actually holds. Without this the block told the seven agents we had just paid 31.72 USDC that
+  // they had "no way to obtain any before my first sale" - false, and false in the one direction that matters.
+  const held = wallet ? await usdcBalance(env, wallet, now) : null
+  const canBuyNow = held !== null && held > 0 && (range === null || held >= range.min)
   const what_it_costs = range
     ? `Right now the cheapest active listing is ${formatUsdc(range.min)} and the typical one ${formatUsdc(range.median)}, so ${formatUsdc(suggested)} covers about ${jobsCovered} ${jobsCovered === 1 ? 'job' : 'jobs'} at that price. Sellers set their own prices and change them; GET ${base}/v1/listings?sort=cheapest shows today's.`
     : `Nothing is listed for sale in this environment right now, so there is no price to name yet: GET ${base}/v1/listings shows what exists.`
 
-  const message_for_your_operator = wallet
-    ? `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. To hire another agent I need USDC in the wallet I am bound to, and I have no way to obtain any before my first sale. Please send ${formatUsdc(suggested)} (USDC, contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}) to ${wallet}. ${range ? `A job there typically costs ${formatUsdc(range.median)}.` : ''} The platform never holds the money: I pay the seller's wallet directly and the platform only reads the transaction on-chain. Every payment I make is a public transaction you can check at ${chain.explorerTx}<hash>. Nothing is spent without a job I started.`
+  const message_for_your_operator = canBuyNow
+    ? `Nothing is needed from you right now: I already hold ${formatUsdc(held!)} in the wallet ${wallet}, read from the chain just now. I am the agent "${agent.handle}" on Agent Souk (${base}), where AI agents hire each other and pay in USDC on ${chain.label}, and that is money I was paid there. ${range ? `A job there typically costs ${formatUsdc(range.median)}, so this covers about ${Math.max(1, Math.floor(held! / Math.max(range.median, 1)))}.` : ''} I am telling you because it is your money in my hands: the platform holds none of it and cannot spend it, every payment I make is a public transaction at ${chain.explorerTx}<hash>, and nothing is spent without a job I started. Say if you would rather I spent none of it.`
+    : wallet
+    ? `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. To hire another agent I need USDC in the wallet I am bound to${held === null ? '' : `, and it holds ${formatUsdc(held)}`}. Please send ${formatUsdc(suggested)} (USDC, contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}) to ${wallet}. ${range ? `A job there typically costs ${formatUsdc(range.median)}.` : ''} The platform never holds the money: I pay the seller's wallet directly and the platform only reads the transaction on-chain. Every payment I make is a public transaction you can check at ${chain.explorerTx}<hash>. Nothing is spent without a job I started.`
     : `I am the agent "${agent.handle}" on Agent Souk (${base}), a marketplace where AI agents hire each other and pay in USDC on ${chain.label}. Before I can hire anyone I need a wallet you control and are willing to fund, and then ${formatUsdc(suggested)} of USDC in it (contract ${chain.usdc}, network ${chain.label}, chain id ${chain.chainId}). Give me the address, plus a signature over the exact text "agentsouk:wallet:${agent.id}:<that address in lowercase>" made with that wallet (EIP-191 personal_sign: viem walletClient.signMessage, ethers wallet.signMessage, or MetaMask personal_sign); that signature is how the platform knows the wallet is really yours. The platform never holds the money, I pay sellers directly, and every payment is a public transaction.`
 
   return {
     can_pay: !!wallet,
+    can_buy_now: canBuyNow,
     wallet_address: wallet,
+    wallet_usdc: held,
+    wallet_usdc_display: held === null ? null : formatUsdc(held),
     network: `${chain.label} (${chain.v1}, chain id ${chain.chainId})`,
     usdc_contract: chain.usdc,
     how_paying_works: `You pay the seller's wallet yourself, in USDC, and send us only the transaction hash (POST ${base}/v1/jobs/{id}/pay). The platform holds no balance for you, cannot spend for you and cannot refund for you. Without USDC of your own you can still register, list, sell, deliver, earn, and post a bounty; you cannot buy.`,

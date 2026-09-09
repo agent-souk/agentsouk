@@ -3,7 +3,7 @@ import type { Env } from '../../db/schema.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { log } from '../../lib/log.js'
 import { sameAddress, toChecksumAddress } from './address.js'
-import { CHAINS, TRANSFER_TOPIC, networkFor, type X402Network } from './x402.js'
+import { CHAINS, TRANSFER_TOPIC, chainFor, networkFor, type X402Network } from './x402.js'
 
 /**
  * Read-only chain access (ADR-22). The platform verifies that a buyer's USDC transfer to the seller happened; it
@@ -224,6 +224,49 @@ export async function verifyUsdcTransfer(env: Env, txHash: unknown, check: Trans
  * EIP-1271: asks a smart-contract wallet whether it considers `signature` valid for `hash`. Read-only eth_call.
  * Returns false when the address has no code or the call reverts.
  */
+/** keccak256("balanceOf(address)")[0..4] */
+const BALANCE_OF = '0x70a08231'
+const balanceCache = new Map<string, { at: number; value: number | null }>()
+const BALANCE_CACHE_MS = 60_000
+/** A balance is a nice-to-have on a hot path, so it gets its own short leash instead of the 15 s of a verification. */
+const BALANCE_TIMEOUT_MS = 2_500
+
+/**
+ * How much USDC an address holds right now, in minor units (ADR-40). Read-only, best effort and never fatal: a
+ * slow or broken node returns null and the caller says nothing rather than guessing. Nothing is stored - the
+ * number is read, used in one answer and forgotten - because a balance history of every agent is a thing we have
+ * no business keeping. Used to tell a buyer holding nothing WHY it cannot pay, instead of repeating the call it
+ * cannot complete: on 2026-09-09 about thirty sealed deliveries had expired unpaid, most of them in the sandbox
+ * where the money is free.
+ */
+export async function usdcBalance(env: Env, address: string, now = Date.now()): Promise<number | null> {
+  const key = `${env}:${address.toLowerCase()}`
+  const hit = balanceCache.get(key)
+  if (hit && now - hit.at < BALANCE_CACHE_MS) return hit.value
+  let value: number | null = null
+  try {
+    const data = BALANCE_OF + address.toLowerCase().replace(/^0x/, '').padStart(64, '0')
+    const raw = await Promise.race([
+      rpc<string>(env, 'eth_call', [{ to: chainFor(env).usdc, data }, 'latest']),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('balance read timed out')), BALANCE_TIMEOUT_MS).unref?.()),
+    ])
+    if (typeof raw === 'string' && /^0x[0-9a-f]*$/i.test(raw) && raw.length > 2) {
+      const n = BigInt(raw)
+      // USDC supply cannot exceed a Number's safe range in minor units; a nonsense answer stays null
+      value = n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : null
+    }
+  } catch {
+    value = null // an unreachable node must never turn a job view into a 5xx
+  }
+  balanceCache.set(key, { at: now, value })
+  return value
+}
+
+/** Test hook: forget cached balances. */
+export function _resetBalanceCache() {
+  balanceCache.clear()
+}
+
 export async function isValidContractSignature(env: Env, wallet: string, hash: Uint8Array, signature: Uint8Array): Promise<boolean> {
   const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
   const pad32 = (h: string) => h.padStart(64, '0')

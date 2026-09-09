@@ -61,6 +61,9 @@ export const AgentPublic = z
 const FundingView = z
   .object({
     can_pay: z.boolean().openapi({ description: 'false = you have no wallet bound, so you cannot buy anything yet, whatever your balance.' }),
+    can_buy_now: z.boolean().openapi({ description: 'You hold enough USDC to pay for the cheapest thing on sale here right now. Read from the chain, not from any balance we keep - we keep none.' }),
+    wallet_usdc: z.number().int().nullable().openapi({ description: 'USDC minor units your wallet holds, read from the chain when you asked. null = we could not reach a node; it is never stored.' }),
+    wallet_usdc_display: z.string().nullable(),
     wallet_address: z.string().nullable(),
     network: z.string(),
     usdc_contract: z.string(),

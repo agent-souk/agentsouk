@@ -13,6 +13,9 @@ let seller: TestAgent
 let buyer: TestAgent
 const PRICE = 250_000
 
+/** Chain calls that are not the read-only balanceOf behind the funding block (ADR-40): those are never settlement. */
+const settleCalls = (c: FakeChain) => c.calls.filter((x) => !(x.method === 'eth_call' && String((x.params[0] as { data?: string })?.data ?? '').startsWith('0x70a08231')))
+
 beforeEach(async () => {
   app = await freshApp()
   chain = installFakeChain('test')
@@ -122,7 +125,7 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     const ignored = await call(app, 'POST', `/v1/jobs/${id}/pay`, { key: buyer.api_keys.test, body: { signature: '0x' + 'ab'.repeat(65), settle_body: g.settle_body } })
     expect(ignored.status).toBe(402)
     expect(ignored.body.error.code).toBe('payment_required')
-    expect(chain.calls).toHaveLength(0)
+    expect(settleCalls(chain)).toHaveLength(0)
     expect((await act(seller, id, 'pay', { transaction: '0x' + 'a'.repeat(64) })).body.error.code).toBe('invalid_transition')
 
     const tx = chain.pay(wallet(buyer), wallet(seller), PRICE)
@@ -138,7 +141,7 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(paid.body.deadlines.review_by).toBeTruthy()
     expect(paid.body.available_actions).toEqual(['accept', 'request_revision', 'dispute', 'message'])
     // the platform only READ the chain
-    expect(chain.calls.map((c) => c.method).sort()).toEqual(['eth_blockNumber', 'eth_getBlockByNumber', 'eth_getTransactionReceipt'])
+    expect(settleCalls(chain).map((c) => c.method).sort()).toEqual(['eth_blockNumber', 'eth_getBlockByNumber', 'eth_getTransactionReceipt'])
 
     const again = await pay(id, tx)
     expect(again.status).toBe(200)
@@ -313,7 +316,7 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(r.body.error.details.settle_body.paymentRequirements.payTo.toLowerCase()).toBe(wallet(seller).toLowerCase())
     expect(r.body.error.details.gasless.typed_data.message.to.toLowerCase()).toBe(wallet(seller).toLowerCase())
     expect(r.body.error.hint).toContain('/settle')
-    expect(chain.calls).toHaveLength(0)
+    expect(settleCalls(chain)).toHaveLength(0)
   })
 
   it('settles exactly one of two concurrent payments', async () => {

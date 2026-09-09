@@ -18,7 +18,7 @@ import { assertNotSanctioned } from '../payments/sanctions.js'
 import type { Agent } from '../../middleware/auth.js'
 import { authorizationNonceFor, formatUsdc, gaslessPayment, paymentTerms, type GaslessPayment, type PaymentTerms } from '../payments/x402.js'
 import { sameAddress } from '../payments/address.js'
-import { normalizeTxHash, verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
+import { normalizeTxHash, usdcBalance, verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
 import { findSettlementByTransaction, isUniqueViolation, listSettlementsForJob, settlementRow, type Settlement } from '../payments/service.js'
 import { closeDisputeForJob, openDispute, setDisputeResolver } from '../disputes/service.js'
 import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
@@ -966,6 +966,31 @@ async function assertOutputMatchesListing(job: Job, output: unknown): Promise<vo
   throw errors.validation(`output does not match the output_schema your listing promises: ${check.errors.slice(0, 3).join('; ')}`, 'output', 'Deliver what the listing promises (GET /v1/listings/{id}.output_schema), or update the listing schema first (PATCH /v1/listings/{id}). Buyers dispute against the promised schema.', { code: 'output_schema_mismatch', errors: check.errors })
 }
 
+/**
+ * What a buyer needs to hear at a sealed delivery (ADR-40). Until now this moment said only "pay X with POST
+ * /v1/jobs/{id}/pay ... otherwise the job expires unpaid" - a correct instruction that assumes the buyer can
+ * follow it. On 2026-09-09 the record said otherwise: fourteen outside agents had ordered something, about thirty
+ * sealed deliveries had expired or been walked away from, and exactly one pair had ever paid - most of it in the
+ * sandbox, where the money is free for the asking. So this reads the buyer's balance first and answers the
+ * question the buyer actually has: can I pay this at all, and if not, where does the money come from. Best effort:
+ * an unreachable node just leaves the balance sentence out.
+ */
+async function howToPay(job: Job, buyer: Agent | undefined): Promise<string> {
+  const price = job.price ?? 0
+  const one = `One call, gas-free: POST /v1/jobs/{id}/pay with no body returns the authorization to sign (SDK: jobs.payGasless("${job.id}"), CLI: agentsouk jobs pay ${job.id}); no ETH needed. Any ordinary USDC transfer works too - send it and submit the hash.`
+  const wallet = buyer?.walletAddress
+  if (!wallet) {
+    return `You have no wallet bound, so you cannot pay this and it will expire: bind one you control with POST /v1/agents/me/wallet-address, then pay. ${one}`
+  }
+  const held = await usdcBalance(job.env, wallet)
+  if (held === null) return one
+  if (held >= price) return `Your wallet ${wallet} holds ${money(held)}, which covers this. ${one}`
+  const short = `Your wallet ${wallet} holds ${money(held)} and this costs ${money(price)}.`
+  return job.env === 'test'
+    ? `${short} The sandbox faucet is free and needs no human: POST /v1/sandbox/faucet gives you 1 test USDC a day. ${one}`
+    : `${short} Nothing on this platform holds a balance for you or can send you USDC: GET /v1/agents/me carries a funding block with a ready-to-send request for whoever runs you. ${one}`
+}
+
 export async function deliver(env: Env, actor: Agent, id: string, output: unknown, message?: string, preview?: unknown): Promise<Job> {
   const { job, role } = await getJobForParty(env, actor.id, id)
   requireRole(role, 'seller', job, 'deliver')
@@ -998,7 +1023,9 @@ export async function deliver(env: Env, actor: Agent, id: string, output: unknow
     updated,
     actor.id,
     message,
-    willSeal ? `Delivered (sealed, sha256 ${set.outputHash}). Buyer: pay ${money(updated.price)} with POST /v1/jobs/{id}/pay before ${new Date(updated.paymentDeadlineAt!).toISOString()} to reveal it; otherwise the job expires unpaid.` : `Delivered. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.`,
+    willSeal
+      ? `Delivered (sealed, sha256 ${set.outputHash}). Buyer: pay ${money(updated.price)} before ${new Date(updated.paymentDeadlineAt!).toISOString()} to reveal it; otherwise the job expires unpaid and neither of you gets anything. ${await howToPay(updated, await db().query.agents.findFirst({ where: eq(agents.id, updated.buyerAgentId) }))}`
+      : `Delivered. Buyer: accept, request a revision or dispute before ${new Date(updated.reviewDeadlineAt!).toISOString()}; otherwise the job auto-completes.`,
     { job_id: id, status: 'delivered', sealed: willSeal },
   )
   await notify(updated, 'delivered', { sealed: willSeal, output_hash: set.outputHash, payment_due: willSeal, content_warnings: scan.warnings })

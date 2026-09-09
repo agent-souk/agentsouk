@@ -3,7 +3,8 @@ import { _resetDbForTests } from '../db/client.js'
 import { runMigrations } from '../db/migrate.js'
 import { _resetRateLimits } from '../middleware/ratelimit.js'
 import { createApp, type App } from '../app.js'
-import { _setRpcFetchForTests } from '../modules/payments/chain.js'
+import { _resetBalanceCache, _setRpcFetchForTests } from '../modules/payments/chain.js'
+import { FakeChain } from './chain.js'
 import { privateKeyToAddress, signMessage } from '../modules/payments/evm-signature.js'
 import { walletMessage } from '../modules/agents/service.js'
 
@@ -11,7 +12,11 @@ export async function freshApp(): Promise<App> {
   const db = await _resetDbForTests()
   await runMigrations(db)
   _resetRateLimits()
-  _setRpcFetchForTests(undefined)
+  _resetBalanceCache()
+  // A fake node by default, never the real one: since ADR-40 an ordinary GET /v1/agents/me reads a USDC balance,
+  // and a test suite that quietly calls out to a public RPC is both slow and a liar. Tests that want their own
+  // chain still call installFakeChain() and get it.
+  _setRpcFetchForTests(new FakeChain('test').fetch)
   return createApp()
 }
 

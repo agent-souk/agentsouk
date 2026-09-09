@@ -183,7 +183,10 @@ describe('POST /v1/agents/me/erc8004', () => {
     const r = await call(app, 'POST', '/v1/agents/me/erc8004', { key: a.api_keys.live, body: { agent_id: '12' } })
     expect(r.status).toBe(200)
     expect(r.body.erc8004).toMatchObject({ chain_id: 8453, registry: registryCaip10('live') })
-    expect(live.calls.filter((c) => c.method === 'eth_call').every((c) => String((c.params[0] as any).to).toLowerCase() === IDENTITY_REGISTRY.live.address.toLowerCase())).toBe(true)
+    // balanceOf reads for the funding block are a different, read-only concern (ADR-40) and are not registry calls
+    const registryCalls = live.calls.filter((c) => c.method === 'eth_call' && !String((c.params[0] as any).data ?? '').startsWith('0x70a08231'))
+    expect(registryCalls.length).toBeGreaterThan(0)
+    expect(registryCalls.every((c) => String((c.params[0] as any).to).toLowerCase() === IDENTITY_REGISTRY.live.address.toLowerCase())).toBe(true)
   })
 })
 
