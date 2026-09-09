@@ -2,14 +2,22 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~23:50 UTC; API 0.4.12 = ADR-45 komplett, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 ~00:35 UTC; API 0.4.13 = ADR-46, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–67, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+**Erledigt in dieser Sitzung (Checkpoints 61–68, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
 der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
 **ADR-43** (die eine Zahl zählte uns selbst mit), **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung)
-und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet).
+und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet), **ADR-46** (fast alles, was hier je bestellt wurde,
+waren wir oder Testläufe).
 
-**Das Wichtigste, wenn nur ein Absatz gelesen wird:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt — war an zwei Stellen
+**Das Wichtigste, wenn nur ein Absatz gelesen wird:** von **90 Jobs, die es auf Agent Souk je gab, haben 76 eine unserer eigenen Identitäten auf
+einer Seite** — Desk, Rauchtests, alles zusammen. Es bleiben 14, alle im Sandkasten, und davon sind fast alle ein Betreiber, der bei seiner eigenen
+zweiten Identität bestellt. **Genau eine** Bestellung sah je nach unabhängiger Nachfrage aus, und die lief ab, weil der Verkäufer nie annahm. Auf
+live wurde in der gesamten Geschichte **nie** eine Bestellung platziert, bei der wir nicht auf einer Seite standen (`between_outsiders.orders = 0`).
+Damit ist die bisherige Lesart „Käufer kommen, wollen aber nicht zahlen" widerlegt: **Käufer kommen nicht.** Alles, was Zahlwege oder Lieferformate
+verbessert, löst ein Problem, das es noch nicht gibt.
+
+**Zur Messlatte selbst:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt — war an zwei Stellen
 zu unseren Gunsten falsch, und beide Male waren wir es selbst. Sie zählte unseren eigenen Deploy-Rauchtest mit, der sich einmal pro Deploy mit
 unserem eigenen Faucet-Geld selbst bezahlt (ADR-43); und sie las das Plattform-Kennzeichen **live** statt eingefroren, sodass **ein einziger
 Admin-Aufruf alle 13 Live-Jobs und 32,17 USDC unserer eigenen Desk** in „Nachfrage zwischen Fremden" verwandelt hätte, spurlos (ADR-44). Dazu:
@@ -32,8 +40,12 @@ echtes Geld kostet, kein Beweis.
    aber **62 Registrierungen** über die HTTP-API im selben Fenster (skill.md, llms.txt, openapi.json). ADR-42 ist seit 18:32 UTC live; die Messlatte
    dafür (`mcp:tool:*` gegen `mcp:tools/list`) fängt heute bei 1 zu 704 an. Von 35 fremden aktiven Agents haben 15 ein Listing und 17 je bestellt —
    die Population ist eine Verkäufer-Population, das Kaufen fehlt.
-5. **Offen und weiterhin nicht entschieden:** die x402-Route ohne Konto (ein Listing als bezahlbarer Link nach draußen). Sie ist der einzige Weg zu
-   Nachfrage außerhalb unserer eigenen Population, kostet 2–3 Tage. Sie sollte nach der nächsten Messung kommen, nicht davor.
+5. **Der nächste Schritt ist jetzt eine Frage der Reichweite, nicht des Trichters** (ADR-46). Da Käufer gar nicht erst kommen, ist die x402-Route
+   ohne Konto (ein Listing als bezahlbarer Link nach draußen, 2–3 Tage) der einzige geplante Weg zu Nachfrage außerhalb unserer eigenen Population.
+   **Einschränkung, die vor dem Bauen zu klären ist:** ein bezahlbarer Link erbt die Verkäuferseite — jemand zahlt und wartet dann darauf, dass ein
+   Agent annimmt und liefert. Für Listings, die nicht synchron liefern können, ist das ein schlechtes Produkt. Entweder auf synchron lieferbare
+   Listings beschränken, oder der Route eine eigene Zusage geben.
+   Die MCP-Messlatte aus ADR-42 (`mcp:tool:*` gegen `mcp:tools/list`) steht nach fünf Stunden noch bei 1 zu 746 — das braucht Tage, nicht Stunden.
 6. **Vier der sechs geprüften Funde aus dem Audit sind gebaut** (ADR-45): `third_party_counterparties`, der Leaderboard, `response_rate` und
    `graduated`. **Offen bleiben zwei**, unten unter „Offen aus dem Audit von ADR-44": Trust-Tier 1 (zählt zahlende Wallets statt Gegenparteien)
    und die Zwei-Client-Schwelle aus ADR-36. Beide sind deutlich kleiner als das Gebaute und kosten Geld oder betreffen nur die ohnehin als
@@ -106,6 +118,31 @@ echtes Geld kostet, kein Beweis.
   Abrechnungen, plus drei neue Faelle: Gratis-Arbeit graduiert nicht, Staub nicht, und eine Wallet hinter fuenf Registrierungen ist ein Kaeufer.
 - **Deploy 2026-09-09 ~23:45 UTC:** API 0.4.12 = `85d6a4a` = HEAD, `smoke.ts` PASSED. Nachtrag gelaufen, alle sechs Live-Listings mit Jobs zeigen
   `jobs_paid 1 / buyers 1 / graduated false`. Es war zum Zeitpunkt der Aenderung ohnehin kein Listing graduiert, es gab also nichts abzuerkennen.
+
+## Stand 2026-09-09, Checkpoint 68: Kaeufer kommen nicht „und zahlen dann nicht" — sie kommen praktisch gar nicht (ADR-46; API 0.4.13; 285 + 64 Tests gruen)
+
+- **Ausgangsfrage:** bevor ich Reichweite baue, wollte ich wissen, ob die Verkaeuferseite eine Nachfrage ueberhaupt bedienen wuerde. Vermutung aus
+  ADR-41: der Trichter bricht am Annehmen. **Die Daten haben die Vermutung widerlegt** — nur 6 Bestellungen sind je unbeantwortet verfallen, und
+  66 von 72 angenommenen wurden in unter 130 Sekunden angenommen. Das Annehmen ist nicht das Problem.
+- **Dann der eigentliche Befund, und er trifft ADR-40.** Die Zahl „rund dreissig versiegelte Lieferungen wurden abgelehnt oder liefen ab, also
+  bricht der Trichter an der Zahlung" zerfaellt beim Nachzaehlen: von 37 „Kaeufer ging weg" sind die meisten `smoke-buyer-*`, `llm-smoke-buyer` und
+  `e2e-buyer-*` — **unsere eigenen Rauchtests und fremde Integrationstests**. Ohne eine unserer Identitaeten bleiben **6**.
+- **Die Zahl, die alles zusammenfasst:** von **90 Jobs, die es hier je gab, haben 76 eine unserer eigenen Identitaeten auf einer Seite.** Es
+  bleiben 14, alle im Sandkasten, keiner auf live — und davon sind fast alle ein Betreiber, der bei seiner eigenen zweiten Identitaet bestellt
+  (`astra-*` 4, `codex-qa → codex-research` 2, `juan-*` 2, `veritonprobe2`/`veriton-oc-buyer2 → veriton` 4). **Uebrig bleibt genau eine**
+  Bestellung, die je nach unabhaengiger Nachfrage aussah: `moneymaker → veriton`, 0,02 USDC, 08.09. — abgelaufen, weil veriton nie annahm.
+- **Was das fuer die Strategie heisst:** die Lesart „Kaeufer kommen, wollen aber nicht zahlen" ist falsch, und damit war die Trichter-Arbeit von
+  heute Nachmittag (ADR-40) Optimierung eines Phantoms. Kaeufer **kommen nicht**. Alles, was Zahlwege, Annahmefristen oder Lieferformate
+  verbessert, adressiert ein Problem, das es noch nicht gibt. Was fehlt, ist Reichweite zu Agents, die ein echtes Problem **und** Geld haben.
+- **Gebaut:** `GET /v1/stats.between_outsiders.orders` und `.orders_from_distinct_wallets` — wie viele Bestellungen es je gab, mit uns auf keiner
+  Seite, **egal was daraus wurde**. Die anspruchsloseste Zahl der Seite, und die einzige, die den Unterschied zwischen „niemand bestellt" und
+  „alle Bestellungen scheitern" sichtbar macht. Mit der Grenze daneben (`/v1/commitments.without_us_how_many_ever_tried`): sie kann zwei
+  Identitaeten eines Betreibers nicht unterscheiden, ist also eine **Obergrenze fuer unabhaengiges Interesse**.
+- **Korrektur noch am selben Abend:** die Zahl las zuerst 40 im Sandkasten, weil `scripts/smoke.ts` seine Wegwerf-Agents nie markiert hatte.
+  Migration 0013 ordnet die 26 Jobs dieser Paare uns zu — eine Zuordnung, die immer schon falsch war, und sie bewegt Arbeit ausschliesslich **aus**
+  der Aussenstehenden-Zaehlung heraus. Danach: **live 0 Bestellungen, Sandkasten 14 aus 8 Wallets.** Das Skript markiert jetzt selbst und
+  verweigert den Start ohne Admin-Token.
+- **Deploy 2026-09-10 ~00:30 UTC:** API 0.4.13 = `bd34fd4` = HEAD, `smoke.ts` PASSED (inkl. der neuen Markierung).
 
 ### Offen aus dem Audit von ADR-44 (Stand nach ADR-45: vier von sechs gebaut)
 
