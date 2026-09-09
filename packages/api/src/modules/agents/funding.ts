@@ -10,21 +10,33 @@ import { config } from '../../config.js'
  * in a wallet it controls, and a fresh agent has none and no way to make any before its first sale. Four days in,
  * every one of the twelve completed jobs had been bought by the platform's own desk, and no outside agent had
  * ever hired another. The likeliest reason is the dullest one: nobody ever told them to ask for money, or what
- * to ask for. So the agent's own view, the registration answer, the wallet error and the 402 all carry this
- * block, and the whole point of it is `message_for_your_operator`: a ready-to-send sentence an agent can hand to
- * the human or system that runs it. We hold no balances and cannot fund anyone; this is a script, not an offer.
+ * to ask for. So the agent's own view, the registration answer, the wallet error and the warning on an order it
+ * cannot pay all carry this block, and the whole point of it is `message_for_your_operator`: a ready-to-send
+ * sentence an agent can hand to whoever runs it. We hold no balances and cannot fund anyone: a script, not an offer.
  */
 
+/** Prices move slowly and this sits on the profile route, so the scan runs at most once a minute per environment. */
+const PRICE_CACHE_MS = 60_000
+const priceCache = new Map<Env, { at: number; value: { min: number; median: number } | null }>()
+
 /** Cheapest and typical live price, so an agent asking for money can name an amount instead of guessing. */
-async function priceRange(env: Env): Promise<{ min: number; median: number } | null> {
+async function priceRange(env: Env, now: number): Promise<{ min: number; median: number } | null> {
+  const hit = priceCache.get(env)
+  if (hit && now - hit.at < PRICE_CACHE_MS) return hit.value
   const rows = await db()
     .select({ price: listings.price })
     .from(listings)
     .where(and(eq(listings.env, env), eq(listings.status, 'active'), sql`${listings.price} > 0`))
     .orderBy(listings.price)
-  if (!rows.length) return null
-  const prices = rows.map((r) => r.price)
-  return { min: prices[0]!, median: prices[Math.floor(prices.length / 2)]! }
+  const prices = rows.map((r) => r.price).filter((p): p is number => p != null)
+  const value = prices.length ? { min: prices[0]!, median: prices[Math.floor(prices.length / 2)]! } : null
+  priceCache.set(env, { at: now, value })
+  return value
+}
+
+/** Test hook: forget the cached prices (a test that lists something wants the next call to see it). */
+export function resetPriceCache(): void {
+  priceCache.clear()
 }
 
 export type FundingView = {
@@ -46,7 +58,7 @@ export type FundingView = {
 export async function fundingFor(agent: { handle: string; walletAddress: string | null }, env: Env, now = Date.now()): Promise<FundingView> {
   const chain = chainFor(env)
   const base = config().PUBLIC_BASE_URL.replace(/\/$/, '')
-  const range = await priceRange(env)
+  const range = await priceRange(env, now)
   const median = range?.median ?? 1_000_000
   // enough for a handful of jobs at today's typical price, rounded to a whole USDC an operator can read
   const suggested = Math.max(5_000_000, Math.ceil((median * 5) / 1_000_000) * 1_000_000)

@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { freshApp, call, createTestAgent, setWallet, randomWallet } from '../../test/setup.js'
 import type { App } from '../../app.js'
+import { resetPriceCache } from './funding.js'
 
 let app: App
 beforeEach(async () => {
   app = await freshApp()
+  resetPriceCache()
 })
 
 const listing = (over: Record<string, unknown> = {}) => ({ title: 'Live DNS probe', description: 'Probe SPF, DKIM and DMARC for a domain and report what resolves right now.', category: 'data', pricing_model: 'fixed', price: 400_000, input_schema: { type: 'object', required: ['domain'], properties: { domain: { type: 'string' } } }, example_input: { domain: 'example.com' }, ...over })
@@ -33,6 +35,7 @@ describe('funding: where the money to buy comes from (ADR-37)', () => {
   it('names the wallet once one is bound, and prices the ask against what is actually listed', async () => {
     const seller = await createTestAgent(app, { name: 'Seller' })
     expect((await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: listing() })).status).toBe(201)
+    resetPriceCache() // the price scan is cached for a minute, so a listing created just now can be a minute late
 
     const buyer = await createTestAgent(app, { name: 'Buyer', wallet_address: null })
     const bw = randomWallet()
