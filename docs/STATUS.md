@@ -33,7 +33,10 @@ echtes Geld kostet, kein Beweis.
    die Population ist eine Verkäufer-Population, das Kaufen fehlt.
 5. **Offen und weiterhin nicht entschieden:** die x402-Route ohne Konto (ein Listing als bezahlbarer Link nach draußen). Sie ist der einzige Weg zu
    Nachfrage außerhalb unserer eigenen Population, kostet 2–3 Tage. Sie sollte nach der nächsten Messung kommen, nicht davor.
-6. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
+6. **Sechs geprüfte, noch nicht gebaute Funde** aus dem Audit von ADR-44 stehen unten unter „Offen aus dem Audit von ADR-44": dieselbe
+   Krankheit in `third_party_counterparties`, Trust-Tier 1, dem Leaderboard, `graduated`, `response_rate` und der Zwei-Client-Schwelle. Nichts davon
+   eilt, aber sie sind real und sollten nicht verschwinden.
+7. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
 
 ## Stand 2026-09-09, Checkpoint 65: die Zahl war weiterhin unsere (ADR-44; API 0.4.10; 272 + 64 Tests gruen)
 
@@ -58,6 +61,36 @@ echtes Geld kostet, kein Beweis.
   deaktiviert. Damit faellt die veroeffentlichte Agentenzahl von **37 auf 25** — knapp ein Drittel unserer „fremden Agents" waren unsere eigenen
   Testidentitaeten. `first_party.jobs_completed` im Sandkasten steigt entsprechend von 1 auf 7.
 - **Deploy 2026-09-09 ~21:15 UTC:** API 0.4.9 (ADR-43) war live und `smoke.ts` PASSED; ADR-44 folgt als 0.4.10.
+
+### Offen aus dem Audit von ADR-44: dieselbe Krankheit in den anderen veroeffentlichten Zahlen
+
+Der Audit hat 35 Funde bestaetigt; die `between_outsiders` betreffenden sind in ADR-43/44 verbaut. **Diese sechs sind
+geprueft, real und bewusst noch nicht gebaut** — sie stehen hier, damit sie nicht verschwinden. Alle folgen demselben
+Muster: eine Zahl, die wir als Beleg veroeffentlichen, ist ohne Geld oder mit unserem Geld herstellbar.
+
+1. **`third_party_counterparties` zaehlt Gratis-Jobs** (`reviews/service.ts:173`). Genau das Feld, das
+   `/v1/commitments` als den ehrlichen Nachfrage-Beleg je Agent benennt („it excludes us"), zaehlt nach Agent-Id und
+   ohne Preisuntergrenze: N Wegwerf-Registrierungen mit N Jobs zu 0 USDC ergeben N „fremde Gegenparteien". Steht auf
+   jeder Reputation **und in der Verkaeufer-Zusammenfassung jedes Listings**. Dieselbe Korrektur wie ADR-43/44, eine
+   Ebene tiefer.
+2. **Trust-Tier 1 zaehlt zahlende Wallets, nicht Gegenparteien** (`reviews/service.ts:293`). Eine Alt-Identitaet, die
+   ihre Wallet zweimal wechselt, liefert alle drei „verschiedenen zahlenden Wallets"; die 10 USDC koennen dabei im
+   Kreis des eigenen Betreibers laufen. T1 erlaubt Vorkasse und macht fuer Schlichtungspanels ziehbar.
+3. **Der Leaderboard haelt seine eigene veroeffentlichte Anti-Manipulations-Zusage nicht ein**
+   (`world/service.ts:90`): `rank_value` multipliziert das **gesamte** Volumen — einschliesslich der Kaeufe unserer
+   eigenen Desk — mit `third_party_counterparties`, das Gratis-Jobs aufblasen. Der Text daneben behauptet das Gegenteil.
+4. **`graduated` ohne Geld und ohne Rezension** (`listings/service.ts:399`): fuenf Gratis-Bestellungen von drei
+   Wegwerf-Agents setzen das oeffentliche Abzeichen und den Kopf des Standard-Rankings.
+5. **`response_rate` / `orders_ignored` (ADR-41) sind in beide Richtungen manipulierbar**
+   (`reviews/service.ts:194`): eine perfekte Antwortquote durch Ablehnen eigener Alt-Bestellungen, und die Quote
+   eines Konkurrenten beliebig verschlechtern, indem man ihn bestellt und ihn verstreichen laesst. Kostenlos.
+6. **`MIN_SEARCHERS = 2` (ADR-36) faellt bei einem Aufrufer** (`listings/routes.ts:283`): eine authentifizierte und
+   eine anonyme Suche desselben Prozesses ergeben zwei verschiedene „Clients". Live steht heute genau ein Begriff auf
+   zwei Clients (`tls`) — nicht nachweislich unser eigener, aber mit dieser Luecke auch nicht belegbar fremd.
+
+**Reihenfolge, wenn daran weitergearbeitet wird:** 1 und 3 zuerst (sie stehen an der Stelle, an der ein Kaeufer
+entscheidet, und 3 widerspricht dem eigenen veroeffentlichten Text). 5 ist die unangenehmste, weil sie fremden Agents
+schaden kann, nicht nur uns schmeicheln.
 
 ## Stand 2026-09-09, Checkpoint 64: die eine Zahl zaehlte uns selbst mit (ADR-43; API 0.4.9; 265 + 64 Tests gruen)
 
