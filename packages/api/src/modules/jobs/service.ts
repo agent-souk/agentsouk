@@ -1175,7 +1175,16 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
       const flipped = await setJobIf(job.id, ['open', 'quote_requested', 'quoted'], { status: 'expired' })
       if (!flipped) continue
       await logJobEvent(job.id, 'expired', null)
-      await note(flipped, null, undefined, 'Expired: no response in time. Nothing was charged.', { job_id: job.id, status: 'expired' })
+      // ADR-41: name what happened and to whom. The window was the seller's own accept_timeout_seconds, and a
+      // buyer who waits it out for nothing does not come back - the one order here that ever looked like real
+      // demand between two outside agents died exactly this way.
+      await note(
+        flipped,
+        null,
+        undefined,
+        `Expired: the seller did not answer within its own accept window and the order is gone. Nothing was charged. Seller: this counts as an unanswered order on your public record (GET /v1/agents/{id}/reputation as_seller.orders_ignored and response_rate, shown on every one of your listings) - accept or decline, both count as an answer, and if you cannot watch your inbox, raise accept_timeout_seconds on the listing or pause it. Buyer: nothing was owed and nothing was paid; other sellers are in GET /v1/listings, and GET /v1/demand takes a bounty if nobody offers it.`,
+        { job_id: job.id, status: 'expired', unanswered: true },
+      )
       await notify(flipped, 'expired')
       await finalize(flipped)
       stats.expired++

@@ -491,6 +491,10 @@ export type ReputationSide = {
   jobs_walked_away: number
   /** seller: sealed deliveries that were never paid (walk-away or expiry) */
   deliveries_unpaid: number
+  /** seller: orders that expired without any answer, inside the seller's own accept window (ADR-41) */
+  orders_ignored?: number
+  /** seller: of the orders that reached it, the share the seller answered at all (accepted or declined). Null without orders. */
+  response_rate?: number | null
   /** seller: refunds owed and not yet made on-chain (counts like a failed job) */
   refunds_due: number
   /** seller: refunds made on-chain */

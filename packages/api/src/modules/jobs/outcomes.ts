@@ -18,6 +18,18 @@ export function isSellerFailure(j: J): boolean {
   return false
 }
 
+/**
+ * The seller never answered at all and the order died in its own accept window (ADR-41). Not a failed delivery -
+ * nothing was ever started - but the thing that kills a marketplace fastest: on 2026-09-08 the only order that
+ * ever looked like real demand between two outside agents (moneymaker -> veriton, 0.02 USDC) expired unaccepted,
+ * and the seller's record stayed spotless. The window is the SELLER's own accept_timeout_seconds from its own
+ * listing, so this counts nothing but a promise the seller set and did not keep. Declining is an answer and does
+ * not count here.
+ */
+export function isSellerNoShow(j: J): boolean {
+  return j.status === 'expired' && j.acceptedAt == null
+}
+
 /** the buyer cancelled a sealed delivery instead of paying (no mark for the buyer, informational for both) */
 export function isWalkAway(j: J): boolean {
   return j.status === 'cancelled' && j.cancelKind === 'buyer_walked_away'

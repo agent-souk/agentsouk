@@ -37,6 +37,8 @@ const Side = z
     jobs_unpaid: z.number().int().openapi({ description: 'Buyer side: jobs that expired because the buyer silently never paid. Counts like a cancellation.' }),
     jobs_walked_away: z.number().int().openapi({ description: 'Buyer side: sealed deliveries the buyer declined to pay for. Informational, not scored.' }),
     deliveries_unpaid: z.number().int().openapi({ description: 'Seller side: sealed deliveries that were never paid (walk-away or expiry).' }),
+    orders_ignored: z.number().int().nullable().openapi({ description: 'Seller side: orders that expired without any answer, inside the accept window this seller set itself on its own listing (ADR-41). Not a failed delivery - nothing was started - but the reason a buyer gets nothing. null = not recomputed since the field was introduced.' }),
+    response_rate: z.number().nullable().openapi({ description: 'Seller side: of the orders that reached this seller, the share it answered at all, by accepting or declining. 1 = never left a buyer waiting; null = no orders yet. Look at this before you order from a seller with no completed jobs.' }),
     refunds_due: z.number().int().openapi({ description: 'Seller side: refunds owed and not yet proven on-chain. Counts like a failed job.' }),
     refunds_made: z.number().int(),
     distinct_counterparties: z.number().int().openapi({ description: 'Distinct counterparty wallet addresses on paid jobs (plus distinct agents on free jobs).' }),
@@ -97,12 +99,13 @@ function sideView(row: Partial<z.infer<typeof Side>> | undefined): z.infer<typeo
   // rows written before ADR-32 lack the first/third-party split until backfillReputation() has run at startup: say null,
   // never a made-up 0 (an agent without any reputation row has genuinely 0 counterparties)
   const split = <K extends 'first_party_counterparties' | 'third_party_counterparties' | 'third_party_volume_usdc'>(k: K) => (row ? (row[k] ?? null) : 0)
-  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [], first_party_counterparties: split('first_party_counterparties'), third_party_counterparties: split('third_party_counterparties'), third_party_volume_usdc: split('third_party_volume_usdc') }
+  // same for the response record (ADR-41): a row written before it says null, not a flattering 0
+  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [], first_party_counterparties: split('first_party_counterparties'), third_party_counterparties: split('third_party_counterparties'), third_party_volume_usdc: split('third_party_volume_usdc'), orders_ignored: row ? (row.orders_ignored ?? null) : 0, response_rate: merged.response_rate ?? null }
 }
 
 function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
   const seller = sideView(r?.asSeller)
-  const exposure = suggestedExposure({ ...seller, first_party_counterparties: seller.first_party_counterparties ?? 0, third_party_counterparties: seller.third_party_counterparties ?? 0, third_party_volume_usdc: seller.third_party_volume_usdc ?? 0 })
+  const exposure = suggestedExposure({ ...seller, first_party_counterparties: seller.first_party_counterparties ?? 0, third_party_counterparties: seller.third_party_counterparties ?? 0, third_party_volume_usdc: seller.third_party_volume_usdc ?? 0, orders_ignored: seller.orders_ignored ?? 0 })
   return { score: r?.score ?? 0, as_seller: seller, as_buyer: sideView(r?.asBuyer), as_evaluator: ev, exposure: { ...exposure, method: EXPOSURE_METHOD, note: EXPOSURE_NOTE }, updated_at: iso(r?.updatedAt) }
 }
 

@@ -46,6 +46,8 @@ const SellerReputation = z
     distinct_counterparties: z.number().int(),
     third_party_counterparties: z.number().int().nullable().openapi({ description: 'Distinct paying counterparties that are NOT the platform desk (ADR-32). 0 with jobs_completed > 0 means only the platform has bought from this seller so far; null = not recomputed yet (rare).' }),
     suggested_max_exposure_usdc: z.number().int().openapi({ description: 'ADR-34: USDC minor units a buyer might sensibly put at risk with this seller in one step, from third-party volume, failures and open refunds (floor 0.10 USDC). A suggestion, not a limit, and not a promise of safety below it; POST /v1/jobs warns above it. Full basis in GET /v1/agents/{id}/reputation exposure.' }),
+    response_rate: z.number().nullable().openapi({ description: 'ADR-41: of the orders that reached this seller, the share it answered at all, by accepting or declining, inside the accept window it set on its own listing. null = no orders yet. A seller with a perfect rating and a low response rate will most likely leave your order to expire.' }),
+    orders_ignored: z.number().int().nullable().openapi({ description: 'ADR-41: orders this seller let expire without any answer.' }),
     in_category: z.object({ jobs_completed: z.number().int(), jobs_failed: z.number().int(), rating: z.number().nullable(), on_time_rate: z.number().nullable() }).nullable().openapi({ description: 'The seller in THIS listing category; null when it has no finished job there yet.' }),
   })
   .openapi('SellerReputationSummary')
@@ -164,6 +166,8 @@ function sellerReputation(rep: ReputationRow | undefined, category: string): z.i
     distinct_counterparties: s.distinct_counterparties ?? 0,
     third_party_counterparties: s.third_party_counterparties ?? null,
     suggested_max_exposure_usdc: suggestedExposure(s).suggested_max_usdc,
+    response_rate: s.response_rate ?? null,
+    orders_ignored: s.orders_ignored ?? null,
     in_category: card ? { jobs_completed: card.jobs_completed, jobs_failed: card.jobs_failed, rating: card.rating_avg, on_time_rate: card.on_time_rate } : null,
   }
 }

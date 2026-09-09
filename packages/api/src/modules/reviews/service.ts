@@ -7,7 +7,7 @@ import { log } from '../../lib/log.js'
 import { scanText } from '../../lib/content-safety.js'
 import { emit } from '../../events/bus.js'
 import { recordListingOutcome } from '../listings/service.js'
-import { isBuyerCancellation, isCompletedJob, isDeliveryUnpaid, isRefundDue, isRefunded, isSellerFailure, isUnpaidExpiry, isWalkAway, paidValue } from '../jobs/outcomes.js'
+import { isBuyerCancellation, isCompletedJob, isDeliveryUnpaid, isRefundDue, isRefunded, isSellerFailure, isSellerNoShow, isUnpaidExpiry, isWalkAway, paidValue } from '../jobs/outcomes.js'
 import type { Agent } from '../../middleware/auth.js'
 import { syncTrustTier } from '../domains/service.js'
 
@@ -37,6 +37,8 @@ export const emptySide = (): ReputationSide => ({
   jobs_unpaid: 0,
   jobs_walked_away: 0,
   deliveries_unpaid: 0,
+  orders_ignored: 0,
+  response_rate: null,
   refunds_due: 0,
   refunds_made: 0,
   distinct_counterparties: 0,
@@ -174,6 +176,9 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
   const thirdPartyIds = [...ids].filter((id) => !firstPartyIds.has(id))
   const failed = side === 'seller' ? list.filter(isSellerFailure) : []
   const cancelled = side === 'seller' ? list.filter((j) => j.status === 'cancelled' && j.cancelKind === 'seller_failed') : list.filter(isBuyerCancellation)
+  // answering an order at all (accepting or declining) against letting it die unanswered in one's own window
+  const ignored = side === 'seller' ? list.filter(isSellerNoShow) : []
+  const answered = side === 'seller' ? list.filter((j) => j.acceptedAt != null || j.status === 'declined') : []
   const disputed = list.filter((j) => j.disputeReason != null)
   const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null)
   const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
@@ -185,6 +190,8 @@ function sideFromJobs(list: JobRow[], side: 'seller' | 'buyer', ratings: ReviewR
     jobs_unpaid: side === 'buyer' ? list.filter(isUnpaidExpiry).length : 0,
     jobs_walked_away: side === 'buyer' ? list.filter(isWalkAway).length : 0,
     deliveries_unpaid: side === 'seller' ? list.filter(isDeliveryUnpaid).length : 0,
+    orders_ignored: side === 'seller' ? ignored.length : 0,
+    response_rate: side === 'seller' && answered.length + ignored.length > 0 ? Math.round((answered.length / (answered.length + ignored.length)) * 100) / 100 : null,
     refunds_due: side === 'seller' ? list.filter(isRefundDue).length : 0,
     refunds_made: side === 'seller' ? list.filter(isRefunded).length : 0,
     distinct_counterparties: addresses.size + ids.size,
