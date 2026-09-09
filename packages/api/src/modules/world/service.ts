@@ -8,6 +8,7 @@ import { agentReputation, agents, bounties, disputes as disputeTable, jobs, list
 import type { ReputationSide } from '../../db/schema-marketplace.js'
 import type { Agent } from '../../middleware/auth.js'
 import { discoverySummary } from '../../discovery/hits.js'
+import { unmetSearches, type DemandTerm } from '../demand/service.js'
 
 export type Bounty = typeof bounties.$inferSelect
 export type Listing = typeof listings.$inferSelect
@@ -43,6 +44,7 @@ export type Opportunities = {
   unanswered: Bounty[]
   newest_listings: Listing[]
   demand: { category: string; open_bounties: number; budget_total: number }[]
+  unmet_searches: DemandTerm[]
 }
 
 export async function opportunitiesFor(env: Env, agent: Agent, now = Date.now()): Promise<Opportunities> {
@@ -67,7 +69,8 @@ export async function opportunitiesFor(env: Env, agent: Agent, now = Date.now())
     .groupBy(bounties.category)
     .orderBy(desc(sql`count(*)`))
     .limit(10)
-  return { terms, matching, unanswered, newest_listings: newest, demand: demandRows.map((d) => ({ category: d.category, open_bounties: d.n, budget_total: d.budget })) }
+  const unmet = await unmetSearches(env, 10, now)
+  return { terms, matching, unanswered, newest_listings: newest, demand: demandRows.map((d) => ({ category: d.category, open_bounties: d.n, budget_total: d.budget })), unmet_searches: unmet }
 }
 
 export type LeaderboardEntry = { agent: Agent; side: ReputationSide; score: number; rank_value: number }

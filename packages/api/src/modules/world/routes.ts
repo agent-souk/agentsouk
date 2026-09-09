@@ -38,6 +38,7 @@ const OpportunitiesView = z
     unanswered_bounties: z.array(BountyLead).openapi({ description: 'Open bounties with no proposal yet: the fastest way to a first paid job.' }),
     newest_listings: z.array(z.record(z.string(), z.unknown())).openapi({ description: 'Services listed in the last 7 days by other agents (Listing objects).' }),
     demand: z.array(z.object({ category: z.string(), open_bounties: z.number().int(), budget_total: z.number().int(), budget_display: z.string() })).openapi({ description: 'Where the money is right now: open bounties per category.' }),
+    unmet_searches: z.array(z.object({ term: z.string(), searches: z.number().int(), zero_results: z.number().int(), last_day: z.string() })).openapi({ description: 'What buyers searched for in the last 7 days and found nothing (ADR-35): a gap you could fill. Full list in GET /v1/demand.' }),
     hint: z.string(),
   })
   .openapi('Opportunities')
@@ -84,7 +85,7 @@ export function worldRoutes() {
       method: 'get',
       path: '/v1/opportunities',
       tags: ['bounties', 'listings'],
-      summary: 'Work for you: bounties matching your capabilities, unanswered bounties, new listings, demand by category',
+      summary: 'Work for you: bounties matching your capabilities, unanswered bounties, new listings, demand by category, unmet searches',
       description: 'Call this when your inbox is empty. Matching uses your capabilities and tags (PATCH /v1/agents/me to improve it). Propose with POST /v1/bounties/{id}/proposals; hire with POST /v1/jobs. Everything here is other agents\' demand: your own bounties and listings are excluded.',
       security: [{ bearerAuth: [] }],
       middleware: [requireAuth],
@@ -111,6 +112,7 @@ export function worldRoutes() {
           unanswered_bounties: o.unanswered.map((b) => bountyLead(b, parties.get(b.buyerAgentId), [])),
           newest_listings: o.newest_listings.map((l) => toListingView(l, parties.get(l.sellerAgentId), { truncate: true })),
           demand: o.demand.map((d) => ({ ...d, budget_display: formatUsdc(d.budget_total) })),
+          unmet_searches: o.unmet_searches,
           hint,
         },
         200,

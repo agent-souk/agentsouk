@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, inArray, like, lt, lte, or, sql, type SQL } from 'drizzle-orm'
 import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, reviews, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
-import { errors } from '../../lib/errors.js'
+import { agentReputation, agents, jobs, listings, reviews, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
+import { ApiError, errors } from '../../lib/errors.js'
+import { withLock } from '../../lib/mutex.js'
 import { newId } from '../../lib/ids.js'
 import { scanFields } from '../../lib/content-safety.js'
 import { relevanceScore, searchTermGroups, searchTerms } from '../../lib/search.js'
@@ -15,7 +16,37 @@ export type Listing = typeof listings.$inferSelect
 
 export { searchTerms }
 
-export const MAX_ACTIVE_LISTINGS = 50
+/**
+ * ADR-35: how many active listings a seller may hold per environment. 10 until someone other than the platform
+ * has verifiably paid the seller for a job (third_party_volume_usdc > 0; a completed free job lifts nothing), 50
+ * after. Day four had 41 live listings, 26 of them from one seller who produced near-identical format converters
+ * every half hour; a catalogue is not demand. The count and the insert run under a per-seller lock, so parallel
+ * creates cannot slip past the cap.
+ */
+export const LISTING_CAPS = { unproven: 10, proven: 50 } as const
+
+/** ADR-35, said to every seller through every channel (create response, skill.md, llms.txt, MCP, demand page): what a listing must be to earn anything here. */
+export const WHAT_SELLS =
+  'Offer what other agents need and cannot do themselves in a minute. Something every agent can do on the spot (parse CSV, YAML or XML, validate JSON, deduplicate rows, diff two documents, fill a template) is worth nothing to a buyer however cheap it is, and the platform desk does not buy it either. What sells: reach (fetching or probing something live on the network), access (data, accounts or credentials the buyer lacks), effort or expertise (an audit, a research brief on a specific question, a code fix, a translation with a glossary), and independence (a second opinion, a verification, a review by someone who is not the buyer). Before listing, read GET /v1/demand: what buyers searched for here and did not find, and the open bounties with budgets.'
+
+export async function activeListingCap(env: Env, seller: Pick<Agent, 'id' | 'firstParty'>): Promise<number> {
+  if (seller.firstParty) return LISTING_CAPS.proven
+  const rep = await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.env, env), eq(agentReputation.agentId, seller.id)), columns: { asSeller: true } })
+  return (rep?.asSeller.third_party_volume_usdc ?? 0) > 0 ? LISTING_CAPS.proven : LISTING_CAPS.unproven
+}
+
+async function assertListingCap(env: Env, seller: Pick<Agent, 'id' | 'firstParty'>): Promise<void> {
+  const [cap, active] = await Promise.all([activeListingCap(env, seller), db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, seller.id), eq(listings.status, 'active')))])
+  const n = active[0]?.n ?? 0
+  if (n < cap) return
+  const unproven = cap < LISTING_CAPS.proven
+  throw new ApiError('state_error', 'listing_limit', `You already have ${n} active listings in this environment; your limit is ${cap}.`, {
+    hint: unproven
+      ? `Sellers nobody but the platform has paid yet may hold ${LISTING_CAPS.unproven} active listings; the limit rises to ${LISTING_CAPS.proven} once another agent pays you for a job. Pause or archive listings first (PATCH /v1/listings/{id} {"status":"paused"} or DELETE /v1/listings/{id}), and put the slots into work other agents need. ${WHAT_SELLS}`
+      : 'Archive or pause old listings (DELETE /v1/listings/{id}, or PATCH with {"status":"paused"}) before creating new ones.',
+    details: { active: n, limit: cap, limit_once_a_third_party_paid_you: LISTING_CAPS.proven, demand: '/v1/demand' },
+  })
+}
 export const GRADUATION = { minJobs: 5, minBuyers: 3, minRating: 3.5 }
 
 export const emptyStats = (): ListingStats => ({
@@ -96,11 +127,15 @@ function assertExampleMatchesSchema(schema: unknown, example: unknown): void {
   }
 }
 
-export async function createListing(env: Env, seller: Agent, input: CreateListingInput): Promise<Listing> {
-  const active = await db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, seller.id), eq(listings.status, 'active')))
-  if ((active[0]?.n ?? 0) >= MAX_ACTIVE_LISTINGS) {
-    throw errors.state('listing_limit', `You already have ${MAX_ACTIVE_LISTINGS} active listings in this environment.`, 'Archive or pause old listings (DELETE /v1/listings/{id}) before creating new ones.')
-  }
+/** Per-seller lock: the cap count and the write that changes it are one step (ADR-35). */
+const sellerLock = <T>(env: Env, sellerId: string, fn: () => Promise<T>) => withLock(`listings:${env}:${sellerId}`, fn)
+
+export function createListing(env: Env, seller: Agent, input: CreateListingInput): Promise<Listing> {
+  return sellerLock(env, seller.id, () => createListingLocked(env, seller, input))
+}
+
+async function createListingLocked(env: Env, seller: Agent, input: CreateListingInput): Promise<Listing> {
+  await assertListingCap(env, seller)
   const { price, unitName } = validatePricing(input.pricing_model, input.price, input.unit_name)
   const payment: PaymentTiming = input.payment ?? 'on_delivery'
   if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
@@ -141,7 +176,11 @@ export async function createListing(env: Env, seller: Agent, input: CreateListin
 
 export type UpdateListingInput = Partial<CreateListingInput> & { status?: 'active' | 'paused' }
 
-export async function updateListing(env: Env, seller: Agent, id: string, patch: UpdateListingInput): Promise<Listing> {
+export function updateListing(env: Env, seller: Agent, id: string, patch: UpdateListingInput): Promise<Listing> {
+  return sellerLock(env, seller.id, () => updateListingLocked(env, seller, id, patch))
+}
+
+async function updateListingLocked(env: Env, seller: Agent, id: string, patch: UpdateListingInput): Promise<Listing> {
   const l = await db().query.listings.findFirst({ where: and(eq(listings.id, id), eq(listings.env, env), eq(listings.sellerAgentId, seller.id)) })
   if (!l) throw errors.notFound('Listing', id, 'Only the seller can edit a listing. GET /v1/agents/me/listings shows yours.')
   if (l.status === 'archived') throw errors.state('listing_archived', 'Archived listings cannot be edited.', 'Create a new listing with POST /v1/listings.')
@@ -177,10 +216,7 @@ export async function updateListing(env: Env, seller: Agent, id: string, patch: 
   if (patch.accept_timeout_seconds !== undefined) set.acceptTimeoutSeconds = patch.accept_timeout_seconds
   if (patch.max_open_jobs !== undefined) set.maxOpenJobs = patch.max_open_jobs
   if (patch.status !== undefined) {
-    if (patch.status === 'active' && l.status !== 'active') {
-      const active = await db().select({ n: sql<number>`count(*)` }).from(listings).where(and(eq(listings.env, env), eq(listings.sellerAgentId, seller.id), eq(listings.status, 'active')))
-      if ((active[0]?.n ?? 0) >= MAX_ACTIVE_LISTINGS) throw errors.state('listing_limit', `You already have ${MAX_ACTIVE_LISTINGS} active listings.`)
-    }
+    if (patch.status === 'active' && l.status !== 'active') await assertListingCap(env, seller)
     set.status = patch.status
   }
   await db().update(listings).set(set).where(eq(listings.id, id))
@@ -268,20 +304,43 @@ export async function searchListings(env: Env, input: SearchListingsInput): Prom
     return { rows, nextCursor: (last) => last.id }
   }
   const offset = input.cursor?.startsWith('o:') ? Math.max(0, parseInt(input.cursor.slice(2), 10) || 0) : 0
-  if (sort === 'relevance' && groups.length) {
-    // Rank a bounded candidate set in memory: query relevance first, then the usual quality order (stable sort keeps it).
+  if (sort === 'relevance') {
+    // Rank a bounded candidate set in memory: query relevance first, then the usual quality order (the SQL order is
+    // the tiebreak), then sellers interleaved (ADR-35) so that one seller cannot fill a page. Page offsets index into
+    // this ranked set; listings beyond the candidate cap are reachable through filters and the other sorts.
     const candidates = await withQuery((qc) => db().select().from(listings).where(and(...conds, ...qc)).orderBy(...orderBy).limit(RELEVANCE_CANDIDATES))
-    const scored = candidates.map((row, i) => ({ row, i, score: relevanceScore(input.q, { title: row.title, tags: row.tags, category: row.category, description: row.description }) }))
-    scored.sort((a, b) => b.score - a.score || a.i - b.i)
-    const rows = scored.slice(offset, offset + input.limit + 1).map((s) => s.row)
+    const scored = candidates.map((row) => ({ row, score: groups.length ? relevanceScore(input.q, { title: row.title, tags: row.tags, category: row.category, description: row.description }) : 0 }))
+    const rows = interleaveBySeller(scored).slice(offset, offset + input.limit + 1)
     return { rows, nextCursor: (_last, index) => `o:${offset + index + 1}` }
   }
   const rows = await withQuery((qc) => db().select().from(listings).where(and(...conds, ...qc)).orderBy(...orderBy).limit(input.limit + 1).offset(offset))
   return { rows, nextCursor: (_last, index) => `o:${offset + index + 1}` }
 }
 
-/** How many query matches the relevance sort ranks in memory (page offsets index into this ranked set). */
-const RELEVANCE_CANDIDATES = 500
+/** How many candidates the default sort ranks in memory (page offsets index into this ranked set). */
+export const RELEVANCE_CANDIDATES = 500
+
+/**
+ * ADR-35, the disclosed ranking rule of the default order: candidates arrive in quality order (graduated, rating,
+ * completed jobs, newest) and carry a query relevance score (0 without a query). They are grouped into relevance
+ * bands (quarters of the best score; one band without a query) and, inside a band, every seller's first listing
+ * comes before any seller's second, then every second before any third, and so on; ties keep relevance and then
+ * the quality order. A strong match never drops below a weak one, and one seller cannot fill a page.
+ */
+export function interleaveBySeller<T extends { sellerAgentId: string }>(scored: { row: T; score: number }[]): T[] {
+  const max = scored.reduce((m, s) => Math.max(m, s.score), 0)
+  const bandOf = (score: number) => (max > 0 ? Math.ceil((score / max) * 4) : 0)
+  // a seller's "best" listing is its best match, then its best-quality one: rank inside each seller by score, then SQL order
+  const ranked = scored.map((s, i) => ({ s, i })).sort((a, b) => b.s.score - a.s.score || a.i - b.i)
+  const nthOfSeller = new Map<string, number>()
+  const keyed = ranked.map(({ s, i }) => {
+    const nth = nthOfSeller.get(s.row.sellerAgentId) ?? 0
+    nthOfSeller.set(s.row.sellerAgentId, nth + 1)
+    return { s, i, band: bandOf(s.score), nth }
+  })
+  keyed.sort((a, b) => b.band - a.band || a.nth - b.nth || b.s.score - a.s.score || a.i - b.i)
+  return keyed.map((k) => k.s.row)
+}
 
 export async function listMyListings(env: Env, sellerId: string, limit: number, cursor?: string, status?: string): Promise<Listing[]> {
   const conds: SQL[] = [eq(listings.env, env), eq(listings.sellerAgentId, sellerId)]

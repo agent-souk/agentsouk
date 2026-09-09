@@ -3,9 +3,11 @@ import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
 import { exampleInputFor, placeholderFromSchema } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
-import { jobs, reviews } from '../../db/schema.js'
+import { agentReputation, agents, jobs, reviews } from '../../db/schema.js'
+import { eq } from 'drizzle-orm'
 import { newId } from '../../lib/ids.js'
-import { recomputeListingStats } from './service.js'
+import { emptySide } from '../reviews/service.js'
+import { interleaveBySeller, LISTING_CAPS, recomputeListingStats } from './service.js'
 
 let app: App
 beforeEach(async () => {
@@ -130,15 +132,74 @@ describe('listings', () => {
     expect(editArchived.status).toBe(409)
   })
 
-  it('caps active listings at 50', async () => {
+  it('caps active listings at 10 until a third party has paid the seller, then at 50; first_party sellers get 50 (ADR-35)', async () => {
     const s = await createTestAgent(app)
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < LISTING_CAPS.unproven; i++) {
       const r = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: `Listing ${i}` }) })
       expect(r.status).toBe(201)
+      expect(r.body.note).toContain('cannot do themselves in a minute')
     }
     const r = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'one too many' }) })
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('listing_limit')
+    expect(r.body.error.hint).toContain('rises to 50 once another agent pays you')
+    expect(r.body.error.details).toEqual({ active: 10, limit: 10, limit_once_a_third_party_paid_you: 50, demand: '/v1/demand' })
+    // pausing frees a slot; re-activating checks the cap again
+    const first = (await call(app, 'GET', '/v1/agents/me/listings?limit=1', { key: s.api_keys.test })).body.data[0]
+    expect((await call(app, 'PATCH', `/v1/listings/${first.id}`, { key: s.api_keys.test, body: { status: 'paused' } })).status).toBe(200)
+    expect((await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'fits again' }) })).status).toBe(201)
+    const reactivate = await call(app, 'PATCH', `/v1/listings/${first.id}`, { key: s.api_keys.test, body: { status: 'active' } })
+    expect(reactivate.status).toBe(409)
+    expect(reactivate.body.error.code).toBe('listing_limit')
+    // a completed FREE job with another agent lifts nothing: the texts say "paid"
+    await db().insert(agentReputation).values({ agentId: s.agent.id, env: 'test', asSeller: { ...emptySide(), jobs_completed: 1, distinct_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 0 }, asBuyer: emptySide(), score: 1, updatedAt: Date.now() })
+    expect((await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'still capped' }) })).status).toBe(409)
+    // a seller someone other than the platform has verifiably paid may hold 50
+    await db().update(agentReputation).set({ asSeller: { ...emptySide(), jobs_completed: 1, distinct_counterparties: 1, third_party_counterparties: 1, third_party_volume_usdc: 500_000 } }).where(eq(agentReputation.agentId, s.agent.id))
+    for (let i = 10; i < LISTING_CAPS.proven; i++) expect((await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: `Listing ${i}` }) })).status).toBe(201)
+    const full = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody({ title: 'one too many' }) })
+    expect(full.status).toBe(409)
+    expect(full.body.error.details).toMatchObject({ active: 50, limit: 50 })
+    // a first_party seller is not held to the unproven cap
+    const fp = await createTestAgent(app, { name: 'Desk' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, fp.agent.id))
+    for (let i = 0; i <= LISTING_CAPS.unproven; i++) expect((await call(app, 'POST', '/v1/listings', { key: fp.api_keys.test, body: listingBody({ title: `Reference ${i}` }) })).status).toBe(201)
+    // parallel creates cannot slip past the cap (count and insert run under a per-seller lock)
+    const burst = await createTestAgent(app, { name: 'Burst' })
+    const rs = await Promise.all(Array.from({ length: 14 }, (_, i) => call(app, 'POST', '/v1/listings', { key: burst.api_keys.test, body: listingBody({ title: `Burst ${i}` }) })))
+    expect(rs.filter((r) => r.status === 201)).toHaveLength(LISTING_CAPS.unproven)
+    expect(rs.filter((r) => r.status === 409 && r.body.error.code === 'listing_limit')).toHaveLength(14 - LISTING_CAPS.unproven)
+    expect((await call(app, 'GET', '/v1/agents/me/listings?limit=50', { key: burst.api_keys.test })).body.data).toHaveLength(LISTING_CAPS.unproven)
+  })
+
+  it('interleaves sellers in the default order so one seller cannot fill a page, keeps strong matches above weak ones, and leaves the plain sorts alone (ADR-35)', async () => {
+    // pure function first
+    const rows = (ids: string[]) => ids.map((id) => ({ row: { id, sellerAgentId: id[0]! }, score: 0 }))
+    expect(interleaveBySeller(rows(['a1', 'a2', 'a3', 'b1', 'c1', 'b2'])).map((r) => r.id)).toEqual(['a1', 'b1', 'c1', 'a2', 'b2', 'a3'])
+    const scored = [{ row: { id: 'a1', sellerAgentId: 'a' }, score: 8 }, { row: { id: 'a2', sellerAgentId: 'a' }, score: 8 }, { row: { id: 'b1', sellerAgentId: 'b' }, score: 4.5 }, { row: { id: 'c1', sellerAgentId: 'c' }, score: 8 }]
+    expect(interleaveBySeller(scored).map((r) => r.id)).toEqual(['a1', 'c1', 'a2', 'b1']) // b1 is a weak match: it stays below every strong one
+    expect(interleaveBySeller([])).toEqual([])
+
+    // through the API: B lists first, A floods five, C lists last
+    const a = await createTestAgent(app, { name: 'Flood' })
+    const b = await createTestAgent(app, { name: 'Early' })
+    const cAgent = await createTestAgent(app, { name: 'Late' })
+    const mk = async (agent: typeof a, title: string, description = 'Translate English to German. Send {text}, get {translation}.') => (await call(app, 'POST', '/v1/listings', { key: agent.api_keys.test, body: listingBody({ title, description }) })).body.id as string
+    const b1 = await mk(b, 'Translate contracts')
+    const as = []
+    for (let i = 1; i <= 5; i++) as.push(await mk(a, `Translate variant ${i}`))
+    const c1 = await mk(cAgent, 'Proofread German', 'Proofread German text after translation. Send {text}.')
+    const ids = async (query: string) => ((await call(app, 'GET', `/v1/listings?${query}`, { key: a.api_keys.test })).body.data as { id: string }[]).map((l) => l.id)
+    // default order: newest first among sellers' firsts, then the seconds
+    expect(await ids('limit=10')).toEqual([c1, as[4], b1, as[3], as[2], as[1], as[0]])
+    // offset pagination walks the same ranked set
+    const p1 = await call(app, 'GET', '/v1/listings?limit=3', { key: a.api_keys.test })
+    expect(p1.body.next_cursor).toBe('o:3')
+    expect(await ids(`limit=3&cursor=${p1.body.next_cursor}`)).toEqual([as[3], as[2], as[1]])
+    // with a query: title hits of both sellers interleaved, the description-only match (c1) last
+    expect(await ids('q=translate&limit=10')).toEqual([as[4], b1, as[3], as[2], as[1], as[0], c1])
+    // plain sorts untouched
+    expect(await ids('sort=newest&limit=10')).toEqual([c1, as[4], as[3], as[2], as[1], as[0], b1])
   })
 
   it('recomputes stats and graduation from jobs and reviews', async () => {

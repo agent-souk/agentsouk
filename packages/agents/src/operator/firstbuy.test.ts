@@ -10,8 +10,8 @@ import type { App } from '../../../api/src/app.js'
 import { installFakeChain, type FakeChain } from '../../../api/src/test/chain.js'
 import { call, createTestAgent, freshApp, setWallet, type TestAgent } from '../../../api/src/test/setup.js'
 import { AgentSouk } from '../../../sdk/src/index.js'
-import { compactState, DEFAULT_FIRSTBUY, FirstBuyer, hasPlaceholder, type FirstBuyConfig, type FirstBuyState, type Purchase } from './firstbuy.js'
-import { escapeUntrusted, type Judge, type Verdict } from './judge.js'
+import { compactState, DEFAULT_FIRSTBUY, FirstBuyer, hasPlaceholder, isCloneTitle, MAX_BYTES, titleOverlap, type FirstBuyConfig, type FirstBuyState, type IndexEntry, type Purchase } from './firstbuy.js'
+import { escapeUntrusted, type Judge, type ListingScreen, type ListingScreenFacts, type Verdict } from './judge.js'
 import { AUTHORIZATION_USED_TOPIC, CHAINS, typedDataSigner, UsdcWallet, type RpcFetch } from './usdc.js'
 
 const base = 'http://localhost:8787'
@@ -61,12 +61,18 @@ function walletFor(privateKey: string, chain: FakeChain) {
   return new UsdcWallet(privateKey, CHAINS.test, { fetchImpl: rpc, sleep: async () => undefined })
 }
 
-function scriptedJudge(script: { verdict?: Verdict['decision']; rating?: Verdict['rating']; input?: string | null } = {}) {
+function scriptedJudge(script: { verdict?: Verdict['decision']; rating?: Verdict['rating']; input?: string | null; screen?: (f: ListingScreenFacts) => ListingScreen | Promise<ListingScreen> } = {}) {
   const seen: unknown[] = []
   const asked: unknown[] = []
+  const screened: ListingScreenFacts[] = []
   const judge = {
     seen,
     asked,
+    screened,
+    screenListing: async (f: ListingScreenFacts): Promise<ListingScreen> => {
+      screened.push(f)
+      return script.screen ? script.screen(f) : { verdict: 'eligible', reason: 'needs a live fetch' }
+    },
     evaluateListingDelivery: async (f: unknown): Promise<Verdict> => {
       seen.push(f)
       return { decision: script.verdict ?? 'accept', rating: script.rating ?? 5, message: script.verdict === 'revise' ? 'The links array is empty although the page has links; please add them.' : 'Exactly what the listing promised.', rubric_scores: [] }
@@ -76,7 +82,7 @@ function scriptedJudge(script: { verdict?: Verdict['decision']; rating?: Verdict
       return script.input === undefined ? JSON.stringify({ html: '<html><h1>Real page</h1><a href="/x">x</a></html>' }) : script.input
     },
   }
-  return judge as unknown as Pick<Judge, 'evaluateListingDelivery' | 'inputForListing'> & { seen: unknown[]; asked: unknown[] }
+  return judge as unknown as Pick<Judge, 'evaluateListingDelivery' | 'inputForListing' | 'screenListing'> & { seen: unknown[]; asked: unknown[]; screened: ListingScreenFacts[] }
 }
 
 async function listingBy(app: App, seller: TestAgent, over: Record<string, unknown> = {}) {
@@ -88,7 +94,8 @@ async function listingBy(app: App, seller: TestAgent, over: Record<string, unkno
   return r.body as { id: string; seller: { id: string } }
 }
 
-const cfg = (over: Partial<FirstBuyConfig> = {}): FirstBuyConfig => ({ ...DEFAULT_FIRSTBUY.test, sellerCooldownMs: 0, ...over })
+// screening off by default here: these worlds list the same title many times, which the ADR-35 clone check would refuse; the screening test turns it on
+const cfg = (over: Partial<FirstBuyConfig> = {}): FirstBuyConfig => ({ ...DEFAULT_FIRSTBUY.test, sellerCooldownMs: 0, screen: false, ...over })
 
 type World = Awaited<ReturnType<typeof world>>
 async function world(judgeScript: Parameters<typeof scriptedJudge>[0] = {}, c: Partial<FirstBuyConfig> = {}) {
@@ -398,17 +405,131 @@ describe('FirstBuyer', () => {
     expect((await view(w3, s3.api_keys.test, fb3.stateOf()!.purchases[0]!.job_id)).input).toEqual({ html: '<h1>Hi</h1>' })
   })
 
+  it('screens before it buys (ADR-35): the judge\'s verdict skips self-doable and meta listings with the reason, a clone of a bought function is skipped without asking, an unavailable judge is retried, and the health counts it', async () => {
+    const w = await world({
+      screen: (f) => {
+        if (/CSV|YAML/i.test(f.title)) return { verdict: 'self_doable', reason: 'Any agent parses CSV with its standard library in a minute.' }
+        if (/earn brief/i.test(f.title)) return { verdict: 'meta_product', reason: 'A document about where agents can earn is not work a buyer needs.' }
+        if (/audit|validate/i.test(f.title) && f.already_bought.some((b) => /audit/i.test(b.title))) return { verdict: 'duplicate', reason: 'The desk already bought a JSONL audit.' }
+        return { verdict: 'eligible', reason: 'Needs a live fetch of a public page.' }
+      },
+    }, { screen: true })
+    const seller = await createTestAgent(w.app, { name: 'Converter Farm' })
+    const other = await createTestAgent(w.app, { name: 'Real Seller' })
+    const csv = await listingBy(w.app, seller, { title: 'CSV → JSON records (quoted fields safe)' })
+    const brief = await listingBy(w.app, seller, { title: 'Soft-stop zero-float earn brief (Base x402)' })
+    const fetch = await listingBy(w.app, other, { title: 'Fetch URL → structured JSON (agent extraction)' })
+    const fb = w.mk()
+    await fb.tick()
+    let st = fb.stateOf()!
+    expect(st.purchases.map((p) => p.listing_id)).toEqual([fetch.id])
+    expect(st.skipped[csv.id]).toBe('self_doable: Any agent parses CSV with its standard library in a minute.')
+    expect(st.skipped[brief.id]).toBe('meta_product: A document about where agents can earn is not work a buyer needs.')
+    expect(st.eligible![fetch.id]).toMatch(/^\d{4}-/)
+    expect(st.index[fetch.id]).toMatchObject({ title: 'Fetch URL → structured JSON (agent extraction)', category: 'data' })
+    expect(w.judge.screened.map((f) => f.title).sort()).toEqual([brief.title, csv.title, fetch.title].sort().map((t) => t))
+    expect(fb.status().screened).toEqual({ eligible: 1, self_doable: 1, meta_product: 1, duplicate: 0 })
+
+    // a near-identical title from another seller is a clone: skipped mechanically, the judge is not asked
+    const before = w.judge.screened.length
+    const clone = await listingBy(w.app, seller, { title: 'Fetch URL → structured JSON (agent extract)' })
+    await fb.tick()
+    st = fb.stateOf()!
+    expect(st.skipped[clone.id]).toContain('duplicate: the desk already bought this function')
+    expect(w.judge.screened.length).toBe(before)
+    expect(fb.status().screened.duplicate).toBe(1)
+    expect(titleOverlap('JSON record change report by unique key', 'JSON records change report by unique key')).toBeGreaterThanOrEqual(0.6)
+    expect(isCloneTitle('JSON record change report by unique key', 'JSON records change report by unique key')).toBe(true)
+    expect(titleOverlap('CSV → JSON records', 'Security audit for AI agent APIs')).toBeLessThan(0.6)
+    expect(isCloneTitle('CSV → JSON records', 'Security audit for AI agent APIs')).toBe(false)
+    // same words, other direction: not a mechanical clone; the judge decides with the candidate in already_bought
+    expect(isCloneTitle('English → German translation (glossary)', 'German → English translation (glossary)')).toBe(false)
+    expect(isCloneTitle('Translate DE to EN', 'Translate EN to DE')).toBe(false)
+    // a purchase that ended unpaid is not "bought": it blocks nobody and is not shown to the judge
+    const probeSeller = await createTestAgent(w.app, { name: 'Probe Seller' })
+    const probe = await listingBy(w.app, probeSeller, { title: 'Probe x402 endpoints on Base' })
+    const probeListing = await w.deskClient.listings.get(probe.id)
+    await call(w.app, 'PATCH', `/v1/listings/${probe.id}`, { key: probeSeller.api_keys.test, body: { status: 'paused' } }) // screened directly below, never discovered
+    const unpaid: FirstBuyState = { purchases: [], index: { lst_old: { seller_id: 'agt_x', wallet: null, at: new Date().toISOString(), price: 1, outcome: 'expired', title: 'Probe an x402 endpoint (Base)', category: 'data' } }, skipped: {}, eligible: {}, last_error: null }
+    const seenBefore = w.judge.screened.length
+    expect(await fb.screen(unpaid, probeListing)).toBeNull()
+    expect(w.judge.screened[seenBefore]!.already_bought).toEqual([])
+    unpaid.index.lst_old!.outcome = 'paid'
+    expect((await fb.screen(unpaid, probeListing))?.why).toContain('duplicate: the desk already bought this function')
+    unpaid.index.lst_old!.outcome = null // still open counts as bought
+    expect((await fb.screen(unpaid, probeListing))?.why).toContain('duplicate')
+    // the clone check runs before the cached verdict
+    const cached: FirstBuyState = { ...unpaid, eligible: { [probe.id]: new Date().toISOString() } }
+    expect((await fb.screen(cached, probeListing))?.why).toContain('duplicate')
+    // entries written before ADR-35 get their title back from the purchase record when the state is read
+    const stored = (await w.deskClient.memory.get<FirstBuyState>('operator/test/firstbuy')).value
+    stored.purchases.push({ listing_id: 'lst_legacy', seller_id: 'agt_legacy', seller: 'legacy', title: 'JSON record change report by unique key', price: 10_000, job_id: 'job_01LEGACY000000000000000000', wallet: null, created_at: new Date().toISOString(), pay_attempt_at: null, pay_hash: '0x' + 'ab'.repeat(32), pay_failures: 0, ledgered: true, verdict: null, reviewed: true, review_failures: 0, rating: 4, outcome: 'paid', ended_at: new Date().toISOString(), needs_operator: null })
+    stored.index.lst_legacy = { seller_id: 'agt_legacy', wallet: null, at: new Date().toISOString(), price: 10_000, outcome: 'paid' } // no title: written before ADR-35
+    await w.deskClient.memory.set('operator/test/firstbuy', stored)
+    const legacy = w.mk({ screen: true })
+    await legacy.tick()
+    expect(legacy.stateOf()!.index.lst_legacy).toMatchObject({ title: 'JSON record change report by unique key', outcome: 'paid' })
+
+    // the judge can call a different wording the same function too
+    const audit1 = await listingBy(w.app, other, { title: 'JSONL syntax audit with line numbers' })
+    // the seller already has an open purchase, so a second listing waits; finish the first to let it through
+    const s = clientFor(w.app, other.api_keys.test)
+    const p = st.purchases[0]!
+    await s.jobs.accept(p.job_id)
+    await s.jobs.deliver(p.job_id, { title: 'Hi', links: [] })
+    await fb.tick()
+    await fb.tick()
+    await fb.tick()
+    st = fb.stateOf()!
+    expect(st.purchases.map((p) => p.listing_id)).toContain(audit1.id)
+    const audit2 = await listingBy(w.app, seller, { title: 'NDJSON validate + extract valid records' })
+    await fb.tick()
+    st = fb.stateOf()!
+    expect(st.skipped[audit2.id]).toBe('duplicate: The desk already bought a JSONL audit.')
+    expect(w.judge.screened.find((f) => f.title === audit2.title)!.already_bought.map((b) => b.title)).toContain('JSONL syntax audit with line numbers')
+
+    // judge down: transient, not remembered, retried next tick
+    const third = await createTestAgent(w.app, { name: 'Prober' })
+    const flaky = await listingBy(w.app, third, { title: 'Probe an x402 endpoint (Base)' })
+    const failing = scriptedJudge({ screen: () => Promise.reject(new Error('model 529')) })
+    const fb2 = new FirstBuyer(w.deskClient, walletFor(w.desk.wallet!.privateKey, w.chain), typedDataSigner(w.desk.wallet!.privateKey, CHAINS.test), failing, 'test', () => undefined, cfg({ screen: true }), () => ({ id: w.desk.agent.id }), { canSpend: async () => true })
+    await fb2.tick()
+    expect(fb2.stateOf()!.skipped[flaky.id]).toBeUndefined()
+    expect(fb2.stateOf()!.purchases.some((p) => p.listing_id === flaky.id)).toBe(false)
+    expect(fb2.stateOf()!.last_error).toBeNull()
+
+    // screening off: bought unscreened
+    const off = w.mk({ screen: false })
+    await off.tick()
+    expect(off.stateOf()!.purchases.some((p) => p.listing_id === flaky.id)).toBe(true)
+  })
+
   it('keeps the persisted state under the memory limit and escapes closing data tags in untrusted text', () => {
     const big = (i: number): Purchase => ({ listing_id: `lst_${i}`, seller_id: `agt_${i}`, seller: `seller-${i}`, title: 'T'.repeat(200), price: 50_000, job_id: `job_${i}`, wallet: '0x' + '11'.repeat(20), created_at: new Date(2026, 8, 1).toISOString(), pay_attempt_at: null, pay_hash: '0x' + 'ab'.repeat(32), pay_failures: 0, ledgered: true, verdict: { decision: 'accept', rating: 4, message: 'm'.repeat(2000), output_hash: 'h'.repeat(64), at: new Date().toISOString(), acted: true }, reviewed: true, review_failures: 0, rating: 4, outcome: i % 7 === 0 ? null : 'paid', ended_at: null, needs_operator: 'n'.repeat(1000) })
-    const st: FirstBuyState = { purchases: Array.from({ length: 120 }, (_, i) => big(i)), index: {}, skipped: {}, last_error: null }
+    const st: FirstBuyState = { purchases: Array.from({ length: 120 }, (_, i) => big(i)), index: {}, skipped: {}, eligible: {}, last_error: null }
     for (let i = 0; i < 2000; i++) st.skipped[`lst_skip_${i}`] = 'reason '.repeat(30)
-    for (let i = 0; i < 1000; i++) st.index[`lst_idx_${i}`] = { seller_id: `agt_${i}`, wallet: null, at: new Date().toISOString(), price: 1, outcome: 'paid' }
+    for (let i = 0; i < 2000; i++) st.eligible![`lst_ok_${i}`] = new Date().toISOString()
+    for (let i = 0; i < 1000; i++) st.index[`lst_idx_${i}`] = { seller_id: `agt_${i}`, wallet: null, at: new Date().toISOString(), price: 1, outcome: 'paid', title: 'Title '.repeat(20), category: 'data' }
     const out = compactState(st, 30, Date.now())
-    expect(JSON.stringify(out).length).toBeLessThan(64 * 1024)
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(MAX_BYTES)
     expect(out.purchases.filter((p) => !p.outcome)).toHaveLength(st.purchases.filter((p) => !p.outcome).length) // every open purchase survives
     expect(out.purchases.every((p) => p.verdict!.message.length <= 300 && p.title.length <= 80 && (p.needs_operator ?? '').length <= 300)).toBe(true)
     expect(Object.keys(out.skipped).length).toBeLessThanOrEqual(300)
-    expect(Object.keys(out.index).length).toBeLessThanOrEqual(400)
+    expect(Object.keys(out.eligible!).length).toBeLessThanOrEqual(300)
+    expect(Object.values(out.index).every((e) => e.title!.length <= 80)).toBe(true)
+    // the newest recent entries survive when not all fit
+    expect(Object.keys(out.index).length).toBeGreaterThan(100)
+    expect(Object.keys(out.index).at(-1)).toBe('lst_idx_999')
+    // recent titled entries are never count-trimmed while the older half of the horizon can still shrink
+    const now = Date.now()
+    const entry = (daysAgo: number): IndexEntry => ({ seller_id: 'agt_s', wallet: '0x' + '11'.repeat(20), at: new Date(now - daysAgo * 86_400_000).toISOString(), price: 1_000_000, outcome: 'paid', title: 'Fetch URL → structured JSON (agent extraction) '.repeat(2), category: 'data' })
+    const mixed: FirstBuyState = { purchases: [], index: {}, skipped: {}, eligible: {}, last_error: null }
+    for (let i = 0; i < 250; i++) mixed.index[`older_${i}`] = entry(31 + (i % 28))
+    for (let i = 0; i < 150; i++) mixed.index[`young_${i}`] = entry(i % 29)
+    const m = compactState(mixed, 30, now)
+    expect(JSON.stringify(m).length).toBeLessThanOrEqual(MAX_BYTES)
+    expect(Object.keys(m.index).filter((k) => k.startsWith('young_'))).toHaveLength(150)
+    expect(Object.keys(m.index).filter((k) => k.startsWith('older_')).length).toBeLessThan(250)
     // old index entries are forgotten, recent ones kept
     const aged: FirstBuyState = { purchases: [], index: { old: { seller_id: 'a', wallet: null, at: new Date(Date.now() - 90 * 86_400_000).toISOString(), price: 1, outcome: 'paid' }, fresh: { seller_id: 'b', wallet: null, at: new Date().toISOString(), price: 1, outcome: 'paid' } }, skipped: {}, last_error: null }
     expect(Object.keys(compactState(aged, 30, Date.now()).index)).toEqual(['fresh'])

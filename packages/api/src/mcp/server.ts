@@ -4,6 +4,7 @@ import type { Hono } from 'hono'
 import { config } from '../config.js'
 import { skillMd, llmsTxt, quickstartMd, PLATFORM_NAME, tagline } from '../discovery/text.js'
 import { APP_VERSION } from '../version.js'
+import { WHAT_SELLS } from '../modules/listings/service.js'
 
 /**
  * MCP server (ADR-11): the whole platform as tools for any MCP client (Claude Code, Cursor, OpenAI
@@ -98,7 +99,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
   // --- marketplace ------------------------------------------------------------------------------
   server.registerTool(
     'search_listings',
-    { title: 'Find services to hire', description: 'Search what other agents offer (translation, code review, research, data, images, ops...). Results include how_to_order with a ready-to-send job body, the price in USDC minor units (1000000 = 1 USDC) and seller reputation hints.', inputSchema: { q: z.string().optional().describe('words, e.g. "german translation"'), category: z.string().optional(), tag: z.string().optional(), max_price: z.number().int().optional().describe('USDC minor units'), payment: z.enum(['on_delivery', 'upfront']).optional(), sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional(), graduated: z.boolean().optional().describe('only proven listings'), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional() }, annotations: { readOnlyHint: true } },
+    { title: 'Find services to hire', description: 'Search what other agents offer (translation, code review, research, data, images, ops...). Results include how_to_order with a ready-to-send job body, the price in USDC minor units (1000000 = 1 USDC) and seller reputation hints. Found nothing? The result carries post_a_bounty: a ready body for create_bounty, so sellers come to you.', inputSchema: { q: z.string().optional().describe('words, e.g. "german translation"'), category: z.string().optional(), tag: z.string().optional(), max_price: z.number().int().optional().describe('USDC minor units'), payment: z.enum(['on_delivery', 'upfront']).optional(), sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional(), graduated: z.boolean().optional().describe('only proven listings'), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional() }, annotations: { readOnlyHint: true } },
     (a) => call('GET', `/v1/listings${qs(a)}`),
   )
   server.registerTool('get_listing', { title: 'Listing details', description: 'Full listing incl. input_schema, examples, SLA, payment timing and seller.', inputSchema: { id: z.string() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/listings/${encodeURIComponent(a.id)}`))
@@ -106,7 +107,7 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
     'create_listing',
     {
       title: 'Offer a service',
-      description: 'Publish something you can do for other agents and get paid USDC wallet-to-wallet. Title/description/tags are your advert: include the phrases buyers will search for. Paid listings need your wallet_address. Jobs arrive in your inbox and as job.created events; by default you deliver sealed and the buyer pays to reveal it.',
+      description: `Publish something you can do for other agents and get paid USDC wallet-to-wallet. ${WHAT_SELLS} Call the demand tool first. Title/description/tags are your advert: include the phrases buyers will search for. Paid listings need your wallet_address. Jobs arrive in your inbox and as job.created events; by default you deliver sealed and the buyer pays to reveal it. Active listings per seller: 10 until another agent has paid you, then 50.`,
       inputSchema: {
         title: z.string().min(3).max(120),
         description: z.string().min(10).max(4000),
@@ -200,7 +201,8 @@ export function buildMcpServer(app: AppLike, auth: string | undefined): McpServe
 
   // --- messaging & events -----------------------------------------------------------------------
   server.registerTool('inbox', { title: 'What needs my attention', description: 'Unread threads, every job waiting for my action (including payments due) and dispute cases waiting for my verdict as an evaluator. Call this first in each session.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/inbox'))
-  server.registerTool('opportunities', { title: 'Find work', description: 'Open bounties matching my capabilities and tags, bounties nobody answered yet, listings from the last 7 days and demand per category. Call this when the inbox is empty; propose with job_action-like POST /v1/bounties/{id}/proposals via propose_on_bounty.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/opportunities'))
+  server.registerTool('demand', { title: 'What buyers are looking for', description: 'Read before offering a service: the search terms buyers typed here in the last 7 days and found nothing (the gap you could fill), every search term by frequency, the open bounties with budgets and the budget per category. Anonymous aggregates; a bounty is the only demand that names a budget.', inputSchema: { env: z.enum(['live', 'test']).optional(), days: z.number().int().min(1).max(30).optional() }, annotations: { readOnlyHint: true } }, (a) => call('GET', `/v1/demand${qs(a)}`))
+  server.registerTool('opportunities', { title: 'Find work', description: 'Open bounties matching my capabilities and tags, bounties nobody answered yet, listings from the last 7 days, demand per category and the searches buyers ran that found nothing. Call this when the inbox is empty; propose with job_action-like POST /v1/bounties/{id}/proposals via propose_on_bounty.', inputSchema: {}, annotations: { readOnlyHint: true } }, () => call('GET', '/v1/opportunities'))
   server.registerTool('leaderboard', { title: 'Top agents', description: 'Agents ranked by verified on-chain volume × distinct counterparties (never raw volume). role seller|buyer, env live|test.', inputSchema: { role: z.enum(['seller', 'buyer']).optional(), env: z.enum(['live', 'test']).optional(), limit: z.number().int().min(1).max(100).optional() }, annotations: { readOnlyHint: true } }, (args) => call('GET', `/v1/leaderboard${qs(args)}`))
   server.registerTool('job_receipt', { title: 'Signed receipt of a job', description: 'A platform-signed receipt (parties with DIDs and wallets, price, output hash, on-chain settlements) to show operators or other platforms. Verify with /.well-known/jwks.json or POST /v1/receipts/verify.', inputSchema: { job_id: z.string() }, annotations: { readOnlyHint: true } }, ({ job_id }) => call('GET', `/v1/jobs/${encodeURIComponent(job_id)}/receipt`))
 

@@ -1,8 +1,8 @@
 /**
  * Smoke test of the bounty desk's judge against the REAL model (checkpoint 51 lesson: the judge tests run with a
  * fake client, so a JSON schema the constrained decoder rejects only fails in production). Runs the three judge
- * calls (proposal score, preview triage, delivery verdict) with fixtures for one catalogue entry and checks the
- * shapes. Costs a few cents. Run before every deploy of packages/agents:
+ * calls (proposal score, preview triage, delivery verdict) with fixtures for one catalogue entry, the first-buy
+ * calls (listing verdict, derived input, ADR-35 screening on both sides of the rule) and checks the shapes. Costs a few cents. Run before every deploy of packages/agents:
  *
  *   npx tsx scripts/smoke-judge.ts [--key sandbox-walkthrough] [--all]
  *
@@ -128,6 +128,36 @@ try {
   check('inputForListing', !!parsed && html.length > 20 && !/^<[^<>]{1,160}>$/.test(html.trim()) && Object.keys(parsed).length === 1, { keys: parsed ? Object.keys(parsed) : null, html: html.slice(0, 90) })
 } catch (e) {
   check('inputForListing', false, String((e as Error).message ?? e))
+}
+// first-buy screening (ADR-35): the published rule against the real model, one listing on each side of it
+console.log('\n== first-buy screening ==')
+try {
+  const trivial = await judge.screenListing({
+    title: 'YAML → JSON (safe agent parse)',
+    description: 'Send {yamlText}. Returns {data, type, method=yaml_safe_v1, bytesIn, notes}. Safe load only (no custom tags/exec). Max 200000 chars. Not LLM.',
+    category: 'data',
+    price: 20_000,
+    input_schema: { type: 'object', required: ['yamlText'] },
+    output_schema: { type: 'object', required: ['data'] },
+    example_input: { yamlText: 'a: 1' },
+    example_output: { data: { a: 1 } },
+    already_bought: [{ title: 'TOML → JSON (safe agent parse)', category: 'data' }],
+  })
+  check('screenListing trivial', trivial.verdict !== 'eligible' && trivial.reason.length > 10, trivial)
+  const real = await judge.screenListing({
+    title: 'x402 endpoint probe (Base / multi-rail)',
+    description: 'Send {url}. Returns whether the endpoint speaks HTTP 402 / x402: status codes, Payment-Required header (base64-decoded accepts), parsed payTo/network/asset/amount, facilitator hints. Live network probe from our runner.',
+    category: 'data',
+    price: 100_000,
+    input_schema: { type: 'object', required: ['url'] },
+    output_schema: { type: 'object', required: ['speaks_x402'] },
+    example_input: { url: 'https://example.com/api' },
+    example_output: { speaks_x402: false },
+    already_bought: [{ title: 'TOML → JSON (safe agent parse)', category: 'data' }],
+  })
+  check('screenListing real', real.verdict === 'eligible', real)
+} catch (e) {
+  check('screenListing', false, String((e as Error).message ?? e))
 }
 console.log(`\nmodel spend: $${llm.spentTodayUsd().toFixed(4)} · ${failed ? 'FAILED' : 'PASSED'}`)
 process.exit(failed ? 1 : 0)

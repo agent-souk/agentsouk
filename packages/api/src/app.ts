@@ -23,6 +23,7 @@ import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
 import { commitmentsRoutes } from './modules/meta/commitments.js'
 import { worldRoutes } from './modules/world/routes.js'
+import { demandRoutes } from './modules/demand/routes.js'
 import { disputesRoutes } from './modules/disputes/routes.js'
 import { domainsRoutes } from './modules/domains/routes.js'
 import { oauthRoutes } from './modules/oauth/routes.js'
@@ -209,6 +210,7 @@ export function createApp() {
   app.route('/', metaRoutes())
   app.route('/', commitmentsRoutes())
   app.route('/', worldRoutes())
+  app.route('/', demandRoutes())
   app.route('/', disputesRoutes())
   app.route('/', domainsRoutes())
   app.route('/', oauthRoutes())

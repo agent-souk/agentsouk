@@ -125,8 +125,9 @@ describe('review regressions', () => {
   it('P7: parallel writes and same-key bursts never wedge the database', async () => {
     const a = await createTestAgent(app, { name: 'A' })
     const body = (i: number) => ({ title: `Parallel ${i}`, description: 'One of many listings created at once.', category: 'test', pricing_model: 'fixed', price: 10 })
-    const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(i) })))
-    expect(rs.map((r) => r.status)).toEqual(Array(10).fill(201))
+    // nine at once, then the burst is the tenth: an unproven seller holds at most 10 active listings (ADR-35)
+    const rs = await Promise.all(Array.from({ length: 9 }, (_, i) => call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(i) })))
+    expect(rs.map((r) => r.status)).toEqual(Array(9).fill(201))
     const burst = await Promise.all([1, 2, 3].map(() => call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(99), headers: { 'idempotency-key': 'concurrent' } })))
     const statuses = burst.map((r) => r.status).sort()
     expect(statuses.filter((s) => s === 201)).toHaveLength(1)
@@ -134,7 +135,7 @@ describe('review regressions', () => {
     const again = await call(app, 'POST', '/v1/listings', { key: a.api_keys.test, body: body(99), headers: { 'idempotency-key': 'concurrent' } })
     expect(again.status).toBe(201)
     expect(again.headers.get('idempotent-replayed')).toBe('true')
-    expect((await call(app, 'GET', '/v1/agents/me/listings', { key: a.api_keys.test })).body.data).toHaveLength(11)
+    expect((await call(app, 'GET', '/v1/agents/me/listings', { key: a.api_keys.test })).body.data).toHaveLength(10)
   })
 
   it('F6: accept_quote racing sweep expiry ends in exactly one consistent state', async () => {

@@ -17,8 +17,9 @@
  *   OPERATOR_TOTAL_BUDGET_USDC default 50 (lifetime), OPERATOR_DAILY_CAP_USDC default 20, OPERATOR_MAX_TRANSFER_USDC default 15
  *   FAUCET_SECRET              enables POST /faucet for the platform API (sandbox faucet, ADR-30): testnet USDC from the operator wallet, gas-free via the x402 facilitator
  *   FAUCET_MAX_USDC            per request, default 1; FAUCET_DAILY_CAP_USDC default 50
- *   FIRSTBUY_ENABLED           default true: the desk hires every new outside listing once (ADR-31), paid gas-free, graded and reviewed
+ *   FIRSTBUY_ENABLED           default true: the desk hires new outside listings once (ADR-31), paid gas-free, graded and reviewed
  *   FIRSTBUY_MAX_USDC_LIVE/TEST  highest listing price bought (default 1 / 0.1); FIRSTBUY_DAILY_USDC_LIVE/TEST programme cap per day (default 5 / 1); FIRSTBUY_PER_SELLER default 2
+ *   FIRSTBUY_SCREEN            default true: the judge screens each listing first (ADR-35: only work a buyer could not do alone, each function once); false buys unscreened
  */
 import { serve } from '@hono/node-server'
 import { AgentSouk } from 'agentsouk'
@@ -66,7 +67,7 @@ for (const env of ['live', 'test'] as Env[]) {
   if (wallet && operatorKey && process.env.FIRSTBUY_ENABLED !== 'false') {
     const E = env.toUpperCase()
     const perSeller = Number.parseInt(process.env.FIRSTBUY_PER_SELLER ?? '', 10)
-    const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number.isInteger(perSeller) && perSeller >= 0 ? perSeller : DEFAULT_FIRSTBUY[env].perSeller }
+    const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number.isInteger(perSeller) && perSeller >= 0 ? perSeller : DEFAULT_FIRSTBUY[env].perSeller, screen: process.env.FIRSTBUY_SCREEN !== 'false' }
     if (cfg.maxPrice <= 0n || cfg.dailyCap <= 0n) cfg.enabled = false
     op.firstBuyer = new FirstBuyer(op.client, wallet, typedDataSigner(operatorKey, CHAINS[env]), judge, env, log, cfg, () => op.me, { canSpend: (a) => op.canSpend(a), recordSpend: (e) => op.recordSpend(e) })
   }

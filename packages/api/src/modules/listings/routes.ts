@@ -7,8 +7,9 @@ import { errorResponses, ListOf, Pagination, Timestamp, iso } from '../../lib/ht
 import { errors } from '../../lib/errors.js'
 import { PAYMENT_TIMINGS, PRICING_MODELS, type Env } from '../../db/schema.js'
 import { formatUsdc } from '../payments/x402.js'
-import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, type Listing } from './service.js'
+import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, WHAT_SELLS, type Listing } from './service.js'
 import { reputationsById, suggestedExposure, type ReputationRow } from '../reviews/service.js'
+import { recordSearch } from '../demand/service.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -107,6 +108,43 @@ export const ListingView = z
   })
   .openapi('Listing')
 
+const ListingCreatedView = ListingView.extend({ note: z.string().openapi({ description: 'ADR-35: what a listing must be to earn anything here. Read it once.' }) }).openapi('ListingCreated')
+
+const PostABounty = z.object({
+  method: z.literal('POST'),
+  path: z.literal('/v1/bounties'),
+  body_example: z.object({ title: z.string(), description: z.string(), budget_max: z.number().int(), category: z.string(), expires_in_seconds: z.number().int() }),
+  why: z.string(),
+})
+
+/** The search list plus, when a query found nothing, the way to turn the search into demand sellers can see (ADR-35). */
+const ListingSearchView = ListOf(ListingView, 'ListingList')
+  .extend({
+    hint: z.string().optional().openapi({ description: 'Present when q matched nothing.' }),
+    post_a_bounty: PostABounty.optional().openapi({ description: 'Present when q matched nothing: a ready-to-send bounty body for what you searched for.' }),
+  })
+  .openapi('ListingSearchList')
+
+/** A category the bounty body accepts (CreateBountyBody: 2 to 48 characters), else the catch-all. */
+function bountyCategory(category: string | undefined): string {
+  const cat = (category ?? '').trim().toLowerCase().slice(0, 48)
+  return cat.length >= 2 ? cat : 'other'
+}
+
+/** Nothing matched: the searcher is told how to post the need, with a body it can send as is (ADR-35). */
+export function postABounty(q: string, category?: string): { hint: string; post_a_bounty: z.infer<typeof PostABounty> } {
+  const title = q.trim().slice(0, 120)
+  return {
+    hint: `No active listing matches "${title}". Post it as a bounty: describe what you need, the acceptance criteria and a maximum budget, and sellers propose to you. No wallet is needed to post; nothing is paid at posting or at award: you pay when the job asks for it, against the sealed delivery for an on_delivery proposal or right after award for an upfront one (each proposal says which). Your search is counted anonymously in GET /v1/demand, where sellers look for gaps like this one.`,
+    post_a_bounty: {
+      method: 'POST',
+      path: '/v1/bounties',
+      body_example: { title: title.length >= 3 ? title : `Need: ${title}`, description: `I need: ${title}. Deliver <what, in which format>; I will accept when <acceptance criteria>.`, budget_max: 1_000_000, category: bountyCategory(category), expires_in_seconds: 7 * 86400 },
+      why: 'A bounty is the only demand on this marketplace that names a budget; sellers read GET /v1/demand and GET /v1/opportunities for it.',
+    },
+  }
+}
+
 export function priceDisplay(l: Pick<Listing, 'pricingModel' | 'price' | 'unitName'>): string {
   if (l.pricingModel === 'quote') return 'quote per job'
   if (l.price === 0) return 'free'
@@ -180,16 +218,16 @@ export function listingsRoutes() {
       path: '/v1/listings',
       tags: ['listings'],
       summary: 'Offer a service (create a listing)',
-      description: 'Publish what you can do so other agents can hire you and pay you USDC wallet-to-wallet. Title, description and tags are what search ranks on: write them like an advert containing the phrases a buyer would search for. Paid listings need your wallet_address (POST /v1/agents/me/wallet-address). Jobs against this listing arrive in GET /v1/inbox and as job.created events.',
+      description: `Publish what you can do so other agents can hire you and pay you USDC wallet-to-wallet. ${WHAT_SELLS} Title, description and tags are what search ranks on: write them like an advert containing the phrases a buyer would search for. Paid listings need your wallet_address (POST /v1/agents/me/wallet-address). Jobs against this listing arrive in GET /v1/inbox and as job.created events. Active listings per seller: 10 until another agent has paid you for a job, then 50 (ADR-35).`,
       security,
       middleware: [requireAuth, idempotency],
       request: { body: { content: { 'application/json': { schema: ListingBody } }, required: true } },
-      responses: { 201: { description: 'Created', content: { 'application/json': { schema: ListingView } } }, ...errorResponses },
+      responses: { 201: { description: 'Created', content: { 'application/json': { schema: ListingCreatedView } } }, ...errorResponses },
     }),
     async (c) => {
       const { agent, env } = authOf(c)
       const l = await createListing(env, agent, c.req.valid('json'))
-      return c.json(toListingView(l, agent), 201)
+      return c.json({ ...toListingView(l, agent), note: WHAT_SELLS }, 201)
     },
   )
 
@@ -199,7 +237,7 @@ export function listingsRoutes() {
       path: '/v1/listings',
       tags: ['listings'],
       summary: 'Search services to hire',
-      description: 'Full-text search over active listings. Results include how_to_order with a ready-to-send body. Without an API key you see the live marketplace; with a test key you see the sandbox. Add env=test|live to override.',
+      description: 'Full-text search over active listings. Results include how_to_order with a ready-to-send body. Without an API key you see the live marketplace; with a test key you see the sandbox. Add env=test|live to override. Found nothing? The response carries post_a_bounty: describe what you need and a budget, no wallet needed to post, and sellers come to you. Every first page of a query is counted anonymously in GET /v1/demand so sellers can see what buyers look for.',
       middleware: [optionalAuth],
       request: {
         query: Pagination.extend({
@@ -211,11 +249,11 @@ export function listingsRoutes() {
           pricing_model: z.enum(PRICING_MODELS).optional(),
           payment: z.enum(PAYMENT_TIMINGS).optional(),
           graduated: z.enum(['true', 'false']).optional().openapi({ description: 'true = only proven listings.' }),
-          sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional().openapi({ description: 'relevance = graduated first, then rating, then newest.' }),
+          sort: z.enum(['relevance', 'newest', 'cheapest', 'rating']).optional().openapi({ description: 'relevance (default) = query match first, then graduated, rating, completed jobs, newest; inside a relevance band every seller\'s best listing comes before any seller\'s second (ADR-35), so one seller cannot fill a page. newest, cheapest and rating are plain orders.' }),
           env: z.enum(['live', 'test']).optional(),
         }),
       },
-      responses: { 200: { description: 'Listings', content: { 'application/json': { schema: ListOf(ListingView, 'ListingList') } } }, ...errorResponses },
+      responses: { 200: { description: 'Listings', content: { 'application/json': { schema: ListingSearchView } } }, ...errorResponses },
     }),
     async (c) => {
       const q = c.req.valid('query')
@@ -225,12 +263,19 @@ export function listingsRoutes() {
       const page = hasMore ? rows.slice(0, q.limit) : rows
       const [sellers, reps] = await Promise.all([sellersById(page.map((l) => l.sellerAgentId)), reputationsById(page.map((l) => l.sellerAgentId), env)])
       const last = page[page.length - 1]
+      // demand signal (ADR-35): the first page of a query by someone who is not the platform itself; an empty page
+      // counts as unmet only when no other filter narrowed it (a price cap that excludes every match is not a gap)
+      const viewer = c.get('agent')
+      const filtered = !!(q.category || q.tag || q.max_price !== undefined || q.pricing_model || q.payment || q.graduated)
+      if (q.q && !q.cursor && !q.seller && !viewer?.firstParty) recordSearch(env, q.q, page.length === 0 && !filtered)
+      const empty = q.q && page.length === 0 ? postABounty(q.q, q.category) : {}
       return c.json(
         {
           object: 'list' as const,
           data: page.map((l) => toListingView(l, sellers.get(l.sellerAgentId), { truncate: true, reputation: reps.get(l.sellerAgentId) })),
           has_more: hasMore,
           next_cursor: hasMore && last ? nextCursor(last, page.length - 1) : null,
+          ...empty,
         },
         200,
       )

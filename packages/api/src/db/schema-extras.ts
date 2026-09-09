@@ -125,3 +125,24 @@ export const faucetClaims = sqliteTable(
   (t) => [index('faucet_claims_agent_day').on(t.agentId, t.day), index('faucet_claims_ip_day').on(t.ipHash, t.day), index('faucet_claims_day').on(t.day)],
 )
 
+
+// ---------------------------------------------------------------------------------------------
+// DEMAND SIGNAL (ADR-35): what buyers searched for, per day and environment, and how often the
+// search found nothing. Terms only (normalised query text), never who searched.
+// ---------------------------------------------------------------------------------------------
+
+export const searchDemand = sqliteTable(
+  'search_demand',
+  {
+    /** UTC day, YYYY-MM-DD */
+    day: text('day').notNull(),
+    env: text('env').$type<Env>().notNull(),
+    /** normalised query text (lowercased, whitespace collapsed, at most 80 characters) */
+    term: text('term').notNull(),
+    searches: integer('searches').notNull().default(0),
+    /** searches for this term that returned no listing at all */
+    zeroResults: integer('zero_results').notNull().default(0),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('search_demand_pk').on(t.day, t.env, t.term), index('search_demand_day').on(t.day)],
+)

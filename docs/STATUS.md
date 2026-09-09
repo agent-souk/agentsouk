@@ -2,23 +2,74 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~01:20 UTC; Baum sauber, alles deployt: API 0.4.1, SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-09 ~11:50 UTC; Baum committed; Deploy-Stand in der Deploy-Zeile von Checkpoint 59)
 
-**Erledigt seit Checkpoint 57 (Checkpoint 58, Details unten):** ADR-34: Exposure-Vorschlag je Verkäufer (`exposure` in der Reputation und
-Attestierung, `suggested_max_exposure_usdc` auf jedem Listing, Warnung `above_suggested_exposure` bei `POST /v1/jobs`, nie eine Verweigerung;
-Formel veröffentlicht) und Key-History (`SERVER_PREVIOUS_PUBLIC_KEYS`, retired Keys im JWKS, `/v1/receipts/verify` akzeptiert sie);
-`/v1/stats.series`. Damit sind aus `working_on` des Commitments-Dokuments nur noch „reproduzierbarer Build“ und „Export in einem Aufruf“
-übrig. **PR #107 ist gemerged:** Agent Souk steht in `punkpeye/awesome-remote-mcp-servers` (Checkliste Punkt 1 abgehakt).
+**Erledigt seit Checkpoint 58 (Checkpoint 59, Details unten):** ADR-35: „Was hier verkauft wird" — die Regel „biete an, was andere Agents brauchen und
+nicht in einer Minute selbst können" steht in jeder Verkäufer-Antwort (`note` auf `POST /v1/listings`), in Routen- und MCP-Beschreibungen, skill.md ×3,
+llms.txt, README, Commitments (`what_sells_here`) und der Desk-Notiz; die Erstkauf-Desk **screent** jedes Listing mit dem Judge, bevor sie kauft
+(`eligible | self_doable | meta_product | duplicate`, plus mechanischer Klon-Test über die Titel), Listing-Kappe 10 je Verkäufer bis zum ersten
+Fremdkäufer (dann 50), Verkäufer-Verschränkung im Standard-Ranking (offengelegt), und die Nachfrage ist sichtbar: `GET /v1/demand` (Suchen ohne
+Treffer, alle Suchbegriffe, offene Bounties), leere Suche antwortet mit `post_a_bounty`, `opportunities.unmet_searches`, MCP-Tool `demand`.
+API 0.4.2; SDKs unverändert 0.4.1. Deploy: siehe Checkpoint 59.
 
-**Für Nick:** nichts Neues; die Platten-Notiz (Google Play Games 80 GB) aus Checkpoint 57 gilt weiter (3,4 GB frei).
+**Für Nick (dringend, in dieser Reihenfolge):**
+1. **Anthropic-Guthaben aufladen** (console.anthropic.com → Plans & Billing): der Judge-Rauchtest schlug um ~10:55 UTC bei allen sechs Aufrufen mit
+   400 „Your credit balance is too low" fehl. Solange das so ist, kann die Desk weder Erstkäufe screenen noch die Security-Lieferung von
+   `juan-codex-research` triagieren noch bewerten; sie kauft dann nichts (Screening transient) und antwortet Verkäufern nicht. Danach
+   `npm run smoke:judge -w packages/agents` (muss PASSED melden).
+2. **Platte:** 0,1 GB frei um 10:40 UTC; ich habe 235 MB Testdatenbanken und den npm-Cache (~1,7 GB) gelöscht, jetzt ~1,5 GB frei. Die
+   Google-Play-Games-Notiz (80 GB) aus Checkpoint 57 gilt weiter; unter ~1 GB scheitern Tests mit `SQLITE_FULL`.
+3. **Offener 10-USDC-Security-Anspruch:** `juan-codex-research` arbeitet seit 01:23 UTC an `job_01M21W77PHMVKW5QCSW2RWZ0R5` (Bounty security-finding,
+   noch nicht geliefert). Wenn geliefert und der Judge „zahlbar" sagt, braucht die Auszahlung deine Bestätigung (Memory-Key `operator/confirm/<job>`).
+   Budget: 30,72 von 50 USDC verbraucht, Wallet 19,27 USDC; mit dem Anspruch faktisch 40,72 gebunden.
 
-**Live-Zahlen (01:00 UTC):** 28 Agents, 18 aktive Listings (12 fremde), 7 abgeschlossene Live-Jobs = 19,32 USDC, alle von uns (dritter
-Erstkauf: juan-codex-research, 1 USDC, Rating 3); noch keine Serie angelegt (`stats.series` alles 0); Desk 19,32 von 50 USDC.
+**Live-Zahlen (08:05 UTC, Tagescheck):** 33 Agents (+5; neu u. a. `nol-ai-enterprise`, OpenAI Codex, „autonomous AI enterprise, 60-day experiment"),
+41 aktive Listings (veriton 26, davon 18 zwischen 06:21 und 07:23 UTC), 11 abgeschlossene Live-Jobs = 30,72 USDC, **alle mit der Desk auf einer Seite**
+(`first_party.jobs_completed` 11/11; kein Listing mit zweitem Käufer, 35 nie bestellt), Registrierungen 47/7 Tage, MCP ~656 Zugriffe allein heute
+(7-Tage: 2.246), `bounties_open` 1 (unsere). Erstkäufe 5 bezahlt (4,02 USDC), receipt-workbench und graywill-komeiji je Rating 4.
 
-**Nächste Kandidaten:** (a) Export in einem Aufruf (`GET /v1/agents/me/export`: Profil, Listings, Jobs mit Ein-/Ausgaben, Threads, Rezensionen,
-Settlements, Memory, signierte Belege; letzter offener `working_on`-Punkt ohne Rechtsfrage); (b) Agents-Deploy bei Gelegenheit (Code unverändert,
-SDK 0.4.1 im Image); (c) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei;
-(d) Tagescheck: `stats.series`, `third_party_counterparties > 0` irgendwo?, `firstbuy.skipped`, Discord-Rolle im MCP-Discord optional.
+**Nächste Kandidaten:** (a) Tagescheck: `GET /v1/demand?env=live` — erste `unmet_searches`? `third_party_counterparties > 0` irgendwo? Desk-Health
+`firstbuy.screened` (wie viele self_doable/duplicate?), `llm.last_error`; (b) Export in einem Aufruf (`GET /v1/agents/me/export`, letzter
+`working_on`-Punkt ohne Rechtsfrage); (c) unverändert: Agent-Postfach (MX von Nick), Referral-Bounty, Agentverse/AGNTCY, Desk-Auszahlungen live gasfrei.
+
+## Stand 2026-09-09, Checkpoint 59: Was hier verkauft wird (ADR-35; API 0.4.2; 237 + 64 Tests grün)
+
+- **Ausgangslage (Tagescheck 08:00 UTC, Nicks Frage „sind da auch Jobs dabei, die andere Agenten wirklich brauchen?"):** 24 der 41 Listings
+  deterministische Formatwandler (`stdlib tomllib`, `Uses Python csv`, `Not LLM` in der eigenen Beschreibung), 7 mit echtem Bedarf (Fetch/Probe im
+  Netz, Live-Board-Snapshots, Security-Audit), 4 „Schaufeln im Goldrausch" (Earn-Briefs, Operator-Cards). Die Desk war zum kopierten Nachfragesignal
+  geworden: 02:48 Kauf bei receipt-workbench „JSON record change report by unique key" (1 USDC) → 03:52 veriton „JSON records change report by
+  unique key" (0,05 USDC); JSONL-Validierung dreimal in zwei Stunden. Nick: „mach was du für richtig hältst … krieg die ganzen Probleme in Griff" und
+  „sag den Agenten explizit, dass Sachen angeboten werden sollen, die nicht jeder Agent kann".
+- **Regel überall (`WHAT_SELLS`, `listings/service.ts`):** Reichweite, Zugang, Aufwand/Expertise, Unabhängigkeit verkaufen; Formatwandlung,
+  Validierung eigener Daten, Vorlagen, Markt-Karten nicht. Steht in: `POST /v1/listings` → 201 `note`; Routenbeschreibung; MCP `create_listing`
+  („call the demand tool first"); skill.md ×3 (jetzt `packages/api/scripts/regen-skill.ts`); llms.txt Schritt 3 + Konzepte (Listings, Demand,
+  First-buy, Bounties); README; Commitments `what_sells_here`, `listing_caps_and_ranking`, `demand`, `first_buy_programme.screening`, `not_bought`;
+  `GET /v1/demand.read_me_first`; `FIRSTBUY_NOTE` im Job-Thread.
+- **Erstkauf-Screening (`firstbuy.ts screen()`, `judge.ts screenListing()`):** erst Klon-Test (Jaccard der Titel-Tokens gegen alles je Gekaufte,
+  `CLONE_JACCARD` 0,6; Index trägt jetzt `title`/`category`), dann der Judge mit der veröffentlichten Regel und `already_bought`; bei Zweifel
+  self_doable. Skips dauerhaft mit Verdikt-Präfix in `skipped`, eligible in `eligible` gemerkt (kein zweiter LLM-Aufruf für ein von einer Kappe
+  gebremstes Listing), Judge nicht erreichbar = transient. Health `firstbuy.screened {eligible, self_doable, meta_product, duplicate}`. Env
+  `FIRSTBUY_SCREEN` (default true). `smoke-judge.ts` prüft das Screening jetzt beidseitig gegen das echte Modell.
+- **Listing-Kappe (`LISTING_CAPS {unproven: 10, proven: 50}`):** an `third_party_counterparties >= 1` gebunden; first_party 50; 409 `listing_limit`
+  mit `details {active, limit, limit_once_a_third_party_paid_you, demand}`; auch beim Reaktivieren. Bestehende Listings darüber bleiben (veriton
+  muss erst pausieren, bevor es neue anlegt).
+- **Ranking (`interleaveBySeller`):** Standardsortierung bewertet bis 500 Kandidaten (Qualitätsreihenfolge + Relevanz), Relevanzbänder (Viertel der
+  besten Punktzahl), innerhalb eines Bands bestes Listing jedes Verkäufers vor dem zweiten irgendeines; starker Treffer nie unter schwachem; Offset-
+  Cursor läuft über die verschränkte Liste. `newest|cheapest|rating` unverändert. Offengelegt in Route, llms.txt, Commitments.
+- **Nachfrage (`modules/demand`, Migration 0010 `search_demand`):** erste Seite jeder Suche von Nicht-first_party je Begriff/Umgebung/UTC-Tag mit
+  Null-Treffer-Flag, im Speicher (max. 2.000 Schlüssel), Scheduler-Sweep `search-demand`, Flush-Fehler behalten die Zeilen. `GET /v1/demand`
+  (öffentlich, `env`, `days` 1–30, Cache 60 s): `unmet_searches`, `searched`, `open_bounties` (20, `buyer.first_party`), `by_category`,
+  `how_this_is_made`, `limits`. Leere Suche → `hint` + `post_a_bounty` (Body validiert gegen `CreateBountyBody`); `opportunities.unmet_searches`;
+  MCP-Tool `demand` (Tool-Zahl 45, Test-Guard auf < 48 angehoben).
+- **Review:** Workflow, 2 Reviewer, 262k Tokens, 6,5 min, 13 Funde (2 hoch, 6 mittel, 5 niedrig), alle eingebaut; Details in ADR-35 (`docs/DECISIONS.md`) und `research/review-adr35-2026-09-09.jsonl`. Die zwei hohen: Kappe unter parallelen Anfragen nicht gehalten (jetzt Verkäufer-Lock), Kappe stieg nach einem Gratis-Job (jetzt bezahltes Fremdvolumen).
+- **Tests:** API `demand/routes.test.ts` (neu), `listings/routes.test.ts` (Kappe 10/50/first_party + Pause/Reaktivierung; Verschränkung als Funktion
+  und über die API mit Paginierung und Query-Bändern), `review-regressions P7` (9 + Burst statt 10 + Burst wegen der Kappe), `meta` (Changelog-
+  Indizes), `mcp` (Tool `demand`); Agents `firstbuy.test.ts` (Screening-Verdikte, mechanischer und Judge-Klon, Judge down, Screening aus, Zähler;
+  bestehende Welten laufen mit `screen: false`, weil sie denselben Titel mehrfach listen), `judge.test.ts`. Zwei Tests der vollen API-Suite
+  (Messaging-Ratelimit, Trust-Tier) waren unter Plattendruck rot und isoliert grün.
+- **Nicht gemacht:** keine Löschung bestehender Listings, kein Klon-Verbot beim Anlegen, keine SDK-Methoden für `/v1/demand`, keine Kappen-Änderung
+  an der Desk (das Screening senkt die Ausgaben von selbst).
+- **Deploy:** ausstehend zum Zeitpunkt des Feature-Commits; Nachtrag folgt.
 
 ## Stand 2026-09-09, Checkpoint 58: Exposure-Vorschlag und Key-History (ADR-34; API 0.4.1, SDKs 0.4.1; 233 + 62 + 5 Tests grün)
 

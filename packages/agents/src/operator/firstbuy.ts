@@ -15,10 +15,18 @@
  * second signature, and a human stop after repeated failures. State lives in the platform memory KV and is re-read
  * every tick, so a restart or a human edit of the key is honoured. First-buys never open a dispute (a panel for a
  * few cents is not worth anyone's time): a bad delivery gets rating 1 or 2 and the reasons in the public review.
+ *
+ * Screening (ADR-35): day four showed what "buys every new listing" teaches a market: sellers listed whatever was
+ * cheapest to build (26 format converters from one seller in a day) and copied whatever the desk had just bought
+ * (the same JSON diff listed by a second seller 64 minutes after the first purchase). Since then the desk buys only
+ * work a buyer could not do alone, and each function once: a mechanical title check against what was paid for or
+ * is still open (a purchase that ended unpaid proves nothing and blocks nobody), then the judge with the published
+ * rule (reach, access, effort or expertise, independence; never format conversion, validation, templates, market
+ * maps or clones). Skips are remembered with their reason and counted in the health.
  */
 import type { AgentSouk, Job, Listing, TypedDataSigner } from 'agentsouk'
 import { validateDocuments } from '../services/validate-json.js'
-import type { Judge, Verdict } from './judge.js'
+import type { Judge, ScreenVerdict, Verdict } from './judge.js'
 import type { Env, Logger } from './runtime.js'
 import { formatUsdc, sameAddress, type UsdcWallet } from './usdc.js'
 
@@ -38,11 +46,13 @@ export type FirstBuyConfig = {
   lookbackDays: number
   /** wait this long after a purchase from a seller before the next one */
   sellerCooldownMs: number
+  /** ADR-35: ask the judge whether a buyer could do the work alone before ordering (and skip clones of bought functions) */
+  screen: boolean
 }
 
 export const DEFAULT_FIRSTBUY: Record<Env, FirstBuyConfig> = {
-  live: { enabled: true, maxPrice: 1_000_000n, dailyCap: 5_000_000n, perSeller: 2, newSellersPerDay: 5, maxOpen: 3, lookbackDays: 30, sellerCooldownMs: 24 * 3600_000 },
-  test: { enabled: true, maxPrice: 100_000n, dailyCap: 1_000_000n, perSeller: 2, newSellersPerDay: 10, maxOpen: 3, lookbackDays: 30, sellerCooldownMs: 6 * 3600_000 },
+  live: { enabled: true, maxPrice: 1_000_000n, dailyCap: 5_000_000n, perSeller: 2, newSellersPerDay: 5, maxOpen: 3, lookbackDays: 30, sellerCooldownMs: 24 * 3600_000, screen: true },
+  test: { enabled: true, maxPrice: 100_000n, dailyCap: 1_000_000n, perSeller: 2, newSellersPerDay: 10, maxOpen: 3, lookbackDays: 30, sellerCooldownMs: 6 * 3600_000, screen: true },
 }
 
 export type CompactVerdict = { decision: Verdict['decision']; rating: Verdict['rating']; message: string; output_hash: string | null; at: string; acted: boolean }
@@ -72,14 +82,16 @@ export type Purchase = {
   needs_operator: string | null
 }
 
-/** Never-trimmed-by-count record of what was bought: the source for "already bought" and the per-seller / per-wallet limits. */
-export type IndexEntry = { seller_id: string; wallet: string | null; at: string; price: number; outcome: string | null }
+/** Record of what was bought (never count-trimmed while younger than the lookback): the source for "already bought", the per-seller / per-wallet limits and the clone check (title, category). */
+export type IndexEntry = { seller_id: string; wallet: string | null; at: string; price: number; outcome: string | null; title?: string; category?: string }
 
 export type FirstBuyState = {
   purchases: Purchase[]
   index: Record<string, IndexEntry>
-  /** listings the programme will not buy, with the reason (newest 300 kept) */
+  /** listings the programme will not buy, with the reason (newest 300 kept); ADR-35 screening reasons start with the verdict (`self_doable: ...`) */
   skipped: Record<string, string>
+  /** ADR-35: listings the judge passed (id -> when), so a listing held back by a cap is not screened again (newest 300 kept) */
+  eligible?: Record<string, string>
   last_error: string | null
 }
 
@@ -93,7 +105,7 @@ export type FirstBuyDeps = {
   now?: () => number
 }
 
-const FIRSTBUY_NOTE = 'Hello from the platform desk. Agent Souk buys new outside listings once at their advertised price, within published caps (first-buy programme, ADR-31; GET /v1/commitments): this is a real job, paid gas-free on delivery, then graded by an automated judge against your own listing text and reviewed publicly with that label. Deliver what the listing promises for the input above; nothing else is expected. A purchase by us shows you can deliver; it is not evidence that anyone else wants to buy.'
+const FIRSTBUY_NOTE = 'Hello from the platform desk. Agent Souk buys new outside listings once at their advertised price, within published caps and only for work a buyer could not do alone (first-buy programme, ADR-31 and ADR-35; GET /v1/commitments): this is a real job, paid gas-free on delivery, then graded by an automated judge against your own listing text and reviewed publicly with that label. Deliver what the listing promises for the input above; nothing else is expected. A purchase by us shows you can deliver; it is not evidence that anyone else wants to buy. What earns here is what other agents need and cannot do themselves in a minute: GET /v1/demand shows what they searched for and did not find.'
 
 const statusOf = (e: unknown): number | null => (typeof e === 'object' && e != null && typeof (e as { status?: unknown }).status === 'number' ? (e as { status: number }).status : null)
 const errorCode = (e: unknown): string | null => (typeof e === 'object' && e != null && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : null)
@@ -104,9 +116,12 @@ const DONE_KEPT = 40
 const SKIPPED_KEPT = 300
 const INDEX_KEPT = 400
 /** the platform stores at most 64 KB per memory value; stay well below */
-const MAX_BYTES = 56_000
+export const MAX_BYTES = 56_000
 
-const emptyState = (): FirstBuyState => ({ purchases: [], index: {}, skipped: {}, last_error: null })
+const emptyState = (): FirstBuyState => ({ purchases: [], index: {}, skipped: {}, eligible: {}, last_error: null })
+const ELIGIBLE_KEPT = 300
+/** ADR-35 mechanical clone check: token overlap of two titles at or above this is the same function, no model needed. */
+export const CLONE_JACCARD = 0.6
 
 /** `<name>` / `<name: description>`: what the platform fills required fields with when the seller gave no example. */
 export const isPlaceholderString = (v: unknown): boolean => typeof v === 'string' && /^<[^<>]{1,160}>$/.test(v.trim())
@@ -121,6 +136,48 @@ export function hasPlaceholder(v: unknown, depth = 0): boolean {
 /** A usable JSON Schema object (non-empty plain object). */
 const isSchemaObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length > 0
 
+const TITLE_STOP = new Set(['a', 'an', 'and', 'the', 'to', 'for', 'of', 'in', 'on', 'with', 'by', 'or', 'as', 'agent', 'agents', 'service', 'v1', 'v2'])
+/** Title words for the clone check: lowercased, plural-stripped, stop words and symbols dropped. */
+export function titleTokens(title: string): Set<string> {
+  const out = new Set<string>()
+  for (const w of title.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    const t = w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w
+    if (t.length >= 2 && !TITLE_STOP.has(t)) out.add(t)
+  }
+  return out
+}
+
+const jaccard = (a: Set<string>, b: Set<string>): number => {
+  if (!a.size || !b.size) return 0
+  let both = 0
+  for (const t of a) if (b.has(t)) both++
+  return both / (a.size + b.size - both)
+}
+
+/** Jaccard overlap of two titles' tokens (0..1). */
+export function titleOverlap(a: string, b: string): number {
+  return jaccard(titleTokens(a), titleTokens(b))
+}
+
+/** Adjacent token pairs in title order: "EN → DE translation" and "DE → EN translation" share every token but no pair. */
+const bigrams = (title: string): Set<string> => {
+  const t = [...titleTokens(title)]
+  return new Set(t.slice(1).map((w, i) => `${t[i]} ${w}`))
+}
+
+/**
+ * The mechanical clone test (ADR-35): the same function under a re-worded title, decided without the model. Needs
+ * the same words (Jaccard >= CLONE_JACCARD) AND mostly the same word order (bigram Jaccard >= 0.5, or identical
+ * token sequences), so a service that differs only in direction ("EN to DE" / "DE to EN") goes to the judge instead.
+ */
+export function isCloneTitle(a: string, b: string): boolean {
+  const ta = [...titleTokens(a)]
+  const tb = [...titleTokens(b)]
+  if (!ta.length || !tb.length) return false
+  if (ta.join(' ') === tb.join(' ')) return true
+  return titleOverlap(a, b) >= CLONE_JACCARD && jaccard(bigrams(a), bigrams(b)) >= 0.5
+}
+
 const compactVerdict = (v: Verdict, outputHash: string | null, at: string, acted: boolean): CompactVerdict => ({ decision: v.decision, rating: v.rating, message: String(v.message ?? '').slice(0, 300), output_hash: outputHash, at, acted })
 
 /**
@@ -129,29 +186,45 @@ const compactVerdict = (v: Verdict, outputHash: string | null, at: string, acted
  * while it saves keeps working on the live record.
  */
 export function compactState(st: FirstBuyState, lookbackDays: number, now: number, limit = MAX_BYTES): FirstBuyState {
-  const keepNewest = (rec: Record<string, unknown>, n: number) => Object.fromEntries(Object.entries(rec).slice(-n))
+  const lastN = <T>(arr: T[], n: number): T[] => (n > 0 ? arr.slice(-n) : []) // slice(-0) would be the whole array
+  const keepNewest = (rec: Record<string, unknown>, n: number) => Object.fromEntries(lastN(Object.entries(rec), n))
   const horizon = now - 2 * lookbackDays * 86_400_000
   for (const p of st.purchases) {
     p.title = p.title.slice(0, 80)
     if (p.needs_operator) p.needs_operator = p.needs_operator.slice(0, 300)
     if (p.verdict) p.verdict.message = p.verdict.message.slice(0, 300)
   }
+  for (const e of Object.values(st.index)) if (e.title) e.title = e.title.slice(0, 80)
+  // index entries younger than the lookback are what the caps and the clone check rely on: they are never trimmed
+  // by count while anything else can still shrink; only the older half of the horizon is count-limited
+  const youngSince = now - lookbackDays * 86_400_000
+  const inHorizon = Object.entries(st.index).filter(([, e]) => Date.parse(e.at) >= horizon)
+  const older = inHorizon.filter(([, e]) => Date.parse(e.at) < youngSince)
+  const young = inHorizon.filter(([, e]) => Date.parse(e.at) >= youngSince)
   let doneKept = DONE_KEPT
   let skippedKept = SKIPPED_KEPT
   let indexKept = INDEX_KEPT
+  let youngKept = young.length
   for (;;) {
     const open = st.purchases.filter((p) => !p.outcome)
-    const done = st.purchases.filter((p) => p.outcome).slice(-doneKept)
+    const done = lastN(st.purchases.filter((p) => p.outcome), doneKept)
     const out: FirstBuyState = {
       purchases: [...done, ...open],
-      index: keepNewest(Object.fromEntries(Object.entries(st.index).filter(([, e]) => Date.parse(e.at) >= horizon)), indexKept) as Record<string, IndexEntry>,
-      skipped: keepNewest(Object.fromEntries(Object.entries(st.skipped).map(([k, v]) => [k, String(v).slice(0, 120)])), skippedKept) as Record<string, string>,
+      index: Object.fromEntries([...lastN(older, indexKept), ...lastN(young, youngKept)]) as Record<string, IndexEntry>,
+      skipped: keepNewest(Object.fromEntries(Object.entries(st.skipped).map(([k, v]) => [k, String(v).slice(0, 160)])), skippedKept) as Record<string, string>,
+      eligible: keepNewest(st.eligible ?? {}, Math.min(ELIGIBLE_KEPT, skippedKept)) as Record<string, string>,
       last_error: st.last_error ? st.last_error.slice(0, 300) : null,
     }
-    if (JSON.stringify(out).length <= limit || (doneKept === 0 && skippedKept <= 20 && indexKept <= 50)) return out
-    doneKept = Math.max(0, Math.floor(doneKept / 2))
-    skippedKept = Math.max(20, Math.floor(skippedKept / 2))
-    indexKept = Math.max(50, Math.floor(indexKept / 2))
+    if (JSON.stringify(out).length <= limit) return out
+    if (doneKept > 0 || skippedKept > 20 || indexKept > 0) {
+      doneKept = Math.floor(doneKept / 2)
+      skippedKept = Math.max(20, Math.floor(skippedKept / 2))
+      indexKept = Math.floor(indexKept / 2)
+      continue
+    }
+    // last resort: even the recent entries do not fit; the oldest of them go (the caller logs it)
+    if (youngKept === 0) return out
+    youngKept = youngKept - Math.max(1, Math.ceil(youngKept / 10))
   }
 }
 
@@ -163,7 +236,7 @@ export class FirstBuyer {
     readonly client: AgentSouk,
     readonly wallet: UsdcWallet,
     readonly signer: TypedDataSigner,
-    readonly judge: Pick<Judge, 'evaluateListingDelivery' | 'inputForListing'>,
+    readonly judge: Pick<Judge, 'evaluateListingDelivery' | 'inputForListing' | 'screenListing'>,
     readonly env: Env,
     readonly log: Logger,
     readonly config: FirstBuyConfig,
@@ -230,8 +303,19 @@ export class FirstBuyer {
         .slice(-5)
         .map((p) => ({ seller: p.seller, title: p.title, price: p.price, outcome: p.outcome, rating: p.rating, job_id: p.job_id })),
       skipped: Object.keys(st.skipped).length,
+      screened: this.screenedCounts(st),
       last_error: st.last_error,
     }
+  }
+
+  /** ADR-35: how the screening decided so far (skips by verdict, plus listings the judge passed). */
+  private screenedCounts(st: FirstBuyState): Record<ScreenVerdict, number> {
+    const out: Record<ScreenVerdict, number> = { eligible: Object.keys(st.eligible ?? {}).length, self_doable: 0, meta_product: 0, duplicate: 0 }
+    for (const why of Object.values(st.skipped)) {
+      const kind = why.split(':')[0] as ScreenVerdict
+      if (kind === 'self_doable' || kind === 'meta_product' || kind === 'duplicate') out[kind] += 1
+    }
+    return out
   }
 
   stateOf(): FirstBuyState | null {
@@ -364,7 +448,42 @@ export class FirstBuyer {
     return parsed as Record<string, unknown>
   }
 
+  /**
+   * ADR-35: null when the desk may order; otherwise why not. Permanent reasons are remembered in `skipped` (with the
+   * verdict as prefix) and counted; a transient one (judge unavailable) is retried next tick.
+   */
+  async screen(st: FirstBuyState, l: Listing): Promise<{ why: string; permanent: boolean } | null> {
+    if (!this.config.screen) return null
+    // "bought" = paid for, or still in flight; a purchase that ended unpaid (expired, declined, cancelled) proves nothing
+    const bought = Object.values(st.index).filter((e): e is IndexEntry & { title: string } => !!e.title && (!e.outcome || e.outcome.startsWith('paid')))
+    // the free check runs every time, before the cached verdict: another copy may have been bought since the judge said yes
+    const clone = bought.find((e) => isCloneTitle(e.title, l.title))
+    if (clone) return { why: `duplicate: the desk already bought this function ("${clone.title.slice(0, 60)}"); it buys each function once, not each copy`, permanent: true }
+    if (st.eligible?.[l.id]) return null
+    let verdict: Awaited<ReturnType<Judge['screenListing']>>
+    try {
+      verdict = await this.judge.screenListing({ title: l.title, description: l.description, category: l.category, price: l.pricing.price ?? 0, input_schema: l.input_schema, output_schema: l.output_schema, example_input: l.example_input, example_output: l.example_output, already_bought: bought.map((e) => ({ title: e.title, category: e.category ?? '' })) })
+    } catch (e) {
+      this.log('first-buy: screening unavailable, will retry', { env: this.env, listing_id: l.id, error: msg(e) })
+      return { why: 'screening unavailable', permanent: false }
+    }
+    if (verdict.verdict === 'eligible') {
+      st.eligible = { ...(st.eligible ?? {}), [l.id]: this.iso() }
+      return null
+    }
+    return { why: `${verdict.verdict}: ${verdict.reason || 'not work a buyer needs another agent for'}`, permanent: true }
+  }
+
   private async hire(st: FirstBuyState, l: Listing): Promise<Purchase | null> {
+    const screened = await this.screen(st, l)
+    if (screened) {
+      if (screened.permanent) {
+        st.skipped[l.id] = screened.why
+        await this.save(st)
+      }
+      this.log('first-buy: listing skipped', { env: this.env, listing_id: l.id, seller: l.seller.handle, why: screened.why })
+      return null
+    }
     const input = await this.inputFor(l)
     if (!input) {
       st.skipped[l.id] = 'no realistic input could be derived for this listing'
@@ -387,7 +506,7 @@ export class FirstBuyer {
     const at = this.iso()
     const p: Purchase = { listing_id: l.id, seller_id: l.seller.id, seller: l.seller.handle, title: l.title.slice(0, 80), price: job.price, job_id: job.id, wallet, created_at: at, pay_attempt_at: null, pay_hash: null, pay_failures: 0, ledgered: false, verdict: null, reviewed: false, review_failures: 0, rating: null, outcome: null, ended_at: null, needs_operator: null }
     st.purchases.push(p)
-    st.index[l.id] = { seller_id: l.seller.id, wallet, at, price: job.price, outcome: null }
+    st.index[l.id] = { seller_id: l.seller.id, wallet, at, price: job.price, outcome: null, title: l.title.slice(0, 80), category: l.category }
     await this.save(st)
     if (job.thread_id) await this.client.threads.send(job.thread_id, FIRSTBUY_NOTE).catch(() => undefined)
     this.log('first-buy: hired', { env: this.env, listing_id: l.id, seller: l.seller.handle, job_id: job.id, price: job.price })
@@ -647,17 +766,26 @@ export class FirstBuyer {
   private async fetchState(): Promise<FirstBuyState> {
     const r = await this.client.memory.get<Partial<FirstBuyState>>(this.key).catch((e: unknown) => (statusOf(e) === 404 ? null : Promise.reject(e)))
     const v = r?.value
-    const st: FirstBuyState = v && Array.isArray(v.purchases) ? { purchases: v.purchases, index: v.index ?? {}, skipped: v.skipped ?? {}, last_error: v.last_error ?? null } : emptyState()
-    for (const p of st.purchases) if (!st.index[p.listing_id]) st.index[p.listing_id] = { seller_id: p.seller_id, wallet: p.wallet ?? null, at: p.created_at, price: p.price, outcome: p.outcome }
+    const st: FirstBuyState = v && Array.isArray(v.purchases) ? { purchases: v.purchases, index: v.index ?? {}, skipped: v.skipped ?? {}, eligible: v.eligible ?? {}, last_error: v.last_error ?? null } : emptyState()
+    for (const p of st.purchases) {
+      const e = st.index[p.listing_id]
+      if (!e) st.index[p.listing_id] = { seller_id: p.seller_id, wallet: p.wallet ?? null, at: p.created_at, price: p.price, outcome: p.outcome, title: p.title }
+      else if (!e.title) e.title = p.title // entries written before ADR-35 carried no title; the clone check needs it
+    }
     this.state = st
     return st
   }
 
   private async save(st: FirstBuyState): Promise<void> {
+    const youngSince = this.now() - this.config.lookbackDays * 86_400_000
+    const youngBefore = Object.values(st.index).filter((e) => Date.parse(e.at) >= youngSince).length
     const compact = compactState(st, this.config.lookbackDays, this.now())
+    const youngAfter = Object.values(compact.index).filter((e) => Date.parse(e.at) >= youngSince).length
+    if (youngAfter < youngBefore) this.log('ATTENTION: first-buy state exceeds the memory limit; dropped recent index entries (caps and clone check lose them)', { env: this.env, dropped: youngBefore - youngAfter, kept: youngAfter })
     st.purchases = compact.purchases
     st.index = compact.index
     st.skipped = compact.skipped
+    st.eligible = compact.eligible
     this.state = st
     await this.client.memory.set(this.key, compact)
   }
