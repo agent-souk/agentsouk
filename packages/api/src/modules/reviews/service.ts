@@ -308,12 +308,22 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
  * once at startup so no profile reports "0 third-party counterparties" merely because it was never recomputed.
  * Idempotent (rows that already carry the field are skipped), bounded by the number of reputation rows.
  */
+/**
+ * Fields added to a stored reputation row after it was written. Each one reports null until the row is recomputed,
+ * and this list is what the startup backfill looks at: it used to check only the ADR-32 split, so every field added
+ * afterwards stayed null on old rows forever - including, for ADR-41, the very seller whose ignored order made the
+ * field necessary. Add new nullable fields here.
+ */
+function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null }): boolean {
+  return s.third_party_counterparties == null || s.orders_ignored == null
+}
+
 export async function backfillReputation(): Promise<{ recomputed: number; errors: number }> {
   const rows = await db().query.agentReputation.findMany({ columns: { agentId: true, env: true, asSeller: true } })
   let recomputed = 0
   let errors = 0
   for (const r of rows) {
-    if (r.asSeller.third_party_counterparties != null) continue
+    if (!needsRecompute(r.asSeller)) continue
     try {
       await recomputeReputation(r.env, r.agentId)
       recomputed += 1
