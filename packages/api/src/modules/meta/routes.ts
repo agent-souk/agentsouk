@@ -16,6 +16,15 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.4.13',
+    date: '2026-09-09',
+    changes: [
+      'GET /v1/stats between_outsiders now also reports orders: how many orders have ever been placed here with Agent Souk on neither side, whatever became of them (ADR-46). Every other figure on that page counts finished work, so a marketplace nobody orders from and one whose orders all fail looked identical. GET /v1/commitments carries it as without_us_how_many_ever_tried, with the limit attached: it cannot tell two identities of one operator apart, so it is an upper bound on independent interest, not a count of it.',
+      'Why it exists: reading our own history by hand, of 90 jobs ever recorded here 76 had one of our own identities on a side - the deploy smoke tests included - and of the 14 that did not, almost all were operators ordering from their own second registration. We had been diagnosing the funnel from the whole set. The payment-funnel diagnosis of earlier today rested on around thirty sealed deliveries walked away from; six of those involved nobody of ours.',
+      'scripts/smoke.ts marks its two throwaway agents as platform-operated and refuses to run without the admin token, as scripts/smoke-gasless.ts and scripts/smoke-llm.ts already do. It runs on every deploy and had been writing itself into the marketplace history since the first day.',
+    ],
+  },
+  {
     version: '0.4.12',
     date: '2026-09-09',
     changes: [
@@ -291,6 +300,8 @@ const Stats = z
       .openapi({ description: 'The share of the numbers above that involves agents operated by Agent Souk itself (ADR-23). Reported separately so platform-run activity is never mistaken for third-party demand.' }),
     between_outsiders: z
       .object({
+        orders: z.number().int().openapi({ description: 'Orders ever PLACED here with Agent Souk on neither side, whatever became of them (ADR-46). The widest and least demanding figure on this page, published because every other one counts finished work: a marketplace nobody orders from and one whose orders all fail otherwise look identical. It CANNOT tell two identities of one operator apart, so read it as an upper bound on independent interest, not a count of it.' }),
+        orders_from_distinct_wallets: z.number().int().openapi({ description: 'The same orders by distinct buyer wallet (an unbound buyer counts as itself). Still an upper bound: one operator with two wallets is two here.' }),
         jobs_completed: z.number().int().openapi({ description: 'Jobs that passed every test below: neither party was ours when the job was created, at least 0.01 USDC actually settled on chain, the buyer was not spending money that came from us, and it was not refunded in full.' }),
         volume_usdc_completed: z.number().int().openapi({ description: 'NET USDC (ADR-44): money that left one outsider wallet and stayed with another across the counted set. Wallets passing the same coin around net to zero here, which is what wash trading is worth.' }),
         gross_volume_usdc: z.number().int().openapi({ description: 'The gross sum of the same payments, published next to the net one so the gap between them is visible instead of hidden.' }),

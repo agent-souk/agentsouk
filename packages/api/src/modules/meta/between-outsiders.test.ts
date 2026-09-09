@@ -59,7 +59,7 @@ describe('between_outsiders: the one number we cannot manufacture (ADR-39)', () 
     const buyer = await createTestAgent(app, { name: 'Outside buyer' })
 
     // an empty marketplace reports zero rather than omitting the field
-    expect((await stats()).between_outsiders).toEqual({ jobs_completed: 0, volume_usdc_completed: 0, gross_volume_usdc: 0, distinct_buyers: 0, distinct_sellers: 0, excluded: { no_money_moved: 0, below_price_floor: 0, funded_by_us: 0, refunded: 0 } })
+    expect((await stats()).between_outsiders).toEqual({ orders: 0, orders_from_distinct_wallets: 0, jobs_completed: 0, volume_usdc_completed: 0, gross_volume_usdc: 0, distinct_buyers: 0, distinct_sellers: 0, excluded: { no_money_moved: 0, below_price_floor: 0, funded_by_us: 0, refunded: 0 } })
 
     // the platform desk buying from an outside seller is NOT it: this is the number that has been flattering us
     const l = await listing(seller)
@@ -282,5 +282,52 @@ describe('between_outsiders: it must not be ours to move, and it must cost an ou
     const s = await stats()
     expect(s.between_outsiders).toMatchObject({ jobs_completed: 0, volume_usdc_completed: 0, distinct_buyers: 0, distinct_sellers: 0 })
     expect(s.between_outsiders.excluded.refunded).toBe(1)
+  })
+})
+
+/**
+ * ADR-46: every other figure on the stats page counts finished work, so a marketplace nobody ever orders from and
+ * one whose orders all fail look identical. Reading our own history by hand on 2026-09-09 showed which one we were:
+ * of 90 jobs ever recorded, 76 had one of our own identities on a side, and of the 14 that did not, almost all were
+ * operators ordering from themselves. That fact was invisible in every published number.
+ */
+describe('between_outsiders.orders: how many ever tried (ADR-46)', () => {
+  it('counts orders whatever became of them, and leaves ours out', async () => {
+    const desk = await createTestAgent(app, { name: 'Platform desk' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    const buyer = await createTestAgent(app, { name: 'Outside buyer' })
+    const l = await listing(seller)
+
+    // our own desk ordering is not somebody trying this marketplace
+    await tradeOnce(desk, seller, l)
+    expect((await stats()).between_outsiders).toMatchObject({ orders: 0, orders_from_distinct_wallets: 0 })
+
+    // an order that never becomes anything still counts here, and nowhere else
+    const abandoned = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l, input: { domain: 'example.com' } } })
+    expect(abandoned.status, JSON.stringify(abandoned.body)).toBe(201)
+    const s1 = await stats()
+    expect(s1.between_outsiders).toMatchObject({ orders: 1, orders_from_distinct_wallets: 1, jobs_completed: 0 })
+
+    // a second order from the same buyer is another order, but not another wallet
+    await tradeOnce(buyer, seller, l)
+    const s2 = await stats()
+    expect(s2.between_outsiders).toMatchObject({ orders: 2, orders_from_distinct_wallets: 1, jobs_completed: 1 })
+
+    // a second buyer widens the mouth of the funnel
+    const buyer2 = await createTestAgent(app, { name: 'Second outside buyer' })
+    await call(app, 'POST', '/v1/jobs', { key: buyer2.api_keys.test, body: { listing_id: l, input: { domain: 'example.com' } } })
+    expect((await stats()).between_outsiders).toMatchObject({ orders: 3, orders_from_distinct_wallets: 2 })
+  })
+
+  it('publishes how many ever tried, with the limit of the figure attached', async () => {
+    const seller = await createTestAgent(app, { name: 'Outside seller' })
+    const buyer = await createTestAgent(app, { name: 'Outside buyer' })
+    await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: await listing(seller), input: { domain: 'example.com' } } })
+
+    const c = await call(app, 'GET', '/v1/commitments?env=test')
+    const said = c.body.the_operator_is_a_participant.without_us_how_many_ever_tried as string
+    expect(said).toContain('1 orders have ever been placed here with us on neither side')
+    expect(said).toContain('cannot tell two identities of one operator apart')
   })
 })

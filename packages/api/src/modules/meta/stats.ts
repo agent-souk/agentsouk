@@ -27,6 +27,13 @@ export type PlatformStats = {
    * visible as the gap between them).
    */
   between_outsiders: {
+    /**
+     * ADR-46: orders ever PLACED with us on neither side, whatever became of them. Published because everything
+     * else here counts finished work, so a marketplace nobody ever orders from and one whose orders all fail look
+     * the same. It is the widest mouth of the funnel and the least demanding number on this page.
+     */
+    orders: number
+    orders_from_distinct_wallets: number
     jobs_completed: number
     volume_usdc_completed: number
     gross_volume_usdc: number
@@ -68,7 +75,7 @@ async function betweenOutsiders(env: Env): Promise<PlatformStats['between_outsid
   const fromUs = sql`exists (select 1 from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled' and ${isOurWallet(sql`st.payer_address`, our)})`
   const outsiderJobs = sql`from jobs j where j.env = ${env} and j.status in ('completed','resolved') and j.first_party_involved = 0`
 
-  const row = await db().get<{ jobs: number; buyers: number; sellers: number; net: number; gross: number; ex_no_money: number; ex_floor: number; ex_ours: number; ex_refunded: number }>(sql`
+  const row = await db().get<{ jobs: number; buyers: number; sellers: number; net: number; gross: number; ex_no_money: number; ex_floor: number; ex_ours: number; ex_refunded: number; orders: number; order_wallets: number }>(sql`
     with counted as (select j.id ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} < ${paidOn}),
     flows as (
         select lower(st.payer_address) addr, -st.amount delta from settlements st join counted c on c.id = st.job_id where st.status = 'settled'
@@ -85,9 +92,14 @@ async function betweenOutsiders(env: Env): Promise<PlatformStats['between_outsid
       (select count(*) ${outsiderJobs} and ${paidOn} = 0) ex_no_money,
       (select count(*) ${outsiderJobs} and ${paidOn} > 0 and ${paidOn} < ${OUTSIDER_PRICE_FLOOR}) ex_floor,
       (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and ${fromUs}) ex_ours,
-      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} >= ${paidOn}) ex_refunded
+      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} >= ${paidOn}) ex_refunded,
+      (select count(*) from jobs j where j.env = ${env} and j.first_party_involved = 0) orders,
+      (select count(distinct coalesce(lower(b.wallet_address), 'agent:' || j.buyer_agent_id)) from jobs j join agents b on b.id = j.buyer_agent_id
+         where j.env = ${env} and j.first_party_involved = 0) order_wallets
   `)
   return {
+    orders: row?.orders ?? 0,
+    orders_from_distinct_wallets: row?.order_wallets ?? 0,
     jobs_completed: row?.jobs ?? 0,
     volume_usdc_completed: row?.net ?? 0,
     gross_volume_usdc: row?.gross ?? 0,

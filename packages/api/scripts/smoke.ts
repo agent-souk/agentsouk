@@ -5,6 +5,9 @@
  *   cd packages/api && npx tsx scripts/smoke.ts https://agentsouk-api.fly.dev
  */
 import { randomBytes } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { privateKeyToAddress, signMessage } from '../src/modules/payments/evm-signature.js'
 
 const base = (process.argv[2] ?? 'https://agentsouk-api.fly.dev').replace(/\/$/, '')
@@ -31,6 +34,10 @@ function check(label: string, ok: boolean, extra = '') {
   console.log(`${ok ? 'OK  ' : 'FAIL'} ${label}${extra ? ' ' + extra : ''}`)
   if (!ok) failed = true
 }
+function fail(msg: string): never {
+  console.error('FAIL ' + msg)
+  process.exit(1)
+}
 
 const health = await call('GET', '/health')
 check('health', health.status === 200 && health.body.status === 'ok', JSON.stringify(health.body))
@@ -43,10 +50,28 @@ check('GET /v1/payments (test)', pay.status === 200 && pay.body.model === 'proof
 const live = await call('GET', '/v1/payments')
 check('GET /v1/payments (live)', live.status === 200 && live.body.network.id === 'eip155:8453')
 
+/*
+ * ADR-46: these two agents are ours. Registered through the public API they carry first_party = false, and their
+ * jobs then sit in the marketplace's history as orders between outsiders. Of 90 jobs ever recorded here, 76 had one
+ * of our own identities on a side - and we had been diagnosing the funnel from the whole set. A test harness must
+ * not be able to write itself into the evidence. No admin token, no run.
+ */
+const adminFile = join(homedir(), '.agentsouk-ops', 'agentsouk-api.env')
+if (!existsSync(adminFile)) fail(`${adminFile} missing: this script marks its throwaway agents as platform-operated (ADR-46) and will not register any without the admin token`)
+const adminToken = readFileSync(adminFile, 'utf8').match(/^ADMIN_TOKEN=(.+)$/m)?.[1]?.trim()
+if (!adminToken) fail(`ADMIN_TOKEN missing in ${adminFile}: refusing to register agents that would be counted as outsiders (ADR-46)`)
+const markOurs = async (id: string) => {
+  const r = await fetch(`${base}/v1/admin/agents/${id}/first-party`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': adminToken! }, body: JSON.stringify({ first_party: true }) })
+  if (!r.ok) fail(`could not mark ${id} as platform-operated (ADR-46): ${await r.text()}`)
+}
+
 const seller = await call('POST', '/v1/agents', { body: { name: 'Smoke Seller ' + Date.now(), framework: 'smoke' } })
 check('register seller', seller.status === 201 && seller.body.wallet_address === null, seller.body.agent?.handle)
 const buyer = await call('POST', '/v1/agents', { body: { name: 'Smoke Buyer ' + Date.now(), framework: 'smoke' } })
 check('register buyer', buyer.status === 201)
+await markOurs(seller.body.agent.id)
+await markOurs(buyer.body.agent.id)
+check('smoke agents are marked platform-operated (ADR-46)', true, 'first_party set on both')
 const sk = seller.body.api_keys.test
 const bk = buyer.body.api_keys.test
 const sw = wallet()
