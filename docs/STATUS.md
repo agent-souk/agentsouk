@@ -2,13 +2,13 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 ~00:35 UTC; API 0.4.13 = ADR-46, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10; API 0.4.13 = ADR-46, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–68, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+**Erledigt in dieser Sitzung (Checkpoints 61–69, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
 der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
 **ADR-43** (die eine Zahl zählte uns selbst mit), **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung)
 und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet), **ADR-46** (fast alles, was hier je bestellt wurde,
-waren wir oder Testläufe).
+waren wir oder Testläufe) und **ADR-47** (die x402-Route ohne Konto ist mit unserer Rechtsarchitektur unvereinbar — geprüft, nicht gebaut).
 
 **Das Wichtigste, wenn nur ein Absatz gelesen wird:** von **90 Jobs, die es auf Agent Souk je gab, haben 76 eine unserer eigenen Identitäten auf
 einer Seite** — Desk, Rauchtests, alles zusammen. Es bleiben 14, alle im Sandkasten, und davon sind fast alle ein Betreiber, der bei seiner eigenen
@@ -143,6 +143,45 @@ echtes Geld kostet, kein Beweis.
   der Aussenstehenden-Zaehlung heraus. Danach: **live 0 Bestellungen, Sandkasten 14 aus 8 Wallets.** Das Skript markiert jetzt selbst und
   verweigert den Start ohne Admin-Token.
 - **Deploy 2026-09-10 ~00:30 UTC:** API 0.4.13 = `bd34fd4` = HEAD, `smoke.ts` PASSED (inkl. der neuen Markierung).
+
+## Stand 2026-09-10, Checkpoint 69: die MCP-Messung ist negativ, und die x402-Route traegt nicht (ADR-47; kein Code)
+
+- **ADR-42-Messlatte, eingeloest.** 802 `mcp:initialize`, 803 `mcp:tools/list`, **ein** erfolgreicher `tools/call` in sieben Tagen — und allein
+  heute, also vollstaendig nach ADR-42, rund 496 Werkzeuglisten gegen **einen** Aufruf. Die Korrektur der Anweisungen hat nichts bewegt. Die Tuer
+  war nicht das Problem; das Publikum sind Crawler. **Ein MCP-Eintrag erreicht keine Kaeufer.**
+- **Die x402-Route ohne Konto ist geprueft und verworfen (ADR-47).** Die Norm verlangt, dass der Ressourcen-Server die vom Kaeufer signierte
+  Autorisierung beim Facilitator einreicht — genau das hat **ADR-22** nach dem juristischen Gutachten abgeschafft, und ADR-22 §3 sagt woertlich,
+  wir nehmen kein `X-PAYMENT` an und senden **kein** `PAYMENT-REQUIRED`, „der wuerde Auto-Pay-Clients in diese Sackgasse schicken". Wir sind also
+  bewusst kein x402-Ressourcen-Server — und genau das waere die Reichweite gewesen. Drei Varianten geprueft, alle scheitern (Details in ADR-47).
+  **Ich habe die 2–3 Tage nicht ausgegeben.** Der Plan ist aus der Planung entfernt, nicht aufgehoben.
+
+### Ehrliche Zwischenbilanz, 13 Tage vor dem Stichtag
+
+Was wir jetzt sicher wissen, und was davon neu ist:
+
+1. **Auf live wurde nie eine Bestellung platziert, bei der wir nicht auf einer Seite standen** (`between_outsiders.orders = 0`). Im Sandkasten 14,
+   davon fast alle Betreiber an ihrer eigenen zweiten Identitaet. **Genau eine** sah je nach unabhaengiger Nachfrage aus — und lief ab.
+2. **Die Population, die hier ankommt, sind Verkaeufer.** 75 Registrierungen in sieben Tagen, 29 aktive Listings, ein einziger Kaeufer: wir.
+3. **Beide Kanaele, die wir haben, erreichen keine Kaeufer.** MCP: gemessen, tot. Verzeichnisse und Awesome-Listen: liefern Verkaeufer.
+4. **Der einzige geplante dritte Kanal traegt nicht** (ADR-47), und der Grund ist keine Bequemlichkeit, sondern die Rechtsarchitektur, auf der
+   die ganze Plattform steht.
+
+Daraus folgt eine Aussage, die ich lieber heute mache als am 23.09.: **es gibt derzeit keinen Mechanismus, den ich bauen kann und der mit
+vernuenftiger Wahrscheinlichkeit bis zum 23.09. einen unabhaengigen zahlenden Kaeufer hervorbringt.** Was ich seit gestern gebaut habe, macht die
+Messung ehrlich — es erzeugt keine Nachfrage, und es war nie dazu gedacht.
+
+Das heisst **nicht**, dass wir aufhoeren sollten. Es heisst, dass die naechsten 13 Tage nicht mit Features vergehen sollten, die eine Nachfrage
+bedienen, die es nicht gibt. Zwei Dinge sind es wert, und beide gehoeren Nick, nicht mir:
+
+- **Ein kurzes Rechtsgutachten zu genau einer Frage:** bricht das Weiterreichen einer vom Kaeufer signierten x402-Autorisierung an einen
+  *oeffentlichen* Facilitator die Ausnahme in § 2 Abs. 1 Nr. 9 ZAG? Unsere bisherige Einordnung ist ausdruecklich Eigenrecherche, kein Rat.
+  Faellt sie guenstig aus, ist die einzige echte Reichweite offen. Faellt sie unguenstig, wissen wir es sicher statt vermutet.
+- **Vorher und viel billiger: ein x402-Endpunkt auf unseren eigenen Diensten** (`souk-services` liefert synchron). Dort sind **wir** der
+  Zahlungsempfaenger, der sein eigenes Geld einzieht — regulatorisch eine deutlich schwaechere Frage. Er kann `between_outsiders` per Konstruktion
+  **nicht** bewegen und beantwortet trotzdem die Frage dahinter: **zahlt da draussen ueberhaupt irgendein Agent fuer irgendetwas?** Eine Woche
+  ohne einen einzigen Aufruf waere eine Aussage ueber die Praemisse, nicht ueber unser Produkt.
+
+Bis dazu etwas entschieden ist, arbeite ich an dem, was ohne diese Antwort Sinn ergibt: die letzten zwei geprueften Audit-Funde.
 
 ### Offen aus dem Audit von ADR-44 (Stand nach ADR-45: vier von sechs gebaut)
 
