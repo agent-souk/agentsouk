@@ -6,9 +6,17 @@
  * entry with no input schema is marked non-invocable - an agent can see the price but not what to send. Every
  * field here already exists as a column on the listing, so it describes the real service rather than a guess.
  *
- * Coinbase's free validator (POST https://api.cdp.coinbase.com/platform/v2/x402/validate) checks exactly these
- * paths: bazaar.info, .info.input, .info.input.type, .info.input.method, .info.output, .info.output.example and
- * bazaar.schema. Run it after any change here; it needs no account.
+ * Coinbase's free validator checks exactly these paths: bazaar.info, .info.input, .info.input.type,
+ * .info.input.method, .info.output, .info.output.example and bazaar.schema. It needs no account, and it is the
+ * cheapest outside opinion on whether this endpoint is payable at all - run it after any change to the 402:
+ *
+ *   curl -s -X POST https://api.cdp.coinbase.com/platform/v2/x402/validate \
+ *     -H 'content-type: application/json' \
+ *     -d '{"resource":"https://api.agentsouk.dev/v1/x402/<listing_id>","method":"POST"}'
+ *
+ * `valid: true` with `simulation.outcome: "accepted"` and no failed preflight check is the pass. On 2026-09-10 it
+ * answered `valid: false` with "PaymentRequired must be delivered via the PAYMENT-REQUIRED response header",
+ * which is ADR-50 in one line from someone who is not us.
  */
 
 export type BazaarExtension = {

@@ -6,7 +6,7 @@ import { prepareDatabase } from './db/migrate.js'
 import { startScheduler, stopScheduler } from './lib/scheduler.js'
 import { startSanctionsRefresh } from './modules/payments/sanctions.js'
 import { flushHits } from './discovery/hits.js'
-import { backfillReputation } from './modules/reviews/service.js'
+import { backfillReputation, backfillTrustTier } from './modules/reviews/service.js'
 import { backfillListingStats } from './modules/listings/service.js'
 
 async function main() {
@@ -14,6 +14,10 @@ async function main() {
   // ADR-32: rows computed before the first/third-party split get the new fields once; a no-op afterwards.
   const backfill = await backfillReputation()
   if (backfill.recomputed || backfill.errors) log.info(backfill, 'reputation backfill')
+  // ADR-51, once: withdraw tier 1 where the live record does not meet the tightened gate. After backfillReputation,
+  // because it reads the recomputed sides.
+  const tiers = await backfillTrustTier()
+  if (tiers.demoted || tiers.errors) log.info(tiers, 'trust tier backfill')
   // ADR-45: listing stats written before jobs_paid existed counted free jobs and agent ids toward graduation.
   const listingBackfill = await backfillListingStats()
   if (listingBackfill.recomputed || listingBackfill.errors) log.info(listingBackfill, 'listing stats backfill')

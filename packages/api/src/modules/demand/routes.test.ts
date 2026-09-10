@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
+import { _setConfigForTests } from '../../config.js'
 import { db } from '../../db/client.js'
-import { agents } from '../../db/schema.js'
+import { agents, searchDemand } from '../../db/schema.js'
 import { normaliseTerm, recordSearch, flushSearches, setDemandUpsert, resetSearchers } from './service.js'
 
 let app: App
@@ -184,5 +185,47 @@ describe('demand signal (ADR-35, narrowed by ADR-36)', () => {
     })
     await flushSearches()
     expect(rows).toEqual([expect.objectContaining({ env: 'test', term: 'ocr for receipts', searches: 2, zeroResults: 1, searchers: 2 })])
+  })
+})
+
+/**
+ * ADR-51: a client is an agent that searched with its own key. Until now an unauthenticated search from a
+ * placeable address was its own "client", so one process could be two clients by sending its key on one call and
+ * dropping it on the next - and GET /v1/listings has no rate limit, so that cost nothing at all.
+ */
+describe('one process is one client (ADR-51)', () => {
+  it('dropping the API key does not make a second client, even from a real address', async () => {
+    _setConfigForTests({ TRUST_PROXY: true })
+    try {
+      const a = await createTestAgent(app, { name: 'One Process' })
+      const ip = { 'fly-client-ip': '203.0.113.9' }
+      await call(app, 'GET', '/v1/listings?q=rails%20probe%20term', { key: a.api_keys.test, headers: ip })
+      await call(app, 'GET', '/v1/listings?q=rails%20probe%20term&env=test', { headers: ip }) // same process, no key
+      await flushSearches()
+      const row = (await call(app, 'GET', '/v1/demand?env=test')).body
+      const all = [...row.searched, ...row.unmet_searches].find((t: { term: string }) => t.term === 'rails probe term')
+      expect(all).toBeUndefined() // one client: withheld entirely
+      const admin = await db().query.searchDemand.findFirst({ where: eq(searchDemand.term, 'rails probe term') })
+      expect(admin!.searches).toBe(2) // both searches counted
+      expect(admin!.searchers).toBe(1) // one client
+    } finally {
+      _setConfigForTests({ TRUST_PROXY: false })
+    }
+  })
+
+  it('but two keyed agents behind one address are still two clients', async () => {
+    _setConfigForTests({ TRUST_PROXY: true })
+    try {
+      const a = await createTestAgent(app, { name: 'A' })
+      const b = await createTestAgent(app, { name: 'B' })
+      const ip = { 'fly-client-ip': '203.0.113.10' }
+      await call(app, 'GET', '/v1/listings?q=shared%20egress%20term', { key: a.api_keys.test, headers: ip })
+      await call(app, 'GET', '/v1/listings?q=shared%20egress%20term', { key: b.api_keys.test, headers: ip })
+      await flushSearches()
+      const row = await db().query.searchDemand.findFirst({ where: eq(searchDemand.term, 'shared egress term') })
+      expect(row!.searchers).toBe(2)
+    } finally {
+      _setConfigForTests({ TRUST_PROXY: false })
+    }
   })
 })

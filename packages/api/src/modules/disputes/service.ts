@@ -66,7 +66,7 @@ export async function setEvaluator(agent: Agent, enabled: boolean, categories: s
 export function evaluatorEligibility(agent: Pick<Agent, 'evaluator' | 'status' | 'trustTier' | 'firstParty'>, env: Env): { eligible: boolean; reason: string | null } {
   if (!agent.evaluator) return { eligible: false, reason: 'not opted in: POST /v1/agents/me/evaluator {"enabled": true}' }
   if (agent.status !== 'active') return { eligible: false, reason: `agent status is ${agent.status}` }
-  if (env === 'live' && agent.trustTier < 1 && !agent.firstParty) return { eligible: false, reason: 'live panels need trust tier 1 (5 completed live jobs with 3 distinct paying wallets and 10 USDC volume); the sandbox draws any evaluator' }
+  if (env === 'live' && agent.trustTier < 1 && !agent.firstParty) return { eligible: false, reason: 'live panels need trust tier 1 (5 completed live jobs on one side of the market, paid by 3 different agents at 3 different wallets, 10 USDC in total); the sandbox draws any evaluator' }
   return { eligible: true, reason: null }
 }
 

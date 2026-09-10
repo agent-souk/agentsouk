@@ -2,57 +2,69 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10; API 0.5.0 = ADR-48, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 abends; API 0.5.2 = ADR-50, deployt; ADR-51 gebaut, noch nicht deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–70, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
-der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
-**ADR-43** (die eine Zahl zählte uns selbst mit), **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung)
-und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet), **ADR-46** (fast alles, was hier je bestellt wurde,
-waren wir oder Testläufe) und **ADR-47** (die x402-Route ohne Konto ist mit unserer Rechtsarchitektur unvereinbar — geprüft, nicht gebaut) und **ADR-48** (ein x402-Endpunkt auf unseren eigenen Diensten, live und end-to-end bewiesen).
+**Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
+konnte unseren 402 lesen — die Messlatte von ADR-48 war leer) und **ADR-51** (die letzten zwei offenen Audit-Funde).
 
-**Das Wichtigste, wenn nur ein Absatz gelesen wird:** von **90 Jobs, die es auf Agent Souk je gab, haben 76 eine unserer eigenen Identitäten auf
-einer Seite** — Desk, Rauchtests, alles zusammen. Es bleiben 14, alle im Sandkasten, und davon sind fast alle ein Betreiber, der bei seiner eigenen
-zweiten Identität bestellt. **Genau eine** Bestellung sah je nach unabhängiger Nachfrage aus, und die lief ab, weil der Verkäufer nie annahm. Auf
-live wurde in der gesamten Geschichte **nie** eine Bestellung platziert, bei der wir nicht auf einer Seite standen (`between_outsiders.orders = 0`).
-Damit ist die bisherige Lesart „Käufer kommen, wollen aber nicht zahlen" widerlegt: **Käufer kommen nicht.** Alles, was Zahlwege oder Lieferformate
-verbessert, löst ein Problem, das es noch nicht gibt.
+**Das Wichtigste, wenn nur ein Absatz gelesen wird:** der x402-Endpunkt aus ADR-48 war seit gestern live, und **kein einziger echter x402-Client
+konnte ihn bezahlen.** x402 v2 überträgt die Zahlungsbedingungen base64 in der Antwort-Kopfzeile `PAYMENT-REQUIRED`; der Körper wird nur noch
+gelesen, wenn er `x402Version: 1` sagt. Wir schickten ein v2-Objekt in den Körper — genau die eine Kombination, die keine der beiden
+Client-Generationen liest. Selbst nachgestellt: `@x402/core@2.25.0` gegen unseren echten Live-Körper wirft „Invalid payment required response",
+bevor eine Wallet angefasst wird. Dazu lasen wir nur `X-PAYMENT`, während ein v2-Client `PAYMENT-SIGNATURE` sendet. **Der Rauchtest war grün,
+weil er unsere eigene Körperform las.** Damit sagen die bisherigen x402-Zahlen nichts über Zahlungsbereitschaft; die Uhr aus ADR-48 läuft seit
+dem Deploy heute Abend neu. Gegengeprüft ist der Fix jetzt gegen die echten Pakete **und** gegen Coinbases öffentlichen Validator, der live
+vorher `valid: false` sagte und jetzt `valid: true` mit null fehlgeschlagenen Prüfungen.
 
-**Zur Messlatte selbst:** `between_outsiders` — die Zahl, an der die Entscheidung am 23.09. hängt — war an zwei Stellen
-zu unseren Gunsten falsch, und beide Male waren wir es selbst. Sie zählte unseren eigenen Deploy-Rauchtest mit, der sich einmal pro Deploy mit
-unserem eigenen Faucet-Geld selbst bezahlt (ADR-43); und sie las das Plattform-Kennzeichen **live** statt eingefroren, sodass **ein einziger
-Admin-Aufruf alle 13 Live-Jobs und 32,17 USDC unserer eigenen Desk** in „Nachfrage zwischen Fremden" verwandelt hätte, spurlos (ADR-44). Dazu:
-„das Geld war nicht unseres" kannte nur den Sandkasten-Faucet, den es auf live gar nicht gibt, während wir 32,17 USDC in sieben fremde Wallets
-gezahlt haben. Alles repariert, alles mit Tests belegt. **Und der Satz „the only figure here we cannot produce ourselves" ist zurückgezogen** — er
-war falsch, während wir ihn geschrieben haben. Die Zahl steht in beiden Umgebungen auf **0** und ist jetzt eine Untergrenze für Nachfrage, die
-echtes Geld kostet, kein Beweis.
+**Für Nick (das Wichtigste zuerst):**
+1. **Setz einen Alarmkanal** — sonst erfährst du den ersten fremden Kauf gar nicht in dem Moment, in dem er passiert. Ohne Konfiguration passiert
+   nichts, absichtlich. Der Weg ohne Konto irgendwo ist ntfy; Discord, Slack, Telegram und E-Mail gehen genauso. Die Schritte stehen in
+   `docs/LAUNCH-CHECKLIST.md` unter „Neu offen seit Checkpoint 71", Punkte A–C. **Warnung zu ntfy:** wer den Themennamen kennt, liest alle
+   Alarme mit, und darin stehen Wallet-Adressen.
+2. **Zwei Verzeichnisse brauchen dich** (Punkte D und E): x402scan verlangt einen Browser, x402-list.com eine Kontakt-E-Mail. Und **Punkt F**:
+   eine Zeile per Pull Request in `awesome-x402` — die mache ich erst nach deinem OK, es ist ein öffentlicher Beitrag unter deinem Namen.
+3. **Der Live-Geldweg des x402-Endpunkts ist nie durchgelaufen.** Der Rauchtest lief nur im Sandkasten. Punkt H in der Checkliste: ein einziger
+   Kauf über 0,02 USDC von einer Wallet, die nicht souk-services gehört. Er bewegt keine Kennzahl (wir stehen auf einer Seite) und prüft den Weg.
+4. **Die eine Zahl ist unverändert 0** (`between_outsiders.orders`, live). Die Messlatte zum ~23.09. steht.
+5. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. `in_progress`, nichts
+   geliefert, Frist 14.09. Auszahlung ist vorab bestätigt, Reihenfolge fix-first. **Nicht mehr fragen.**
+6. **MCP-Registry hängt weiter auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Nachziehen, sobald ich den Registry-Key wieder anfasse.
+7. **ADR-51 ist gebaut, aber noch nicht deployt** — es enthält die erste **Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim
+   Start). Heute betrifft das niemanden: auf live hat kein einziger Agent Stufe 1.
+8. **Platte: 4,0 GB frei** (von 5,4 GB gestern gefallen; unter ~1 GB scheitern die Tests hier mit SQLITE_FULL). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben deine Entscheidung — inzwischen die einzigen zwei Posten, die das wirklich lösen würden.
 
-**Für Nick (nichts davon eilt, nichts kostet Geld):**
-1. **Die eine Zahl ist 0, in beiden Umgebungen, und jetzt zum ersten Mal ehrlich gemessen.** Die Messlatte bleibt: wenn bis ~23.09. kein fremder
-   Agent einem anderen fremden Agenten mit eigenem Geld bezahlt hat, ist die Antwort nicht „mehr Features", sondern dass die Prämisse nicht trägt.
-   Falls doch etwas erscheint: `between_outsiders.excluded` und `gross_volume_usdc` daneben lesen, und `without_us_what_this_still_cannot_prove`
-   in `/v1/commitments` — dort steht, was die Zahl auch jetzt nicht beweist.
-   **Die veröffentlichte Agentenzahl ist von 37 auf 25 gefallen**, weil 12 „fremde" Agents unsere eigenen Rauchtest-Identitäten waren.
-2. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. 01:23 UTC `in_progress`, nichts
-   geliefert, Frist 14.09. Auszahlung ist von Nick vorab bestätigt, Reihenfolge bleibt fix-first. **Nicht mehr fragen.**
-3. **MCP-Registry hängt auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Das ist die Version, die Glama und mcpchangefeed anzeigen. Nachziehen, sobald ich
-   den Registry-Key wieder anfasse.
-4. **Der Zulauf kommt nicht über MCP, sondern über REST:** 707 `mcp:initialize`, 704 `tools/list`, **1** erfolgreicher `tools/call` in 7 Tagen —
-   aber **62 Registrierungen** über die HTTP-API im selben Fenster (skill.md, llms.txt, openapi.json). ADR-42 ist seit 18:32 UTC live; die Messlatte
-   dafür (`mcp:tool:*` gegen `mcp:tools/list`) fängt heute bei 1 zu 704 an. Von 35 fremden aktiven Agents haben 15 ein Listing und 17 je bestellt —
-   die Population ist eine Verkäufer-Population, das Kaufen fehlt.
-5. **Der nächste Schritt ist jetzt eine Frage der Reichweite, nicht des Trichters** (ADR-46). Da Käufer gar nicht erst kommen, ist die x402-Route
-   ohne Konto (ein Listing als bezahlbarer Link nach draußen, 2–3 Tage) der einzige geplante Weg zu Nachfrage außerhalb unserer eigenen Population.
-   **Einschränkung, die vor dem Bauen zu klären ist:** ein bezahlbarer Link erbt die Verkäuferseite — jemand zahlt und wartet dann darauf, dass ein
-   Agent annimmt und liefert. Für Listings, die nicht synchron liefern können, ist das ein schlechtes Produkt. Entweder auf synchron lieferbare
-   Listings beschränken, oder der Route eine eigene Zusage geben.
-   Die MCP-Messlatte aus ADR-42 (`mcp:tool:*` gegen `mcp:tools/list`) steht nach fünf Stunden noch bei 1 zu 746 — das braucht Tage, nicht Stunden.
-6. **Vier der sechs geprüften Funde aus dem Audit sind gebaut** (ADR-45): `third_party_counterparties`, der Leaderboard, `response_rate` und
-   `graduated`. **Offen bleiben zwei**, unten unter „Offen aus dem Audit von ADR-44": Trust-Tier 1 (zählt zahlende Wallets statt Gegenparteien)
-   und die Zwei-Client-Schwelle aus ADR-36. Beide sind deutlich kleiner als das Gebaute und kosten Geld oder betreffen nur die ohnehin als
-   schwächstes Signal ausgewiesene Nachfrage-Seite.
-   **Einer davon schadete fremden Agents, nicht uns:** bis heute Abend konnte jeder die öffentliche Antwortquote eines Konkurrenten gratis auf 0
-   drücken, indem er fünfmal bestellte und verfallen ließ. Falls sich jemand darüber beschwert hat: das ist der Fall, und er ist behoben.
-7. Platte: 5,4 GB frei (leicht fallend). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben Nicks Entscheidung.
+## Stand 2026-09-10, Checkpoint 71: der Endpunkt war unlesbar, der Inhaber war blind, und die letzten zwei Audit-Funde sind zu (ADR-49/50/51; API 0.5.2)
+
+- **ADR-50, der Fund des Tages.** Der x402-Endpunkt war für jeden echten Client unlesbar — Details oben und in ADR-50. Drei unabhängige
+  Blickwinkel kamen auf dasselbe Ergebnis, neun Widerlegungsversuche scheiterten, und ich habe es danach selbst mit `@x402/core@2.25.0` gegen
+  unseren Live-Körper nachgestellt. **Gebaut:** Kopfzeile `PAYMENT-REQUIRED` mit dem v2-Objekt, Körper in v1-Form für die ältere Generation,
+  `PAYMENT-SIGNATURE` und `X-PAYMENT` beide akzeptiert, `PAYMENT-RESPONSE` neben `X-PAYMENT-RESPONSE`, `Access-Control-Expose-Headers`.
+  Gegengeprüft gegen `@x402/core@2.25.0` (parst die Kopfzeile, beide Umgebungen) und `x402@1.2.0` (akzeptiert den Körper, beide Umgebungen).
+- **Reichweite, gleich mit.** `extensions.bazaar` kommt aus dem Listing selbst (Eingabeschema, Ausgabeschema, Beispiele) — genau die Pfade prüft
+  Coinbases Validator, und ein Indexeintrag ohne Eingabeschema gilt dort als nicht aufrufbar. Neu: `GET /v1/x402` und `/.well-known/x402`, ein
+  Dokument mit allem, was hier ein einziger x402-Kauf bekommt (6 Dienste, 0,01–0,04 USDC), in Sitemap, skill.md, llms.txt, README und Changelog.
+- **ADR-49, der Alarm.** Der Inhaber wird geweckt, wenn ein Fremder mit eigenem Geld bezahlt — nach **derselben Regel**, die
+  `between_outsiders` benutzt (eingefrorenes `first_party_involved`, Preisuntergrenze, `ourFundedWallets`). Zwei Kanäle ohne neue Abhängigkeit:
+  E-Mail über eine HTTP-API und ein Webhook, dessen Form aus dem Host abgeleitet wird (Discord, Slack, ntfy, Telegram). `GET /v1/admin/alerts`
+  und `POST /v1/admin/alerts/test`. Ohne Konfiguration passiert nichts.
+- **Die Prüfung meines eigenen Alarm-Moduls fand fünf echte Fehler**, alle behoben: der Stundendeckel zählte erzeugte statt zugestellte Zeilen
+  (ein kaputter Kanal wäre zur Schweigekaskade geworden); `ourFundedWallets` lief **zweimal im Anfrage-Pfad des Käufers**; ein x402-Kauf erzeugte
+  **zwei** Alarme; `urgent` galt auch im Sandkasten; und eine Bestellung zwischen Fremden lag als `quiet` unter der Standardstufe — genau die
+  Zahl, die auf live seit jeher 0 ist.
+- **ADR-51, die letzten zwei Audit-Funde.** Die Vertrauensstufe 1 las sich wie vier Prüfungen und war drei: zwei davon bekamen **dieselbe Menge**
+  zugewiesen, also lieferte eine Identität mit drei Wallets alle drei „verschiedenen zahlenden Wallets". Jetzt zählt `third_party_paying_agents`
+  die Gegenparteien zusätzlich nach **Agent**, und das ganze Tor muss auf **einer** Marktseite erfüllt sein (vorher wurden Jobs und Volumen beider
+  Seiten addiert, die Gegenparteien aber als Maximum genommen). Vorkasse verlangt auf live zusätzlich einen **Verkäufer**-Nachweis. Und ein
+  Client im Nachfrage-Signal ist jetzt ein Agent mit eigenem Schlüssel: ein weggelassener Schlüssel war vorher ein zweiter Client, auf einer Route
+  ohne Ratenlimit. Der Preis steht daneben: echte anonyme Sucher werden untergezählt, und die Live-Liste kann dadurch leer werden.
+- **Beim Bauen selbst gestolpert und hier notiert:** `assertUpfrontAllowed` wurde asynchron, und **eine** von drei Aufrufstellen bekam kein
+  `await`. Die Prüfung existierte und wirkte nicht — der Fehler flog als unbehandelte Ablehnung heraus, während die Änderung geschrieben wurde.
+  Ein bestehender Test hat es gefangen.
+- **Nebenbei:** `testTimeout` von 20 auf 60 Sekunden. Zwei Reputationstests waren über 20 Sekunden gewachsen und scheiterten auf einer belasteten
+  Maschine als Timeout, während sie auf einer freien in 46s durchlaufen. Eine Suite, die aus fremden Gründen rot ist, ist keine Definition of Done
+  mehr. Und die Changelog-Tests prüfen jetzt Inhalte statt Indizes.
+- **Deploy 2026-09-10 ~17:03 UTC:** API 0.5.2 = `41409bb`, `smoke.ts` PASSED, Coinbase-Validator gegen live `valid: true` / `outcome: accepted` /
+  null fehlgeschlagene Prüfungen (vorher `valid: false`). ADR-51 ist danach entstanden und noch nicht deployt.
 
 ## Stand 2026-09-09, Checkpoint 65: die Zahl war weiterhin unsere (ADR-44; API 0.4.10; 272 + 64 Tests gruen)
 
@@ -240,12 +252,18 @@ hier, damit sie nicht verschwinden.
    eine anonyme Suche desselben Prozesses ergeben zwei verschiedene „Clients". Live steht heute genau ein Begriff auf
    zwei Clients (`tls`) — nicht nachweislich unser eigener, aber mit dieser Luecke auch nicht belegbar fremd.
 
-**Offen bleiben 2 und 6.** Beide sind deutlich kleiner als das Gebaute: **2** (Trust-Tier 1 zaehlt zahlende Wallets statt
-Gegenparteien, also liefert eine Identitaet mit drei Wallets alle drei) kostet echtes Geld ueber der Untergrenze und die
-10-USDC-Volumenschwelle; **6** (eine authentifizierte und eine anonyme Suche desselben Aufrufers zaehlen als zwei
-Clients) verfaelscht nur die Nachfrage-Seite, die ohnehin ausdruecklich als schwaechstes Signal ausgewiesen ist.
-**Wallet-Rotation bleibt die Restluecke, die keine dieser Regeln schliesst** — sie kostet jedes Mal echtes Geld ueber
-der Untergrenze, und genau das ist die Verteidigung, die uebrig bleibt. Steht so auch in `/v1/commitments`.
+**2 und 6 sind seit dem 10.09. gebaut (ADR-51); der Audit ist damit vollstaendig abgearbeitet.** Bei **2** war der Befund schaerfer als
+hier notiert: das Tor las sich wie vier Pruefungen und war drei, weil `third_party_counterparties` und die Zahl der zahlenden Adressen
+**dieselbe Menge** zugewiesen bekamen — und es addierte Jobs und Volumen beider Marktseiten, nahm bei den Gegenparteien aber das Maximum einer
+Seite. Jetzt zaehlt `third_party_paying_agents` zusaetzlich nach **Agent**, und das ganze Tor muss auf **einer** Seite erfuellt sein;
+Vorkasse verlangt auf live zusaetzlich einen Verkaeufer-Nachweis. **Wallet-Rotation ist damit geschlossen.** Bei **6** ist ein Client jetzt
+ein Agent, der mit eigenem Schluessel gesucht hat; ein weggelassener Schluessel ist kein zweiter Client mehr.
+
+**Was bleibt, und der Text sagt es:** drei getrennte Wegwerf-Registrierungen erreichen weiterhin Stufe 1 (Kosten: von jeder eine Zahlung ueber
+der Preisuntergrenze plus 10 USDC Drittvolumen), und zwei Registrierungen reichen weiterhin fuer einen veroeffentlichten Suchbegriff. Steht so
+auch in `/v1/commitments` und `GET /v1/demand`. Der Preis von Fix 6 steht daneben: echte anonyme Sucher werden untergezaehlt, und die
+Live-Liste kann dadurch leer werden — der eine Begriff `tls` stand auf zwei Clients, und ob beide einen Schluessel trugen, ist rueckwirkend
+nicht mehr feststellbar.
 
 ## Stand 2026-09-09, Checkpoint 64: die eine Zahl zaehlte uns selbst mit (ADR-43; API 0.4.9; 265 + 64 Tests gruen)
 

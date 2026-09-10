@@ -26,8 +26,32 @@ type SettlementRow = typeof settlements.$inferSelect
 
 const PRIOR_MEAN = 3.5
 const PRIOR_WEIGHT = 5
-/** T1: proven by paid live jobs. Volume in USDC minor units (10 USDC) keeps dust-priced farming from counting. */
-export const TRUST_T1 = { minCompleted: 5, minCounterparties: 3, minPayingAddresses: 3, minVolumeUsdc: 10_000_000 }
+/**
+ * T1: proven by paid live jobs. Volume in USDC minor units (10 USDC) keeps dust-priced farming from counting.
+ *
+ * ADR-51: `minPayingAgents` is a genuinely second counter. Until now the gate read as four checks and was three -
+ * `third_party_counterparties` and the paying-addresses count were assigned the same set, so one identity that
+ * changed its wallet twice supplied all three "different paying wallets". Wallets are cheap; a registration is
+ * not free of a payment above the floor, so the two counters together cost real money to satisfy.
+ */
+export const TRUST_T1 = { minCompleted: 5, minCounterparties: 3, minPayingAgents: 3, minVolumeUsdc: 10_000_000 }
+
+/**
+ * Whether ONE side of the market has earned tier 1 on its own. The gate used to add the two sides' job counts and
+ * volumes together while taking the maximum of their counterparty counts - three completed sales plus two
+ * purchases, and the parties of whichever side had more. That is not a sentence anyone can check. Now it is:
+ * five completed live jobs as a seller, or five as a buyer, paid by three different agents at three different
+ * wallets, ten USDC in total, on that same side.
+ */
+export function qualifiesT1(side: ReputationSide | undefined | null): boolean {
+  if (!side) return false
+  return (
+    (side.jobs_completed ?? 0) >= TRUST_T1.minCompleted &&
+    (side.third_party_counterparties ?? 0) >= TRUST_T1.minCounterparties &&
+    (side.third_party_paying_agents ?? 0) >= TRUST_T1.minPayingAgents &&
+    (side.third_party_volume_usdc ?? 0) >= TRUST_T1.minVolumeUsdc
+  )
+}
 
 export const emptySide = (): ReputationSide => ({
   rating_weighted: null,
@@ -46,6 +70,7 @@ export const emptySide = (): ReputationSide => ({
   distinct_counterparties: 0,
   first_party_counterparties: 0,
   third_party_counterparties: 0,
+  third_party_paying_agents: 0,
   counterparties_without_payment: 0,
   volume_usdc: 0,
   third_party_volume_usdc: 0,
@@ -165,6 +190,9 @@ function sideFromJobs(
   const addresses = new Set<string>()
   const thirdPartyAddresses = new Set<string>()
   const paidIds = new Set<string>()
+  // ADR-51: the same counterparties as thirdPartyAddresses, counted by AGENT instead of by wallet. Three wallets
+  // belonging to one agent that rotated are three here-and-one-there; the gap between the two numbers is the point.
+  const thirdPartyPaidIds = new Set<string>()
   const freeIds = new Set<string>()
   let volume = 0
   let thirdPartyVolume = 0
@@ -190,6 +218,7 @@ function sideFromJobs(
         if (!firstParty && !ourMoney) thirdPartyAddresses.add(address)
       }
       paidIds.add(counterpartyId(j))
+      if (!firstParty && !ourMoney) thirdPartyPaidIds.add(counterpartyId(j))
     } else freeIds.add(counterpartyId(j))
   }
   // ADR-45: counterparties met without money are counted, and named, on their own. They used to be added straight
@@ -233,6 +262,9 @@ function sideFromJobs(
     // counterparties no money ever passed between. first + third + without_payment = distinct.
     first_party_counterparties: addresses.size - thirdPartyAddresses.size,
     third_party_counterparties: thirdPartyAddresses.size,
+    // ADR-51: of those wallets, how many DIFFERENT AGENTS they belonged to. Lower than the wallet count exactly
+    // when someone changed wallet; trust tier 1 needs three of each.
+    third_party_paying_agents: thirdPartyPaidIds.size,
     counterparties_without_payment: ids.size,
     volume_usdc: Math.max(0, volume),
     third_party_volume_usdc: Math.max(0, thirdPartyVolume),
@@ -329,12 +361,12 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
     .values({ agentId, env, asSeller, asBuyer, score, updatedAt: now })
     .onConflictDoUpdate({ target: [agentReputation.agentId, agentReputation.env], set: { asSeller, asBuyer, score, updatedAt: now } })
   if (env === 'live') {
-    // ADR-32: only third parties count toward tier 1; the platform desk buying from a seller is not evidence of demand
-    const completed = asSeller.jobs_completed + asBuyer.jobs_completed
-    const parties = Math.max(asSeller.third_party_counterparties ?? 0, asBuyer.third_party_counterparties ?? 0)
-    const paying = Math.max(seller.thirdPartyPayingAddresses, buyer.thirdPartyPayingAddresses)
-    const volume = (asSeller.third_party_volume_usdc ?? 0) + (asBuyer.third_party_volume_usdc ?? 0)
-    if (completed >= TRUST_T1.minCompleted && parties >= TRUST_T1.minCounterparties && paying >= TRUST_T1.minPayingAddresses && volume >= TRUST_T1.minVolumeUsdc) {
+    // ADR-32: only third parties count toward tier 1; the platform desk buying from a seller is not evidence of
+    // demand. ADR-51: and the whole gate must be met on ONE side of the market, by three different agents at
+    // three different wallets. Promote-only at runtime: a demotion here would take a live power away from an
+    // agent because someone ELSE later took money from our desk (ourFundedWallets follows our money forward), so
+    // the only lowering that ever happens is the one-time backfill in backfillTrustTier().
+    if (qualifiesT1(asSeller) || qualifiesT1(asBuyer)) {
       const a = await db().query.agents.findFirst({ where: eq(agents.id, agentId), columns: { trustTier: true } })
       if (a && a.trustTier < 1) {
         await db().update(agents).set({ trustTier: 1, updatedAt: now }).where(eq(agents.id, agentId))
@@ -356,8 +388,38 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
  * afterwards stayed null on old rows forever - including, for ADR-41, the very seller whose ignored order made the
  * field necessary. Add new nullable fields here.
  */
-function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null; counterparties_without_payment?: number | null }): boolean {
-  return s.third_party_counterparties == null || s.orders_ignored == null || s.counterparties_without_payment == null
+function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null; counterparties_without_payment?: number | null; third_party_paying_agents?: number | null }): boolean {
+  return s.third_party_counterparties == null || s.orders_ignored == null || s.counterparties_without_payment == null || s.third_party_paying_agents == null
+}
+
+/**
+ * ADR-51, once: take tier 1 away from anyone whose live record does not meet the tightened gate.
+ *
+ * This is the only demotion this platform has ever performed, and it is deliberately a one-off at startup rather
+ * than a rule that keeps running. A permanent demotion rule would let an agent lose a live power because someone
+ * ELSE later took money from our desk - `ourFundedWallets` follows our own money forward, so a counterparty can
+ * stop counting as a third party through no act of the agent whose tier it is. Tightening the entrance once is a
+ * correction; a moving floor under a power an agent already has is a different and worse thing.
+ *
+ * Runs after backfillReputation(), because it reads the recomputed sides.
+ */
+export async function backfillTrustTier(): Promise<{ checked: number; demoted: number; errors: number }> {
+  const rows = await db().query.agents.findMany({ where: eq(agents.trustTier, 1), columns: { id: true, handle: true } })
+  let demoted = 0
+  let errors = 0
+  for (const a of rows) {
+    try {
+      const rep = await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.agentId, a.id), eq(agentReputation.env, 'live')) })
+      if (qualifiesT1(rep?.asSeller) || qualifiesT1(rep?.asBuyer)) continue
+      await db().update(agents).set({ trustTier: 0, updatedAt: Date.now() }).where(and(eq(agents.id, a.id), eq(agents.trustTier, 1)))
+      demoted += 1
+      log.warn({ agentId: a.id, handle: a.handle }, 'ADR-51: trust tier 1 withdrawn, the live record does not meet the tightened gate')
+    } catch (err) {
+      errors += 1
+      log.warn({ err, agentId: a.id }, 'trust tier backfill row failed')
+    }
+  }
+  return { checked: rows.length, demoted, errors }
 }
 
 export async function backfillReputation(): Promise<{ recomputed: number; errors: number }> {

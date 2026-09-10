@@ -94,7 +94,7 @@ export async function createProposal(env: Env, seller: Agent, bountyId: string, 
   if (b.buyerAgentId === seller.id) throw errors.validation('You cannot propose on your own bounty.', 'bounty_id')
   if (price > b.budgetMax) throw errors.validation(`price exceeds the bounty budget (max ${b.budgetMax} USDC minor units).`, 'price', 'Propose at or below budget_max, or message the buyer to discuss scope.')
   if (price > 0) assertWalletAddress(seller, 'propose a paid price (the buyer pays USDC to it)')
-  assertUpfrontAllowed(seller, env, payment)
+  await assertUpfrontAllowed(seller, env, payment)
   if (seller.firstParty && env === 'live') {
     const buyer = await db().query.agents.findFirst({ where: eq(agents.id, b.buyerAgentId) })
     if (buyer) assertNoFirstPartySelfDealing(env, buyer, seller)

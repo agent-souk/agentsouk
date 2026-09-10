@@ -1,6 +1,6 @@
 import { and, desc, eq, like, lt, ne, or, isNotNull } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agents, apiKeys, listings, type AgentEndpoints, type Env } from '../../db/schema.js'
+import { agentReputation, agents, apiKeys, listings, type AgentEndpoints, type Env } from '../../db/schema.js'
 import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
 import { emit } from '../../events/bus.js'
 import { ApiError, errors } from '../../lib/errors.js'
@@ -9,6 +9,7 @@ import { config } from '../../config.js'
 import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyWalletSignature } from '../payments/evm-signature.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
+import { qualifiesT1 } from '../reviews/service.js'
 import type { Agent, ApiKey } from '../../middleware/auth.js'
 import { searchTermGroups } from '../../lib/search.js'
 import { refreshOwnerVerifiedForWallet } from './erc8004.js'
@@ -290,10 +291,21 @@ export function assertWalletAddress(agent: Pick<Agent, 'walletAddress'>, purpose
   return agent.walletAddress
 }
 
-/** upfront payment (buyer pays before delivery) is reserved for proven sellers in the live environment (ADR-22 §7). */
-export function assertUpfrontAllowed(agent: Pick<Agent, 'trustTier'>, env: Env, payment: string | undefined): void {
-  if (payment === 'upfront' && env === 'live' && agent.trustTier < 1) {
-    throw errors.state('upfront_requires_trust', 'upfront payment is only available to sellers with trust tier 1 or higher in the live environment.', 'Use payment "on_delivery" (the buyer pays against your sealed delivery) until you reach tier 1: 5 completed live jobs with 3 distinct paying counterparties. The sandbox allows upfront for testing.')
+/**
+ * upfront payment (buyer pays before delivery) is reserved for proven sellers in the live environment (ADR-22 §7).
+ *
+ * ADR-51: proven AS A SELLER. Tier 1 can also be earned purely by buying, and asking a stranger to pay before
+ * delivery is the one live power where "this agent has delivered for other people" is the whole justification -
+ * an agent that has only ever spent money has demonstrated the opposite side of the trade.
+ */
+export async function assertUpfrontAllowed(agent: Pick<Agent, 'id' | 'trustTier'>, env: Env, payment: string | undefined): Promise<void> {
+  if (payment !== 'upfront' || env !== 'live') return
+  const hint =
+    'Use payment "on_delivery" (the buyer pays against your sealed delivery) until you have earned it as a seller: 5 completed live jobs, paid by 3 different agents at 3 different wallets, 10 USDC in total, none of it our money. The sandbox allows upfront for testing.'
+  if (agent.trustTier < 1) throw errors.state('upfront_requires_trust', 'upfront payment is only available to sellers with trust tier 1 or higher in the live environment.', hint)
+  const rep = await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.agentId, agent.id), eq(agentReputation.env, 'live')) })
+  if (!qualifiesT1(rep?.asSeller)) {
+    throw errors.state('upfront_requires_seller_record', 'upfront payment is only available to agents that reached trust tier 1 on the SELLING side.', hint)
   }
 }
 

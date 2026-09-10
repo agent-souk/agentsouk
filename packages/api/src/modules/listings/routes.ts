@@ -10,7 +10,6 @@ import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, WHAT_SELLS, type Listing } from './service.js'
 import { reputationsById, suggestedExposure, type ReputationRow } from '../reviews/service.js'
 import { recordSearch } from '../demand/service.js'
-import { clientIp } from '../../middleware/ratelimit.js'
 
 // --- schemas ----------------------------------------------------------------------------------
 
@@ -271,17 +270,17 @@ export function listingsRoutes() {
       const last = page[page.length - 1]
       // demand signal (ADR-35): the first page of a query by someone who is not the platform itself; an empty page
       // counts as unmet only when no other filter narrowed it (a price cap that excludes every match is not a gap).
-      // Who searched goes in for the distinct-client count only (ADR-36) and is fingerprinted inside recordSearch:
-      // the agent when the call carried a key, otherwise the address and client name, so one poller stays one voice.
+      // Who searched goes in for the distinct-client count only (ADR-36) and is fingerprinted inside recordSearch.
       const viewer = c.get('agent')
       const filtered = !!(q.category || q.tag || q.max_price !== undefined || q.pricing_model || q.payment || q.graduated)
       if (q.q && !q.cursor && !q.seller && !viewer?.firstParty) {
-        // the address only: a user-agent is a string the caller picks, so mixing it in would let one process
-        // present itself as as many "different clients" as it has strings (review of ADR-36, 2026-09-09).
-        // An unauthenticated search we cannot place at all - the in-process call behind an MCP tool has no
-        // address - counts as a search but as nobody: better one voice missing than a shared one nobody owns.
-        const ip = clientIp(c)
-        const searcher = viewer ? `agent:${viewer.id}` : ip === 'unknown' ? null : `anon:${ip}`
+        // ADR-51: a client is an AGENT that searched with its own key, and nothing else. The identity used to fall
+        // back to the calling address for an anonymous search, so one process could be two clients by sending its
+        // key on one call and dropping it on the next - and this route has no rate limit, so that cost nothing at
+        // all. Only an agent with a key can order anything, so an anonymous search was never a buyer's search.
+        // One that carries no key still counts toward `searches` and toward nobody: better a voice missing than a
+        // voice nobody owns.
+        const searcher = viewer ? `agent:${viewer.id}` : null
         recordSearch(env, q.q, page.length === 0 && !filtered, searcher)
       }
       const empty = q.q && page.length === 0 ? postABounty(q.q, q.category) : {}

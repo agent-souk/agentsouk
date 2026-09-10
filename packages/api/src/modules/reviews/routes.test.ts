@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { installFakeChain, FakeChain } from '../../test/chain.js'
 import { _setRpcFetchForTests } from '../payments/chain.js'
-import { freshApp, call, createTestAgent } from '../../test/setup.js'
+import { freshApp, call, createTestAgent, randomWallet, setWallet } from '../../test/setup.js'
 import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
-import { backfillReputation, bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
+import { backfillReputation, backfillTrustTier, bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
 import { db } from '../../db/client.js'
-import { agentReputation } from '../../db/schema.js'
-import { sql } from 'drizzle-orm'
+import { agentReputation, agents } from '../../db/schema.js'
+import { eq, sql } from 'drizzle-orm'
+import { sign } from '../../lib/crypto.js'
+import { walletMessage } from '../agents/service.js'
 
 let app: App
 type Ag = Awaited<ReturnType<typeof createTestAgent>>
@@ -312,5 +314,73 @@ describe('reviews & reputation', () => {
     } finally {
       _setConfigForTests({ ADMIN_TOKEN: undefined })
     }
+  })
+})
+
+/**
+ * ADR-51: the tier-1 gate read as four checks and was three, because two of them were the same set. A wallet is
+ * cheap to change; an agent that has paid you above the floor is not.
+ */
+describe('trust tier 1 counts agents as well as wallets (ADR-51)', () => {
+  it('rotating a wallet does not manufacture counterparties', async () => {
+    // ONE buyer agent, three wallets in turn, five paid live jobs, 10 USDC: three "different paying wallets"
+    // and one paying agent. Before ADR-51 that was tier 1.
+    for (let i = 0; i < 5; i++) {
+      if (i > 0) {
+        const w = randomWallet()
+        const set = await setWallet(app, buyer.api_keys.live, buyer.agent.id, w, sign(walletMessage(buyer.agent.id, w.address), buyer.keypair!.secret_key))
+        expect(set.status, JSON.stringify(set.body)).toBe(200)
+        buyer.wallet_address = set.body.wallet_address
+      }
+      await completedJob('live', seller, buyer, 2_000_000)
+    }
+    const rep = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)
+    expect(rep.body.live.as_seller.jobs_completed).toBe(5)
+    expect(rep.body.live.as_seller.third_party_volume_usdc).toBe(10_000_000)
+    // the two numbers disagree, and that disagreement is the whole point of the second counter
+    expect(rep.body.live.as_seller.third_party_counterparties).toBeGreaterThanOrEqual(3)
+    expect(rep.body.live.as_seller.third_party_paying_agents).toBe(1)
+    expect(rep.body.trust_tier).toBe(0)
+  })
+
+  it('is met on one side of the market or not at all', async () => {
+    const others = [await createTestAgent(app, { name: 'O1' }), await createTestAgent(app, { name: 'O2' }), await createTestAgent(app, { name: 'O3' })]
+    // three completed live sales (6 USDC) plus two completed live purchases (4 USDC): the old gate added the
+    // sides together and reached 5 jobs / 10 USDC / 3 parties. Neither side reaches it alone.
+    for (let i = 0; i < 3; i++) await completedJob('live', seller, others[i]!, 2_000_000)
+    for (let i = 0; i < 2; i++) await completedJob('live', others[i]!, seller, 2_000_000)
+    const rep = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)
+    expect(rep.body.live.as_seller.jobs_completed + rep.body.live.as_buyer.jobs_completed).toBe(5)
+    expect(rep.body.trust_tier).toBe(0)
+  })
+
+  it('the buying side still earns it on its own', async () => {
+    const sellers = [await createTestAgent(app, { name: 'S1' }), await createTestAgent(app, { name: 'S2' }), await createTestAgent(app, { name: 'S3' })]
+    for (let i = 0; i < 5; i++) await completedJob('live', sellers[i % 3]!, buyer, 2_000_000)
+    const rep = await call(app, 'GET', `/v1/agents/${buyer.agent.id}/reputation`)
+    expect(rep.body.live.as_buyer.third_party_paying_agents).toBe(3)
+    expect(rep.body.trust_tier).toBe(1)
+  })
+
+  it('but upfront payment stays a seller power: money spent is not a delivery record', async () => {
+    const sellers = [await createTestAgent(app, { name: 'S1' }), await createTestAgent(app, { name: 'S2' }), await createTestAgent(app, { name: 'S3' })]
+    for (let i = 0; i < 5; i++) await completedJob('live', sellers[i % 3]!, buyer, 2_000_000)
+    expect((await call(app, 'GET', `/v1/agents/${buyer.agent.id}/reputation`)).body.trust_tier).toBe(1)
+    const l = await call(app, 'POST', '/v1/listings', { key: buyer.api_keys.live, body: { title: 'Pay me first', description: 'A service this agent has never actually delivered to anyone.', category: 'ops', pricing_model: 'fixed', price: 1_000_000, payment: 'upfront' } })
+    expect(l.status).toBe(409)
+    expect(l.body.error.code).toBe('upfront_requires_seller_record')
+    expect(l.body.error.hint).toContain('as a seller')
+  })
+
+  it('withdraws a tier 1 that the tightened gate no longer justifies, once, at startup', async () => {
+    await db().update(agents).set({ trustTier: 1 }).where(eq(agents.id, seller.agent.id))
+    const r = await backfillTrustTier()
+    expect(r).toMatchObject({ demoted: 1 })
+    expect((await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body.trust_tier).toBe(0)
+    // and it does not touch an agent that earns it
+    const sellers = [await createTestAgent(app, { name: 'S1' }), await createTestAgent(app, { name: 'S2' }), await createTestAgent(app, { name: 'S3' })]
+    for (let i = 0; i < 5; i++) await completedJob('live', sellers[i % 3]!, buyer, 2_000_000)
+    expect((await backfillTrustTier()).demoted).toBe(0)
+    expect((await call(app, 'GET', `/v1/agents/${buyer.agent.id}/reputation`)).body.trust_tier).toBe(1)
   })
 })

@@ -44,6 +44,7 @@ const Side = z
     distinct_counterparties: z.number().int().openapi({ description: 'Distinct counterparty wallet addresses on paid jobs (plus distinct agents on free jobs).' }),
     first_party_counterparties: z.number().int().nullable().openapi({ description: 'Of distinct_counterparties: agents operated by the platform itself (the first-buy desk, the bounty desk; ADR-23/31). Reputation earned only from the platform is a starting point, not evidence that anyone else wants to buy. null = not recomputed since the split was introduced (rare; the next job outcome or review fills it).' }),
     third_party_counterparties: z.number().int().nullable().openapi({ description: 'Of distinct_counterparties: agents NOT operated by the platform. The number to look at when judging demand; the leaderboard and trust tier 1 use it (ADR-32). null = not recomputed yet.' }),
+    third_party_paying_agents: z.number().int().nullable().openapi({ description: 'ADR-51: of those wallets, how many DIFFERENT AGENTS they belonged to. An agent that changed its wallet twice is three wallets and one agent, and trust tier 1 needs three of each. Lower than third_party_counterparties means someone rotated a wallet. null = not recomputed yet.' }),
     volume_usdc: z.number().int().openapi({ description: 'USDC minor units verified on-chain (payments minus refunds).' }),
     third_party_volume_usdc: z.number().int().nullable().openapi({ description: 'Of volume_usdc: paid by agents not operated by the platform. null = not recomputed yet.' }),
     rating_avg: z.number().nullable().openapi({ description: 'Bayesian average (prior 3.5 with weight 5), so a single 5-star review does not read as perfect.' }),
@@ -86,7 +87,7 @@ const ReputationView = z
     object: z.literal('reputation'),
     agent_id: z.string(),
     handle: z.string(),
-    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by paid live jobs from distinct third-party wallets (5 completed jobs, 3 paying wallets, 10 USDC; purchases by the platform desk do not count, ADR-32) · 2 tier 1 plus a verified domain. No higher tier exists or is promised.' }),
+    trust_tier: z.number().int().openapi({ description: '0 keypair only · 1 proven by paid live jobs on ONE side of the market: 5 completed jobs, paid by 3 different agents at 3 different wallets, 10 USDC in total, none of it ours (ADR-32/51) · 2 tier 1 plus a verified domain. No higher tier exists or is promised.' }),
     live: Snapshot,
     test: Snapshot.openapi({ description: 'Sandbox activity (Base Sepolia): visible, but never trusted.' }),
     explain: z.string(),
@@ -98,14 +99,14 @@ function sideView(row: Partial<z.infer<typeof Side>> | undefined): z.infer<typeo
   const merged = { ...emptySide(), ...(row ?? {}) }
   // rows written before ADR-32 lack the first/third-party split until backfillReputation() has run at startup: say null,
   // never a made-up 0 (an agent without any reputation row has genuinely 0 counterparties)
-  const split = <K extends 'first_party_counterparties' | 'third_party_counterparties' | 'third_party_volume_usdc'>(k: K) => (row ? (row[k] ?? null) : 0)
+  const split = <K extends 'first_party_counterparties' | 'third_party_counterparties' | 'third_party_paying_agents' | 'third_party_volume_usdc'>(k: K) => (row ? (row[k] ?? null) : 0)
   // same for the response record (ADR-41): a row written before it says null, not a flattering 0
-  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [], first_party_counterparties: split('first_party_counterparties'), third_party_counterparties: split('third_party_counterparties'), third_party_volume_usdc: split('third_party_volume_usdc'), orders_ignored: row ? (row.orders_ignored ?? null) : 0, response_rate: merged.response_rate ?? null }
+  return { ...merged, rating_weighted: merged.rating_weighted ?? null, categories: merged.categories ?? [], first_party_counterparties: split('first_party_counterparties'), third_party_counterparties: split('third_party_counterparties'), third_party_paying_agents: split('third_party_paying_agents'), third_party_volume_usdc: split('third_party_volume_usdc'), orders_ignored: row ? (row.orders_ignored ?? null) : 0, response_rate: merged.response_rate ?? null }
 }
 
 function snapshot(r: ReputationRow | null, ev: EvaluatorStats): z.infer<typeof Snapshot> {
   const seller = sideView(r?.asSeller)
-  const exposure = suggestedExposure({ ...seller, first_party_counterparties: seller.first_party_counterparties ?? 0, third_party_counterparties: seller.third_party_counterparties ?? 0, third_party_volume_usdc: seller.third_party_volume_usdc ?? 0, orders_ignored: seller.orders_ignored ?? 0 })
+  const exposure = suggestedExposure({ ...seller, first_party_counterparties: seller.first_party_counterparties ?? 0, third_party_counterparties: seller.third_party_counterparties ?? 0, third_party_paying_agents: seller.third_party_paying_agents ?? 0, third_party_volume_usdc: seller.third_party_volume_usdc ?? 0, orders_ignored: seller.orders_ignored ?? 0 })
   return { score: r?.score ?? 0, as_seller: seller, as_buyer: sideView(r?.asBuyer), as_evaluator: ev, exposure: { ...exposure, method: EXPOSURE_METHOD, note: EXPOSURE_NOTE }, updated_at: iso(r?.updatedAt) }
 }
 

@@ -531,6 +531,13 @@ export type ReputationSide = {
   first_party_counterparties?: number
   third_party_counterparties?: number
   /**
+   * ADR-51: of the wallets counted in third_party_counterparties, how many DIFFERENT AGENTS they belonged to.
+   * An agent that changes its wallet twice is three wallets and one agent, and the gap between the two numbers
+   * is exactly that. Trust tier 1 needs three of each, so rotating a wallet no longer manufactures counterparties.
+   * undefined = the row has not been recomputed since the field existed.
+   */
+  third_party_paying_agents?: number
+  /**
    * ADR-45: counterparties this agent finished work with where no money above the floor ever settled - free work,
    * or a job whose payment never arrived. Counted and named on their own instead of being folded into the field
    * that is published as evidence of demand.

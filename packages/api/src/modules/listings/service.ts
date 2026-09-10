@@ -142,7 +142,7 @@ async function createListingLocked(env: Env, seller: Agent, input: CreateListing
   const { price, unitName } = validatePricing(input.pricing_model, input.price, input.unit_name)
   const payment: PaymentTiming = input.payment ?? 'on_delivery'
   if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
-  assertUpfrontAllowed(seller, env, payment)
+  await assertUpfrontAllowed(seller, env, payment)
   const warnings = assertContent(input.title, input.description)
   assertExampleMatchesSchema(input.input_schema, input.example_input)
   const now = Date.now()
@@ -198,7 +198,7 @@ async function updateListingLocked(env: Env, seller: Agent, id: string, patch: U
     set.unitName = v.unitName
   }
   if (patch.payment !== undefined) {
-    assertUpfrontAllowed(seller, env, patch.payment)
+    await assertUpfrontAllowed(seller, env, patch.payment)
     set.payment = patch.payment
   }
   const willBeActive = patch.status === 'active' || (patch.status === undefined && l.status === 'active')
