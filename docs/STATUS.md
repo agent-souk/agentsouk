@@ -5,9 +5,24 @@
 ## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 abends; API 0.5.3 = ADR-51, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
 **Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
-konnte unseren 402 lesen — die Messlatte von ADR-48 war leer) und **ADR-51** (die letzten zwei offenen Audit-Funde).
+konnte unseren 402 lesen — die Messlatte von ADR-48 war leer), **ADR-51** (die letzten zwei offenen Audit-Funde), **ADR-52** (der gegnerische Audit desselben Tages fand sechs echte Fehler in dem, was acht Stunden vorher gebaut worden war) und **ADR-53** (auf der Kette nachgezaehlt, ob es zahlende Agents ueberhaupt gibt — ja, und zwar viele).
 
-**Das Wichtigste, wenn nur ein Absatz gelesen wird:** der x402-Endpunkt aus ADR-48 war seit gestern live, und **kein einziger echter x402-Client
+**Das Wichtigste, wenn nur ein Absatz gelesen wird (ADR-53, neu am Abend des 10.09.):** die Frage aus ADR-47/48 — **zahlt da draußen überhaupt
+irgendein Agent für irgendetwas?** — ist beantwortet, und zwar von außen, auf der Kette, nicht aus unseren eigenen Daten. Jede x402-Zahlung ist ein
+EIP-3009-`transferWithAuthorization`, und USDC feuert dabei ein Ereignis, egal wer sendet. Auf Base laufen **75.000 bis 140.000 gasfreie
+USDC-Zahlungen am Tag**, in jedem Minutenfenster **400 bis 2.000 verschiedene zahlende Wallets**, **Median 0,01 USDC**, 70 % unter 0,10 USDC.
+Niemand schickt einen Cent zehntausende Male am Tag von Hand. **Die Prämisse trägt: maschineller Kleinstzahlungsverkehr ist heute real und groß.**
+Damit liegt unsere Null **an uns**, nicht an einer Welt, die noch nicht so weit ist — die unbequemere und die brauchbarere Diagnose.
+**Die zweite Hälfte ist genauso wichtig:** der Anteil, der an einen im öffentlichen x402-Index gelisteten Verkäufer geht, ist ein *kleiner*
+Bruchteil, und die Einzelzahlung liegt bei **Cents**. Hunderte gelistete Verkäufer teilen sich diesen Fluss. **Wer dort um Reichweite kämpft,
+kämpft um Cents** — der Wert eines Verzeichniseintrags ist das Signal, nicht der Umsatz. Wiederholbar mit
+`npx tsx scripts/x402-market-size.ts`; die Streuung der kleinen Zahl steht in ADR-53 dabei, sie schwankte zwischen Läufen um den Faktor zehn.
+
+**Für den 23.09. heißt das:** die Frage ist nicht mehr „zahlt irgendwer?", sondern **„warum fließt nichts davon hierher, und wäre der Anteil, den
+wir realistisch bekommen könnten, überhaupt eine Firma wert?"** Die erste Hälfte ist beantwortet — unser Endpunkt war bis zum 10.09. für jeden
+echten Client unlesbar (ADR-50). Die zweite ist Nicks Entscheidung und steht zum ersten Mal auf gemessenen Tatsachen.
+
+**Der zweitwichtigste Absatz (ADR-50):** der x402-Endpunkt aus ADR-48 war seit gestern live, und **kein einziger echter x402-Client
 konnte ihn bezahlen.** x402 v2 überträgt die Zahlungsbedingungen base64 in der Antwort-Kopfzeile `PAYMENT-REQUIRED`; der Körper wird nur noch
 gelesen, wenn er `x402Version: 1` sagt. Wir schickten ein v2-Objekt in den Körper — genau die eine Kombination, die keine der beiden
 Client-Generationen liest. Selbst nachgestellt: `@x402/core@2.25.0` gegen unseren echten Live-Körper wirft „Invalid payment required response",
