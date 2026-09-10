@@ -69,15 +69,47 @@ const buy = (listingId: string, header?: string, body: Record<string, unknown> =
  * and it submits the buyer's authorization only once the work exists.
  */
 describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
-  it('answers 402 with x402 v2 requirements when no payment is attached', async () => {
+  it('answers 402 with the v2 terms in the PAYMENT-REQUIRED header and the v1 terms in the body', async () => {
     const { listingId } = await firstPartySeller()
     const r = await buy(listingId)
     expect(r.status).toBe(402)
-    expect(r.body.x402Version).toBe(2)
+
+    // v2 (current clients): the whole object, base64, in the header. This is the only place they look.
+    const header = r.headers.get('payment-required')
+    expect(header).toBeTruthy()
+    expect(header!).toMatch(/^[A-Za-z0-9+/]*={0,2}$/) // standard base64, never base64url: the client enforces it
+    const v2 = JSON.parse(Buffer.from(header!, 'base64').toString('utf8'))
+    expect(v2.x402Version).toBe(2)
+    expect(v2.resource.url).toContain(`/v1/x402/${listingId}`)
+    expect(v2.accepts[0]).toMatchObject({ scheme: 'exact', amount: String(PRICE), network: 'eip155:84532' })
+    expect(v2.accepts[0].payTo).toBeTruthy()
+    expect(v2.extensions.bazaar).toBeTruthy()
+    expect(r.headers.get('access-control-expose-headers')).toContain('PAYMENT-REQUIRED')
+
+    // v1 (the older generation): the body, in the shape its schema requires - a different name for the price,
+    // a different name for the network, and resource/description/mimeType inside the entry.
+    expect(r.body.x402Version).toBe(1)
     expect(r.body.accepts).toHaveLength(1)
-    expect(r.body.accepts[0]).toMatchObject({ scheme: 'exact', amount: String(PRICE), network: 'eip155:84532' })
-    expect(r.body.accepts[0].payTo).toBeTruthy()
+    expect(r.body.accepts[0]).toMatchObject({ scheme: 'exact', maxAmountRequired: String(PRICE), network: 'base-sepolia', mimeType: 'application/json' })
+    expect(r.body.accepts[0].resource).toContain(`/v1/x402/${listingId}`)
+    expect(r.body.accepts[0].description).toBeTruthy()
+    // the published v1 example prints outputSchema: null, but the shipped schema is optional and rejects a null
+    expect('outputSchema' in r.body.accepts[0]).toBe(false)
     expect(String(r.body.error)).toContain('costs you nothing')
+    expect(String(r.body.error)).toContain('PAYMENT-SIGNATURE')
+  })
+
+  it('takes the payment from PAYMENT-SIGNATURE as well as from X-PAYMENT', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const wallet = '0x' + '9'.repeat(40)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await call(app, 'POST', `/v1/x402/${listingId}?env=test`, { body: { text: 'Hello' }, headers: { 'payment-signature': paymentHeader(wallet, seller.wallet_address!, PRICE) } })
+    await runtime.done
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    // both names on the way back, too: v2 reads PAYMENT-RESPONSE, v1 read X-PAYMENT-RESPONSE
+    expect(r.headers.get('payment-response')).toBeTruthy()
+    expect(r.headers.get('x-payment-response')).toBe(r.headers.get('payment-response'))
   })
 
   it('refuses a listing we do not operate, and says where the payment would otherwise go', async () => {

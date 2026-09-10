@@ -84,6 +84,59 @@ export type PaymentTerms = {
   x402: PaymentRequiredV2
 }
 
+/**
+ * ADR-50: the v1 shape of the same terms, for the still widely installed first generation of clients.
+ *
+ * v1 and v2 differ in more than a version number: v1 names the price `maxAmountRequired`, names the network
+ * `base` rather than `eip155:8453`, and carries `resource` (a URL string), `description` and `mimeType` INSIDE
+ * each requirement instead of in one object beside them. `outputSchema` is omitted deliberately: the published
+ * v1 example prints `null`, but the shipped zod schema is `.optional()` and rejects an explicit null.
+ */
+export type RequirementsV1 = {
+  scheme: 'exact'
+  network: string
+  maxAmountRequired: string
+  resource: string
+  description: string
+  mimeType: string
+  payTo: string
+  maxTimeoutSeconds: number
+  asset: string
+  extra: { name: string; version: string }
+}
+export type PaymentRequiredV1 = { x402Version: 1; error?: string; accepts: RequirementsV1[] }
+
+export function paymentRequiredV1(terms: PaymentTerms, error?: string): PaymentRequiredV1 {
+  const chain = CHAINS[terms.network]
+  const r = terms.x402.accepts[0]!
+  return {
+    x402Version: 1,
+    ...(error ? { error } : {}),
+    accepts: [
+      {
+        scheme: 'exact',
+        network: chain.v1,
+        maxAmountRequired: r.amount,
+        resource: terms.x402.resource.url,
+        description: terms.x402.resource.description,
+        mimeType: terms.x402.resource.mimeType,
+        payTo: r.payTo,
+        maxTimeoutSeconds: r.maxTimeoutSeconds,
+        asset: r.asset,
+        extra: r.extra,
+      },
+    ],
+  }
+}
+
+/**
+ * The wire form of a v2 PaymentRequired: standard base64 of the JSON, carried in the PAYMENT-REQUIRED response
+ * header. NOT base64url - the reference client validates the value against /^[A-Za-z0-9+/]*={0,2}$/.
+ */
+export function encodePaymentRequiredHeader(pr: PaymentRequiredV2 & { extensions?: Record<string, unknown> }): string {
+  return Buffer.from(JSON.stringify(pr), 'utf8').toString('base64')
+}
+
 /** Everything a buyer needs to pay a job on its own. payTo is ALWAYS the seller's wallet. */
 export function paymentTerms(input: { env: Env; amount: number; payTo: string; resourceUrl: string; description: string; maxTimeoutSeconds?: number }): PaymentTerms {
   const network = networkFor(input.env)

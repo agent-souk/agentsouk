@@ -13,7 +13,7 @@ import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent } from '../agents/service.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
-import { CHAINS, formatUsdc, networkFor, paymentTerms, type RequirementsV2 } from '../payments/x402.js'
+import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, type RequirementsV2 } from '../payments/x402.js'
 
 /**
  * ADR-48: a paid endpoint in the x402 shape, for OUR OWN services only.
@@ -48,6 +48,16 @@ type PaymentPayload = {
 
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const HEX_64 = /^0x[0-9a-fA-F]{64}$/
+
+/** Both generations of the payment headers, so a browser-based client can read them across origins. */
+const EXPOSED_HEADERS = 'Content-Type,PAYMENT-REQUIRED,PAYMENT-RESPONSE,X-PAYMENT-RESPONSE'
+
+/**
+ * ADR-50: what the public x402 indexes read to list a resource. Without it the endpoint is parseable but still
+ * unfindable, which is the same nothing one step later - the agents built to pay for things find work through
+ * these indexes, not by crawling.
+ */
+const BAZAAR = { bazaar: { info: { input: { type: 'http', method: 'POST', bodyType: 'json' }, output: { type: 'json' } } } }
 
 export function parsePaymentHeader(header: string): PaymentPayload {
   let text: string
@@ -216,10 +226,20 @@ export function x402Routes() {
 
       const resourceUrl = `${base()}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`
       const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, description: listing.title })
-      const header = c.req.header('x-payment')
+      // ADR-50: v2 clients send the signed authorization in PAYMENT-SIGNATURE, v1 clients in X-PAYMENT. The
+      // payload inside is the same shape, so one reader serves both generations.
+      const header = c.req.header('payment-signature') ?? c.req.header('x-payment')
       if (!header) {
         recordX402('terms', c.req.header('user-agent'))
-        return c.json({ ...terms.x402, error: `Pay ${formatUsdc(price)} and retry with the X-PAYMENT header. The work is done before the payment is submitted, so a failed delivery costs you nothing.` }, 402)
+        const error = `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing.`
+        // The whole object goes in the PAYMENT-REQUIRED header, because that is where a v2 client looks; the body
+        // carries the SAME terms in the v1 shape, because that is where the older generation looks. Emitting the
+        // v2 object into the body alone - which is what this endpoint did until ADR-50 - is the one combination
+        // neither reads: v2 clients only fall back to a body when it says x402Version 1, and v1 clients reject a
+        // v2 requirement outright. See ADR-50 for the executed proof.
+        c.header('PAYMENT-REQUIRED', encodePaymentRequiredHeader({ ...terms.x402, error, extensions: BAZAAR }))
+        c.header('Access-Control-Expose-Headers', EXPOSED_HEADERS)
+        return c.json(paymentRequiredV1(terms, error), 402)
       }
 
       const payment = parsePaymentHeader(header)
@@ -264,7 +284,12 @@ export function x402Routes() {
             : { note: `This wallet already has an account here (${buyer.handle}); its credentials were shown when it was created and are never shown again. Use the key you were given to fetch receipt_url.`, agent_id: buyer.id, handle: buyer.handle },
         },
         200,
-        { 'X-PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64') },
+        {
+          // v2 names it PAYMENT-RESPONSE, v1 named it X-PAYMENT-RESPONSE; both carry the same base64 receipt.
+          'PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
+          'X-PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
+          'Access-Control-Expose-Headers': EXPOSED_HEADERS,
+        },
       )
     },
   )

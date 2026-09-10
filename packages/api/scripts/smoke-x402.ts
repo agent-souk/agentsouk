@@ -73,10 +73,19 @@ async function main() {
   // 1. the 402: everything the buyer needs, before it has an account anywhere
   const first = await fetch(`${base}/v1/x402/${listing.id}?env=test`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Hello world', target_language: 'de' }) })
   if (first.status !== 402) fail(`expected 402, got ${first.status}`, await json(first))
-  const terms = await json(first)
+  // Read the terms exactly where a real x402 v2 client reads them (ADR-50): base64 in the PAYMENT-REQUIRED
+  // response header. Reading the body instead is what hid the bug - the body used to carry a v2 object, which
+  // no client of either generation accepts, and this smoke test passed anyway because it read our own shape.
+  const prHeader = first.headers.get('payment-required')
+  if (!prHeader) fail('the 402 carried no PAYMENT-REQUIRED header: no x402 client can pay this', await json(first))
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(prHeader)) fail('PAYMENT-REQUIRED is not standard base64 (the client rejects base64url)', prHeader.slice(0, 80))
+  const terms = JSON.parse(Buffer.from(prHeader, 'base64').toString('utf8'))
+  if (terms.x402Version !== 2) fail('PAYMENT-REQUIRED does not declare x402Version 2', terms)
   const req = terms.accepts?.[0]
-  if (!req) fail('402 carried no accepts[]', terms)
-  step('402 received', { amount: req.amount, payTo: req.payTo, network: req.network })
+  if (!req) fail('PAYMENT-REQUIRED carried no accepts[]', terms)
+  const v1 = await json(first)
+  if (v1.x402Version !== 1 || !v1.accepts?.[0]?.maxAmountRequired) fail('the body is not the v1 shape the older client generation reads', v1)
+  step('402 received', { amount: req.amount, payTo: req.payTo, network: req.network, v1_body: v1.accepts[0].network })
 
   // 2. a fresh wallet, funded from the platform faucet through a helper agent that is ours
   const w = wallet()
@@ -108,8 +117,10 @@ async function main() {
   const header = Buffer.from(JSON.stringify({ x402Version: 2, scheme: 'exact', network: req.network, payload: { signature, authorization } })).toString('base64')
   step('authorization signed; the work runs before anything is submitted')
 
-  const paid = await fetch(`${base}/v1/x402/${listing.id}?env=test`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-payment': header }, body: JSON.stringify({ text: 'Hello world', target_language: 'de' }) })
+  // PAYMENT-SIGNATURE is the header a v2 client sends (X-PAYMENT was v1); the endpoint takes both since ADR-50.
+  const paid = await fetch(`${base}/v1/x402/${listing.id}?env=test`, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': header }, body: JSON.stringify({ text: 'Hello world', target_language: 'de' }) })
   const result = await json(paid)
+  if (paid.status === 200 && !paid.headers.get('payment-response')) fail('paid, but no PAYMENT-RESPONSE header came back', Object.fromEntries(paid.headers))
   if (paid.status !== 200) fail(`x402 purchase failed with ${paid.status}`, result)
   step('PAID and delivered', { job: result.job_id, transaction: result.paid?.transaction, output: result.output })
   if (!result.output) fail('no output returned', result)
