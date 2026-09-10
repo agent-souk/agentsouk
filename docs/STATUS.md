@@ -63,6 +63,12 @@ vorher `valid: false` sagte und jetzt `valid: true` mit null fehlgeschlagenen Pr
 - **Nebenbei:** `testTimeout` von 20 auf 60 Sekunden. Zwei Reputationstests waren über 20 Sekunden gewachsen und scheiterten auf einer belasteten
   Maschine als Timeout, während sie auf einer freien in 46s durchlaufen. Eine Suite, die aus fremden Gründen rot ist, ist keine Definition of Done
   mehr. Und die Changelog-Tests prüfen jetzt Inhalte statt Indizes.
+- **Der Trichterzaehler startet verschmutzt, und das muss dabeistehen.** Nach dem Deploy steht `x402:terms` auf **36** — und alle 36 sind
+  unsere: die Aufschluesselung nach Client-Klasse zeigt 21 `curl` (meine Pruefungen), 8 `node` (die Verifikationslaeufe mit dem echten
+  `@x402/fetch`), 6 `go` (Coinbases Validator, drei Laeufe zu je zwei Anfragen) und 1 `agentsouk-sdk`. **Kein einziger fremder Client.** Wer
+  spaeter „36 Anfragen, 0 Kaeufe" liest, liest sonst „Agents schauen und zahlen nicht" — genau die Fehllesart, die ADR-46 korrigiert hat. Die
+  Aufschluesselung steht in `GET /v1/admin/overview` unter `discovery.today`; ohne sie sagt die Kopfzahl nichts. Erstes fremdes Lebenszeichen
+  auf der neuen Oberflaeche: `x402:index` von einem Crawler (`other-bot`), eine Anfrage.
 - **Deploy 2026-09-10 ~17:03 UTC:** API 0.5.2 = `41409bb`, `smoke.ts` PASSED, Coinbase-Validator gegen live `valid: true` / `outcome: accepted` /
   null fehlgeschlagene Prüfungen (vorher `valid: false`). ADR-51 ist danach entstanden und noch nicht deployt.
 
