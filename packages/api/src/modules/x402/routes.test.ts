@@ -383,3 +383,31 @@ describe('the index of what one x402 payment buys (ADR-50)', () => {
     expect(v2.extensions.bazaar.schema.output).toMatchObject({ type: 'object' })
   })
 })
+
+/** From the adversarial audit: the index must not advertise what the endpoint would refuse. */
+describe('upfront listings are neither advertised nor hung (audit fix)', () => {
+  it('refuses an upfront listing at once instead of waiting 90 seconds for a delivery that cannot come', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Services' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Pay first', description: 'A platform-operated listing that wants payment before it delivers.', category: 'ops', pricing_model: 'fixed', price: PRICE, payment: 'upfront' } })
+    expect(l.status).toBe(201)
+    const started = Date.now()
+    const r = await buy(l.body.id, paymentHeader('0x' + '3'.repeat(40), seller.wallet_address!, PRICE))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('x402_upfront_not_supported')
+    expect(r.body.error.hint).toContain('/v1/jobs')
+    expect(Date.now() - started).toBeLessThan(10_000) // not the 90s delivery wait
+    // and it is absent from the index, so nobody is sent there in the first place
+    const idx = await call(app, 'GET', '/v1/x402?env=test')
+    expect(idx.body.services.map((s: { listing_id: string }) => s.listing_id)).not.toContain(l.body.id)
+  })
+
+  it('says how to call what it advertises: a GET on the published url is a 404', async () => {
+    const { listingId } = await firstPartySeller()
+    const idx = await call(app, 'GET', '/v1/x402?env=test')
+    const svc = idx.body.services.find((s: { listing_id: string }) => s.listing_id === listingId)
+    expect(svc.method).toBe('POST')
+    expect(svc.content_type).toBe('application/json')
+    expect((await app.request(new URL(svc.url).pathname + new URL(svc.url).search)).status).toBe(404)
+  })
+})

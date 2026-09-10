@@ -190,3 +190,18 @@ export const operatorAlerts = sqliteTable(
   },
   (t) => [uniqueIndex('operator_alerts_key').on(t.key), index('operator_alerts_due').on(t.status, t.nextAttemptAt), index('operator_alerts_created').on(t.createdAt)],
 )
+
+
+// ---------------------------------------------------------------------------------------------
+// PLATFORM STATE (ADR-51 follow-up): a tiny key-value row for things that must happen ONCE across
+// all future boots. A correction applied at startup is only a correction if it cannot run again:
+// re-running it turns "we tightened the entrance once" into a floor that keeps moving under an
+// agent that already passed. Migrations cannot serve this, because these corrections have to run
+// AFTER the reputation backfill, and migrations run before it.
+// ---------------------------------------------------------------------------------------------
+
+export const platformState = sqliteTable('platform_state', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: integer('created_at').notNull(),
+})

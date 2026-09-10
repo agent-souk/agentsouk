@@ -6,7 +6,7 @@ import { _setConfigForTests } from '../config.js'
 import type { App } from '../app.js'
 import { db } from '../db/client.js'
 import { agents, faucetClaims, jobs, operatorAlerts } from '../db/schema.js'
-import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, MAX_MESSAGE_CHARS } from './alert-channels.js'
+import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, headerSafe, MAX_MESSAGE_CHARS } from './alert-channels.js'
 import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, classifyPayment, deliverAlerts, raise, recentAlerts } from './alerts.js'
 
 const ADMIN = 'test-admin-token-1234567890'
@@ -341,5 +341,38 @@ describe('operator endpoints (ADR-49)', () => {
     }
     expect(await db().select().from(operatorAlerts).then((r) => r.length)).toBe(1)
     expect(randomAddress()).toMatch(/^0x[0-9a-f]{40}$/)
+  })
+})
+
+/**
+ * Findings from the adversarial audit of this module, each with the failure it would have caused.
+ */
+describe('audit fixes (ADR-49 follow-up)', () => {
+  it('survives a long title in the ntfy Title header: fetch refuses a byte over 255 and the alert would be lost', () => {
+    // The sanitiser ran BEFORE clamp, and clamp appended U+2026 — putting a non-latin-1 byte back in the header.
+    // A seller picks its listing title, and the alert title carries it, so this was attacker-reachable.
+    const long = 'Übersetzung: ' + 'A'.repeat(300)
+    const r = webhookRequest(WEBHOOK, { tier: 'urgent', env: 'live', title: long, body: 'x', url: 'https://basescan.org/tx/0x1' })
+    expect(() => new Headers(r.init.headers)).not.toThrow()
+    expect([...r.init.headers.Title!].every((ch) => ch.charCodeAt(0) <= 255)).toBe(true)
+    expect(r.init.headers.Title!.length).toBeLessThanOrEqual(120)
+    expect(r.init.headers.Title!.endsWith('...')).toBe(true)
+    expect(headerSafe('', 10, 'Agent Souk')).toBe('Agent Souk')
+  })
+
+  it('uses every backoff step: the last one was unreachable, so the retry window was 6m15s and not 36 minutes', async () => {
+    answer = () => ({ status: 503 })
+    const now = 1_700_000_000_000
+    await raise(draft(), now)
+    let at = now
+    for (const wait of ALERT_BACKOFF_MS) {
+      expect(await deliverAlerts(at)).toMatchObject({ retried: 1 })
+      at += wait
+    }
+    expect(await deliverAlerts(at)).toMatchObject({ failed: 1 })
+    const [row] = await recentAlerts()
+    expect(row!.attempt).toBe(ALERT_BACKOFF_MS.length + 1)
+    // the window really is the sum of every wait
+    expect(at - now).toBe(ALERT_BACKOFF_MS.reduce((a, b) => a + b, 0))
   })
 })

@@ -7,6 +7,7 @@ import { startScheduler, stopScheduler } from './lib/scheduler.js'
 import { startSanctionsRefresh } from './modules/payments/sanctions.js'
 import { flushHits } from './discovery/hits.js'
 import { backfillReputation, backfillTrustTier } from './modules/reviews/service.js'
+import { runOnce } from './lib/platform-state.js'
 import { backfillListingStats } from './modules/listings/service.js'
 
 async function main() {
@@ -16,8 +17,8 @@ async function main() {
   if (backfill.recomputed || backfill.errors) log.info(backfill, 'reputation backfill')
   // ADR-51, once: withdraw tier 1 where the live record does not meet the tightened gate. After backfillReputation,
   // because it reads the recomputed sides.
-  const tiers = await backfillTrustTier()
-  if (tiers.demoted || tiers.errors) log.info(tiers, 'trust tier backfill')
+  const tiers = await runOnce('adr51_trust_tier_demotion', backfillTrustTier)
+  if (tiers.ran) log.info(tiers.result, 'trust tier correction (ADR-51, once)')
   // ADR-45: listing stats written before jobs_paid existed counted free jobs and agent ids toward graduation.
   const listingBackfill = await backfillListingStats()
   if (listingBackfill.recomputed || listingBackfill.errors) log.info(listingBackfill, 'listing stats backfill')

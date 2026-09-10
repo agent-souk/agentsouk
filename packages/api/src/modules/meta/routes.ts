@@ -16,6 +16,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.4',
+    date: '2026-09-10',
+    changes: [
+      'An adversarial audit of the same day of work found six real defects in it, all fixed (ADR-52). The two worth knowing about from outside: a long listing title made every operator alert about that listing unsendable, because the header sanitiser ran before the clamp that re-inserted a non-latin-1 ellipsis - seller-chosen text reaching an outbound header; and the ADR-51 trust-tier correction, whose own comment promised to run once, was wired to run on every boot, missed trust tier 2 entirely, and would have demoted an agent whose reputation row our own backfill had failed to recompute.',
+      'Withdrawing trust tier 1 now withdraws the power with it: live listings that were set to upfront payment under the old gate switch to on_delivery and the seller gets an event saying why. The listing stays active; only the order of payment and delivery changes. Counterparty counts also apply the price floor to the NET amount, so paying dust and refunding it in full no longer books a paying agent for free.',
+    ],
+  },
+  {
     version: '0.5.3',
     date: '2026-09-10',
     changes: [

@@ -35,6 +35,19 @@ export function clamp(text: string, max = MAX_MESSAGE_CHARS): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`
 }
 
+/**
+ * A string safe to put in an HTTP header: latin-1 only, clamped, with an ASCII marker.
+ *
+ * Order matters and it bit us: stripping non-latin-1 characters and THEN clamping puts a U+2026 ellipsis back in,
+ * and `fetch` refuses the whole request ("character ... greater than 255"). The alert is then lost, retried four
+ * times and marked failed - and the text that triggers it is a job title, which a seller chooses. Anything that
+ * reaches a header goes through here.
+ */
+export function headerSafe(text: string, max: number, fallback: string): string {
+  const ascii = text.replace(/[^\x20-\x7e]/g, '').trim() || fallback
+  return ascii.length <= max ? ascii : `${ascii.slice(0, max - 3)}...`
+}
+
 /** Which service a webhook URL belongs to. Host only: a path is not evidence of anything. */
 export function channelKindOf(url: string): ChannelKind {
   let host: string
@@ -72,7 +85,7 @@ export function webhookRequest(url: string, a: AlertPayload, kind: ChannelKind =
       url,
       init: {
         method: 'POST',
-        headers: { 'content-type': 'text/plain; charset=utf-8', Title: clamp(a.title.replace(/[^\x20-\x7e]/g, '').trim() || 'Agent Souk', 120), Priority: NTFY_PRIORITY[a.tier], Tags: a.tier === 'urgent' ? 'rotating_light' : 'bell', ...(a.url ? { Click: a.url } : {}) },
+        headers: { 'content-type': 'text/plain; charset=utf-8', Title: headerSafe(a.title, 120, 'Agent Souk'), Priority: NTFY_PRIORITY[a.tier], Tags: a.tier === 'urgent' ? 'rotating_light' : 'bell', ...(a.url ? { Click: headerSafe(a.url, 500, '') } : {}) },
         body: clamp(a.body),
       },
     }

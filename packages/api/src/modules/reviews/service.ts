@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, lt, or, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agentReputation, agents, bounties, jobs, listings, reviews, settlements, type CategoryCard, type Env, type ReputationSide } from '../../db/schema.js'
 import { OUTSIDER_PRICE_FLOOR } from '../meta/stats.js'
@@ -211,7 +211,10 @@ function sideFromJobs(
       volume += net
       if (!firstParty && !ourMoney) thirdPartyVolume += net
     }
-    if (pays.length && paidTotal >= OUTSIDER_PRICE_FLOOR) {
+    // ADR-51 follow-up: the floor applies to what the counterparty ACTUALLY parted with, not to what it sent
+    // before getting it back. Gating on the gross figure let a colluding pair pay 0.01 USDC, refund it in full,
+    // and still book one more "different paying agent" for the trust-tier gate at a net cost of zero.
+    if (pays.length && net >= OUTSIDER_PRICE_FLOOR) {
       for (const s of pays) {
         const address = (side === 'seller' ? s.payerAddress : s.payTo).toLowerCase()
         addresses.add(address)
@@ -403,23 +406,51 @@ function needsRecompute(s: { third_party_counterparties?: number | null; orders_
  *
  * Runs after backfillReputation(), because it reads the recomputed sides.
  */
-export async function backfillTrustTier(): Promise<{ checked: number; demoted: number; errors: number }> {
-  const rows = await db().query.agents.findMany({ where: eq(agents.trustTier, 1), columns: { id: true, handle: true } })
+export async function backfillTrustTier(): Promise<{ checked: number; demoted: number; skipped_not_recomputed: number; errors: number }> {
+  // Tier 2 is "tier 1 plus a verified domain" (ADR-26), so it rests on the same basis and must be checked too -
+  // otherwise the agents wearing the HIGHEST public trust badge are exactly the ones the correction misses.
+  const rows = await db().query.agents.findMany({ where: gte(agents.trustTier, 1), columns: { id: true, handle: true, trustTier: true } })
   let demoted = 0
+  let skipped = 0
   let errors = 0
   for (const a of rows) {
     try {
       const rep = await db().query.agentReputation.findFirst({ where: and(eq(agentReputation.agentId, a.id), eq(agentReputation.env, 'live')) })
+      // Never demote on missing data. `qualifiesT1` reads an absent third_party_paying_agents as 0, so a row that
+      // backfillReputation failed to recompute would look like a failing record rather than an unknown one - and
+      // an agent would lose a live power because of OUR error. Absent field = leave it alone and say so.
+      if (rep && rep.asSeller.third_party_paying_agents == null && rep.asBuyer.third_party_paying_agents == null) {
+        skipped += 1
+        log.warn({ agentId: a.id, handle: a.handle }, 'ADR-51: tier left alone, its reputation row was never recomputed')
+        continue
+      }
       if (qualifiesT1(rep?.asSeller) || qualifiesT1(rep?.asBuyer)) continue
-      await db().update(agents).set({ trustTier: 0, updatedAt: Date.now() }).where(and(eq(agents.id, a.id), eq(agents.trustTier, 1)))
+      await db().update(agents).set({ trustTier: 0, updatedAt: Date.now() }).where(and(eq(agents.id, a.id), gte(agents.trustTier, 1)))
       demoted += 1
-      log.warn({ agentId: a.id, handle: a.handle }, 'ADR-51: trust tier 1 withdrawn, the live record does not meet the tightened gate')
+      // Taking the tier without taking the power would be a badge change and nothing more: upfront is checked when
+      // a listing is created or its payment terms are edited, so an upfront listing published under the old gate
+      // would go on asking strangers to pay before delivery for ever. Flip those to on_delivery and tell the
+      // seller, rather than leaving a power standing that its own tier no longer justifies.
+      const flipped = await db()
+        .update(listings)
+        .set({ payment: 'on_delivery', updatedAt: Date.now() })
+        .where(and(eq(listings.sellerAgentId, a.id), eq(listings.env, 'live'), eq(listings.payment, 'upfront')))
+      if (flipped.rowsAffected) {
+        await emit('live', a.id, 'agent.trust_tier_changed', {
+          trust_tier: 0,
+          previous_trust_tier: a.trustTier,
+          reason: 'ADR-51: trust tier 1 now needs 5 completed live jobs on one side of the market, paid by 3 different agents at 3 different wallets, 10 USDC in total. Your live record does not meet it.',
+          listings_switched_to_on_delivery: flipped.rowsAffected,
+          hint: 'Nothing else changed: your listings are still active and still yours. They now take payment against the sealed delivery instead of before it. Reaching the gate again restores upfront.',
+        })
+      }
+      log.warn({ agentId: a.id, handle: a.handle, from: a.trustTier, listingsFlipped: flipped.rowsAffected ?? 0 }, 'ADR-51: trust tier withdrawn, the live record does not meet the tightened gate')
     } catch (err) {
       errors += 1
       log.warn({ err, agentId: a.id }, 'trust tier backfill row failed')
     }
   }
-  return { checked: rows.length, demoted, errors }
+  return { checked: rows.length, demoted, skipped_not_recomputed: skipped, errors }
 }
 
 export async function backfillReputation(): Promise<{ recomputed: number; errors: number }> {

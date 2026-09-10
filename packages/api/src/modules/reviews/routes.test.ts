@@ -6,9 +6,10 @@ import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
 import { backfillReputation, backfillTrustTier, bayesianRating, scoreOf, emptySide, reviewWeight, weightedRating } from './service.js'
 import { db } from '../../db/client.js'
-import { agentReputation, agents } from '../../db/schema.js'
+import { agentReputation, agents, listings } from '../../db/schema.js'
 import { eq, sql } from 'drizzle-orm'
 import { sign } from '../../lib/crypto.js'
+import { runOnce } from '../../lib/platform-state.js'
 import { walletMessage } from '../agents/service.js'
 
 let app: App
@@ -382,5 +383,60 @@ describe('trust tier 1 counts agents as well as wallets (ADR-51)', () => {
     for (let i = 0; i < 5; i++) await completedJob('live', sellers[i % 3]!, buyer, 2_000_000)
     expect((await backfillTrustTier()).demoted).toBe(0)
     expect((await call(app, 'GET', `/v1/agents/${buyer.agent.id}/reputation`)).body.trust_tier).toBe(1)
+  })
+})
+
+/** From the adversarial audit of ADR-51: the correction promised to be a one-off and was not, and it missed tier 2. */
+describe('the ADR-51 correction, audited (follow-up)', () => {
+  it('runs exactly once, ever: a second boot must not re-apply a moving floor', async () => {
+    await db().update(agents).set({ trustTier: 1 }).where(eq(agents.id, seller.agent.id))
+    const first = await runOnce('adr51_trust_tier_demotion', backfillTrustTier)
+    expect(first.ran).toBe(true)
+    expect(first.result).toMatchObject({ demoted: 1 })
+    // an agent that legitimately reaches tier 1 later must not be re-checked by this correction on the next boot
+    await db().update(agents).set({ trustTier: 1 }).where(eq(agents.id, buyer.agent.id))
+    const second = await runOnce('adr51_trust_tier_demotion', backfillTrustTier)
+    expect(second.ran).toBe(false)
+    expect((await call(app, 'GET', `/v1/agents/${buyer.agent.id}/reputation`)).body.trust_tier).toBe(1)
+  })
+
+  it('reaches trust tier 2, which is tier 1 plus a domain and rests on the same basis', async () => {
+    await db().update(agents).set({ trustTier: 2 }).where(eq(agents.id, seller.agent.id))
+    expect((await backfillTrustTier()).demoted).toBe(1)
+    expect((await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body.trust_tier).toBe(0)
+  })
+
+  it('never demotes on missing data: an agent must not lose a live power because OUR recompute failed', async () => {
+    // a reputation row from before the field existed, exactly as backfillReputation leaves one it could not redo
+    await db().update(agents).set({ trustTier: 1 }).where(eq(agents.id, seller.agent.id))
+    const stale = { ...emptySide(), jobs_completed: 9 }
+    delete (stale as Record<string, unknown>).third_party_paying_agents
+    await db().insert(agentReputation).values({ agentId: seller.agent.id, env: 'live', asSeller: stale, asBuyer: stale, score: 50, updatedAt: Date.now() }).onConflictDoUpdate({ target: [agentReputation.agentId, agentReputation.env], set: { asSeller: stale, asBuyer: stale } })
+    const r = await backfillTrustTier()
+    expect(r).toMatchObject({ demoted: 0, skipped_not_recomputed: 1 })
+    expect((await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body.trust_tier).toBe(1)
+  })
+})
+
+/** From the audit: withdrawing the tier without withdrawing the power would be a badge change and nothing more. */
+describe('the demotion takes the power with the tier (audit fix)', () => {
+  it('switches live upfront listings to on_delivery and tells the seller why', async () => {
+    // An upfront listing published under the OLD gate, which is the whole scenario: today's gate would refuse it
+    // (409 upfront_requires_seller_record), so it is written the way the old code left it behind.
+    await db().update(agents).set({ trustTier: 1 }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.live, body: { title: 'Pay me first', description: 'A service that asks for payment before it delivers anything.', category: 'ops', pricing_model: 'fixed', price: 1_000_000 } })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    await db().update(listings).set({ payment: 'upfront' }).where(eq(listings.id, l.body.id))
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`)).body.payment).toBe('upfront')
+
+    expect((await backfillTrustTier()).demoted).toBe(1)
+
+    const after = await call(app, 'GET', `/v1/listings/${l.body.id}`)
+    expect(after.body.payment).toBe('on_delivery') // the power went with the tier
+    expect(after.body.status).toBe('active') // and nothing else was taken away
+    const ev = await call(app, 'GET', '/v1/events?types=agent.trust_tier_changed', { key: seller.api_keys.live })
+    expect(ev.body.data).toHaveLength(1)
+    expect(ev.body.data[0].data).toMatchObject({ trust_tier: 0, listings_switched_to_on_delivery: 1 })
+    expect(String(ev.body.data[0].data.reason)).toContain('3 different agents')
   })
 })

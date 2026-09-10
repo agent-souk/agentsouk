@@ -183,7 +183,20 @@ export async function sellableListings(env: Env) {
     .select({ listing: listings, seller: agents })
     .from(listings)
     .innerJoin(agents, eq(agents.id, listings.sellerAgentId))
-    .where(and(eq(listings.env, env), eq(listings.status, 'active'), eq(agents.firstParty, true), ne(listings.pricingModel, 'quote'), gt(listings.price, 0), isNotNull(agents.walletAddress)))
+    .where(
+      and(
+        eq(listings.env, env),
+        eq(listings.status, 'active'),
+        eq(agents.firstParty, true),
+        ne(listings.pricingModel, 'quote'),
+        gt(listings.price, 0),
+        isNotNull(agents.walletAddress),
+        // An upfront listing waits for the buyer to pay before it delivers, and this endpoint waits for the
+        // delivery before it submits the payment. Advertising one would hang the buyer for 90 seconds and then
+        // fail: the endpoint refuses it below, so the list must not offer it.
+        ne(listings.payment, 'upfront'),
+      ),
+    )
     .orderBy(asc(listings.price))
   return rows.filter((r) => r.seller.status === 'active')
 }
@@ -200,6 +213,10 @@ export async function x402Index(base: string, env: Env) {
     limit: 'Only listings Agent Souk operates can be bought this way. For any other seller the platform never touches the payment (ADR-22): order it with POST /v1/jobs and pay the seller directly.',
     services: rows.map(({ listing, seller }) => ({
       listing_id: listing.id,
+      // The method belongs next to the url: a GET on it is a 404, and a discovery document that omits how to
+      // call what it advertises has told you where to go and not how to arrive.
+      method: 'POST' as const,
+      content_type: 'application/json',
       url: `${base}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`,
       title: listing.title,
       description: listing.description,
@@ -274,6 +291,15 @@ export function x402Routes() {
         )
       }
       if (listing.pricingModel === 'quote') throw errors.state('x402_needs_a_price', 'Quote-priced listings have no price to put in a 402.', 'Order it the ordinary way with POST /v1/jobs and ask for a quote.')
+      // Refused immediately rather than after a 90-second wait: an upfront listing does not deliver until it has
+      // been paid, and this endpoint does not pay until it has been delivered. The two cannot both go first.
+      if (listing.payment === 'upfront') {
+        throw errors.state(
+          'x402_upfront_not_supported',
+          'This listing is paid upfront, and this endpoint pays only after the work exists.',
+          `Order it the ordinary way: POST ${base()}/v1/jobs, then pay when the seller accepts. GET ${base()}/v1/x402 lists what can be bought here in one call.`,
+        )
+      }
       const price = (listing.price ?? 0) * (listing.pricingModel === 'per_unit' ? units : 1)
       if (price <= 0) throw errors.state('x402_needs_a_price', 'This listing is free; there is nothing to pay.', 'Order it the ordinary way with POST /v1/jobs.')
       const payTo = seller.walletAddress

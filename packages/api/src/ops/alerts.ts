@@ -30,8 +30,14 @@ import { channelStatus, requestsFor, type AlertPayload, type ChannelRequest } fr
  * Unset configuration means no alerts and no rows: the platform must run identically with nobody watching.
  */
 
+/**
+ * Waits BETWEEN attempts, so there is one more attempt than there are waits. Setting MAX_ATTEMPTS to the length
+ * of this table made the last entry unreachable: the row was failed at attempt 4 before the 30-minute wait was
+ * ever read, and the retry window was 6m15s while the table said 36 minutes. A channel that is down for a
+ * quarter of an hour - a deploy, a webhook rotation - is exactly the case the long tail is for.
+ */
 export const ALERT_BACKOFF_MS = [15_000, 60_000, 5 * 60_000, 30 * 60_000]
-export const ALERT_MAX_ATTEMPTS = ALERT_BACKOFF_MS.length
+export const ALERT_MAX_ATTEMPTS = ALERT_BACKOFF_MS.length + 1
 export const ALERT_TIMEOUT_MS = 10_000
 
 const TIER_ORDER: Record<AlertTier, number> = { urgent: 3, notable: 2, quiet: 1 }
@@ -332,7 +338,26 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     if (!ourMoney.has(env)) ourMoney.set(env, await ourFundedWallets(env))
     return ourMoney.get(env)!
   }
+  /**
+   * The cap has to hold HERE as well as at raise(). raise() only sees what was delivered before the row was
+   * written; thirty rows raised inside one minute all pass it, and this loop would then send twenty of them in a
+   * single pass. Counted per environment and never applied to an urgent alert, exactly as in raise().
+   */
+  const cap = config().OPERATOR_ALERT_MAX_PER_HOUR
+  const deliveredThisHour = new Map<Env, number>()
+  for (const env of ['live', 'test'] as Env[]) {
+    const n = await db()
+      .select({ n: sql<number>`count(*)` })
+      .from(operatorAlerts)
+      .where(and(eq(operatorAlerts.env, env), gte(operatorAlerts.sentAt, now - 3600_000)))
+    deliveredThisHour.set(env, n[0]?.n ?? 0)
+  }
   for (const row of due) {
+    if (row.tier !== 'urgent' && (deliveredThisHour.get(row.env) ?? 0) >= cap) {
+      await db().update(operatorAlerts).set({ status: 'suppressed', attempt: row.attempt + 1, lastError: `more than ${cap} alerts delivered in the last hour`, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
+      stats.suppressed++
+      continue
+    }
     const payload: AlertPayload = { tier: row.tier, env: row.env, title: row.title, body: row.body, url: (row.data as { url?: string })?.url ?? null, data: row.data }
     const attempt = row.attempt + 1
     // A payment made with money that came from us is our own traffic wearing someone else's handle. It is held
@@ -340,7 +365,10 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     const payers = ((row.data as { payers?: unknown })?.payers ?? []) as string[]
     if (payers.length) {
       const our = await ourWalletsFor(row.env)
-      if (payers.every((p) => our.has(String(p).toLowerCase()))) {
+      // ANY payer, not every payer - the same clause GET /v1/stats uses (`exists (... payer_address in ours)`,
+      // modules/meta/stats.ts). A job paid partly by an outside wallet and partly by ours is excluded from the
+      // published figure, so it must not wake anyone either. Two definitions drifting apart is ADR-43.
+      if (payers.some((p) => our.has(String(p).toLowerCase()))) {
         await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: 'the paying wallet holds money that came from us (modules/payments/our-money.ts)', updatedAt: now }).where(eq(operatorAlerts.id, row.id))
         stats.suppressed++
         continue
@@ -357,6 +385,7 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     if (results.some((r) => r.ok)) {
       await db().update(operatorAlerts).set({ status: 'sent', attempt, results, lastError: results.find((r) => !r.ok)?.error ?? null, sentAt: now, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
       stats.sent++
+      deliveredThisHour.set(row.env, (deliveredThisHour.get(row.env) ?? 0) + 1)
       continue
     }
     // Both halves: the status says whether the URL is wrong or the credential is, the body says why.
