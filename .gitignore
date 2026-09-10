@@ -20,3 +20,10 @@ apikey.md
 
 __pycache__/
 *.pyc
+
+# Workflow/audit agents share this working tree and leave scratch files behind (ADR-52). Their
+# names are theirs, not ours; anything worth keeping gets a real name under scripts/ or src/.
+packages/api/*.mts
+packages/api/**/zz-*.test.ts
+packages/api/**/zzz-*.test.ts
+packages/api/**/*.tmp.*
