@@ -75,15 +75,20 @@ export function parsePaymentHeader(header: string): PaymentPayload {
  * step it never asked for. The wallet is bound without the usual EIP-191 proof because the authorization in hand
  * IS a signature by that wallet; the proof exists, it just has a different shape.
  */
-async function buyerForWallet(address: string) {
+type BuyerAccount = { agent: Parameters<typeof createJob>[1]; credentials: Record<string, unknown> | null }
+
+async function buyerForWallet(address: string): Promise<BuyerAccount> {
   const known = await db().query.agents.findFirst({ where: eq(agents.walletAddress, address) })
   if (known) {
     if (known.status !== 'active') throw errors.state('buyer_not_active', 'The agent bound to this wallet is not active.')
-    return known
+    // Never hand out the credentials of an account that already existed: proving control of the wallet again is
+    // not proof that this caller is the one that created it.
+    return { agent: known, credentials: null }
   }
   const created = await createAgent({ name: `x402 buyer ${address.slice(0, 6)}${address.slice(-4)}`, description: 'Registered by paying through the x402 endpoint (ADR-48); the wallet is the identity.' })
   await db().update(agents).set({ walletAddress: address, updatedAt: Date.now() }).where(eq(agents.id, created.agent.id))
-  return (await db().query.agents.findFirst({ where: eq(agents.id, created.agent.id) }))!
+  const agent = (await db().query.agents.findFirst({ where: eq(agents.id, created.agent.id) }))!
+  return { agent, credentials: { agent_id: agent.id, handle: agent.handle, api_keys: created.apiKeys, keypair: created.keypair ?? null } }
 }
 
 /** Polls the job row until the seller has delivered. Returns null on timeout; nothing is settled in that case. */
@@ -134,7 +139,7 @@ async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resou
  * check will accept it. That wait belongs here: the buyer is holding an open HTTP request and has already paid,
  * and asking it to retry a purchase it cannot repeat (the nonce is spent) would be the wrong answer.
  */
-async function payUntilMined(env: Env, buyer: Awaited<ReturnType<typeof buyerForWallet>>, jobId: string, transaction: string, timeoutMs = 60_000) {
+async function payUntilMined(env: Env, buyer: Parameters<typeof createJob>[1], jobId: string, transaction: string, timeoutMs = 60_000) {
   const until = Date.now() + timeoutMs
   for (;;) {
     try {
@@ -154,7 +159,8 @@ const ResultView = z
     listing_id: z.string(),
     output: z.unknown(),
     paid: z.object({ amount: z.number().int(), display: z.string(), transaction: z.string(), network: z.string(), payer: z.string(), pay_to: z.string() }),
-    receipt_url: z.string(),
+    receipt_url: z.string().openapi({ description: 'The signed receipt of this job. It is the buyer own receipt rather than a public one, so it needs the key from account.' }),
+    account: z.record(z.string(), z.unknown()).openapi({ description: 'The account bound to the paying wallet. On the first purchase from a wallet it carries the API keys and keypair, once and never again.' }),
   })
   .openapi('X402Result')
 
@@ -221,7 +227,7 @@ export function x402Routes() {
       assertNotSanctioned(auth.from, 'The paying wallet address')
       assertNotSanctioned(payTo, 'The seller wallet address')
 
-      const buyer = await buyerForWallet(auth.from)
+      const { agent: buyer, credentials } = await buyerForWallet(auth.from)
       const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
       const state = await waitForDelivery(job.id, 90_000)
       if (state !== 'delivered') {
@@ -245,6 +251,9 @@ export function x402Routes() {
           output: paid.job.output,
           paid: { amount: price, display: formatUsdc(price), transaction, network: terms.network, payer: auth.from, pay_to: payTo },
           receipt_url: `${base()}/v1/jobs/${job.id}/receipt`,
+          account: credentials
+            ? { note: 'Paying created an account bound to your wallet (ADR-48). These credentials are shown once and never again: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on. Lose them and the account still exists, but nothing proves it is yours.', ...credentials }
+            : { note: `This wallet already has an account here (${buyer.handle}); its credentials were shown when it was created and are never shown again. Use the key you were given to fetch receipt_url.`, agent_id: buyer.id, handle: buyer.handle },
         },
         200,
         { 'X-PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64') },

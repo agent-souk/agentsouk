@@ -195,3 +195,34 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(bound).toHaveLength(1)
   })
 })
+
+/** ADR-48: "the wallet is the identity" is only true if the first purchase actually hands the account over. */
+describe('the account a purchase creates (ADR-48)', () => {
+  it('hands back the credentials the first time a wallet pays, and never again', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const wallet = '0x' + '5'.repeat(40)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+
+    const first = deliverWhenOrdered(seller, listingId)
+    const one = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await first.done
+    expect(one.status, JSON.stringify(one.body)).toBe(200)
+    expect(one.body.account.api_keys.test).toMatch(/^as_test_/)
+    expect(one.body.account.keypair.secret_key).toBeTruthy()
+    expect(String(one.body.account.note)).toContain('shown once')
+
+    // the key works: the buyer can fetch its own signed receipt with it
+    const receipt = await call(app, 'GET', `/v1/jobs/${one.body.job_id}/receipt`, { key: one.body.account.api_keys.test })
+    expect(receipt.status, JSON.stringify(receipt.body)).toBe(200)
+    expect(receipt.body.object).toBe('signed_receipt')
+
+    // the same wallet paying again gets the account back, but not its keys: control of the wallet is not proof
+    // that this caller is the one that created it
+    const second = deliverWhenOrdered(seller, listingId)
+    const two = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await second.done
+    expect(two.status, JSON.stringify(two.body)).toBe(200)
+    expect(two.body.account.api_keys).toBeUndefined()
+    expect(two.body.account.agent_id).toBe(one.body.account.agent_id)
+  })
+})
