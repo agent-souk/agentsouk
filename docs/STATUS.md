@@ -16,22 +16,16 @@ weil er unsere eigene Körperform las.** Damit sagen die bisherigen x402-Zahlen 
 dem Deploy heute Abend neu. Gegengeprüft ist der Fix jetzt gegen die echten Pakete **und** gegen Coinbases öffentlichen Validator, der live
 vorher `valid: false` sagte und jetzt `valid: true` mit null fehlgeschlagenen Prüfungen.
 
-**Für Nick (das Wichtigste zuerst):**
-1. **Setz einen Alarmkanal** — sonst erfährst du den ersten fremden Kauf gar nicht in dem Moment, in dem er passiert. Ohne Konfiguration passiert
-   nichts, absichtlich. Der Weg ohne Konto irgendwo ist ntfy; Discord, Slack, Telegram und E-Mail gehen genauso. Die Schritte stehen in
-   `docs/LAUNCH-CHECKLIST.md` unter „Neu offen seit Checkpoint 71", Punkte A–C. **Warnung zu ntfy:** wer den Themennamen kennt, liest alle
-   Alarme mit, und darin stehen Wallet-Adressen.
-2. **Zwei Verzeichnisse brauchen dich** (Punkte D und E): x402scan verlangt einen Browser, x402-list.com eine Kontakt-E-Mail. Und **Punkt F**:
-   eine Zeile per Pull Request in `awesome-x402` — die mache ich erst nach deinem OK, es ist ein öffentlicher Beitrag unter deinem Namen.
-3. **Der Live-Geldweg des x402-Endpunkts ist nie durchgelaufen.** Der Rauchtest lief nur im Sandkasten. Punkt H in der Checkliste: ein einziger
-   Kauf über 0,02 USDC von einer Wallet, die nicht souk-services gehört. Er bewegt keine Kennzahl (wir stehen auf einer Seite) und prüft den Weg.
-4. **Die eine Zahl ist unverändert 0** (`between_outsiders.orders`, live). Die Messlatte zum ~23.09. steht.
-5. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. `in_progress`, nichts
-   geliefert, Frist 14.09. Auszahlung ist vorab bestätigt, Reihenfolge fix-first. **Nicht mehr fragen.**
-6. **MCP-Registry hängt weiter auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Nachziehen, sobald ich den Registry-Key wieder anfasse.
-7. **ADR-51 enthält die erste Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim
-   Start). Heute betrifft das niemanden: auf live hat kein einziger Agent Stufe 1.
-8. **Platte: 4,0 GB frei** (von 5,4 GB gestern gefallen; unter ~1 GB scheitern die Tests hier mit SQLITE_FULL). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben deine Entscheidung — inzwischen die einzigen zwei Posten, die das wirklich lösen würden.
+**Für Nick — ich habe die offenen Punkte selbst entschieden („Entscheide alles selbst mach weiter"), hier steht was und warum:**
+1. **Der Alarmkanal ist gesetzt und getestet. Du musst nur noch abonnieren.** Gewählt: **ntfy** (kein Konto nötig), Stufe **`quiet`** (also alles — auf live steht `between_outsiders.orders` bei 0, im Moment ist jedes Ereignis eine Nachricht). Der Themenname ist lang und zufällig und steht in `~/.agentsouk-ops/agentsouk-api.env`, **absichtlich nicht im Repo**: wer ihn kennt, liest alle Alarme mit, und darin stehen Wallet-Adressen. **Dein Schritt:** ntfy-App installieren → „Subscribe to topic" → Namen aus der Datei eintragen. Ein Testalarm ist um 18:00 UTC durchgelaufen (ntfy 200).
+2. **awesome-x402: [PR #1481](https://github.com/xpaysh/awesome-x402/pull/1481) ist offen.** Erwartung ehrlich: letzter Merge dort 2026-07-28, seither ~460 offene PRs. Wir stehen in der Schlange, mehr nicht.
+3. **MCP-Registry nachgezogen:** `dev.agentsouk/agentsouk` steht jetzt auf **0.5.3** statt 0.3.5. Das ist die Version, die Glama und mcpchangefeed anzeigen.
+4. **Zwei Dinge habe ich bewusst NICHT gemacht**, und beide Begründungen gehören dir: **(a) x402-list.com** verlangt eine öffentlich sichtbare Kontakt-E-Mail — deine private Adresse an einen fremden Dienst zu geben ist nicht meine Entscheidung. Leg eine Weiterleitung `hello@agentsouk.dev` in Cloudflare an (Email Routing, kostenlos), dann mache ich es. **(b) Ein echter Testkauf auf live**: er müsste von einer frisch überwiesenen Wallet kommen, und genau dort bricht die Geldspur von `ourFundedWallets` — der Kauf sähe wie eine echte Drittzahlung aus und ich müsste ihn hinterher per Admin-Aufruf zurückmarkieren. Das ist das Muster, das ADR-43/44/46 gekostet hat, für einen kleinen Erkenntnisgewinn: der Settle-Pfad wurde heute gar nicht angefasst und lief gestern end-to-end. Details in `docs/LAUNCH-CHECKLIST.md`, Punkte E und H.
+5. **Was noch dich braucht:** nur **x402scan** (Punkt D) — die Anmeldung dort verlangt einen Browser und eine Browser-Wallet, da komme ich nicht rein.
+6. **Die eine Zahl ist unverändert 0** (`between_outsiders.orders`, live). Die Messlatte zum ~23.09. steht.
+7. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. `in_progress`, nichts geliefert, Frist 14.09. Auszahlung ist vorab bestätigt, Reihenfolge fix-first. **Nicht mehr fragen.**
+8. **ADR-51 enthält die erste Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim Start). Heute betrifft das niemanden: auf live hat kein einziger Agent Stufe 1.
+9. **Platte: 4,0 GB frei** (von 5,4 GB gestern gefallen; unter ~1 GB scheitern die Tests hier mit SQLITE_FULL). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben deine Entscheidung — inzwischen die einzigen zwei Posten, die das wirklich lösen würden.
 
 ## Stand 2026-09-10, Checkpoint 71: der Endpunkt war unlesbar, der Inhaber war blind, und die letzten zwei Audit-Funde sind zu (ADR-49/50/51; API 0.5.2)
 
