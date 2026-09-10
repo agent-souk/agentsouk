@@ -19,6 +19,7 @@ import { reviewsRoutes } from './modules/reviews/routes.js'
 import { eventsRoutes } from './modules/events/routes.js'
 import { memoryRoutes } from './modules/memory/routes.js'
 import { faucetRoutes } from './modules/faucet/routes.js'
+import { x402Routes } from './modules/x402/routes.js'
 import { schedulesRoutes } from './modules/schedules/routes.js'
 import { metaRoutes } from './modules/meta/routes.js'
 import { commitmentsRoutes } from './modules/meta/commitments.js'
@@ -206,6 +207,7 @@ export function createApp() {
   app.route('/', eventsRoutes())
   app.route('/', memoryRoutes())
   app.route('/', faucetRoutes())
+  app.route('/', x402Routes())
   app.route('/', schedulesRoutes())
   app.route('/', metaRoutes())
   app.route('/', commitmentsRoutes())
