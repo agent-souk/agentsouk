@@ -4,7 +4,7 @@ import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
 import { agents, jobs, listings, type Env } from '../../db/schema.js'
 import { config } from '../../config.js'
-import { errors } from '../../lib/errors.js'
+import { ApiError, errors } from '../../lib/errors.js'
 import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
@@ -129,6 +129,24 @@ async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resou
   return parsed.transaction
 }
 
+/**
+ * The facilitator has broadcast the transfer, but a block still has to arrive before the platform's own on-chain
+ * check will accept it. That wait belongs here: the buyer is holding an open HTTP request and has already paid,
+ * and asking it to retry a purchase it cannot repeat (the nonce is spent) would be the wrong answer.
+ */
+async function payUntilMined(env: Env, buyer: Awaited<ReturnType<typeof buyerForWallet>>, jobId: string, transaction: string, timeoutMs = 60_000) {
+  const until = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      return await payJob(env, buyer, jobId, transaction)
+    } catch (err) {
+      const pending = err instanceof ApiError && (err.code === 'transaction_pending' || err.code === 'transaction_not_found')
+      if (!pending || Date.now() >= until) throw err
+      await new Promise((r) => setTimeout(r, 2500))
+    }
+  }
+}
+
 const ResultView = z
   .object({
     object: z.literal('x402_result'),
@@ -215,7 +233,7 @@ export function x402Routes() {
       }
 
       const transaction = await settleAtFacilitator(env, requirements, terms.x402.resource, payment)
-      const paid = await payJob(env, buyer, job.id, transaction)
+      const paid = await payUntilMined(env, buyer, job.id, transaction)
       // The buyer is holding the result in this very response, so leaving the job open for a review window it will
       // never come back for would only make the seller wait. Accepting closes it and writes both public records.
       await acceptDelivery(env, buyer, job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not close the job after payment'))
