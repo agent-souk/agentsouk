@@ -4,7 +4,7 @@ import { errors } from '../lib/errors.js'
 import { errorResponses } from '../lib/http.js'
 import { requireAdmin } from '../middleware/admin.js'
 import { channelStatus } from './alert-channels.js'
-import { alertsStatus, deliverPending, raise, recentAlerts } from './alerts.js'
+import { alertsStatus, deliverAlerts, raise, recentAlerts } from './alerts.js'
 
 /**
  * ADR-49: the operator's own endpoints. Not part of the marketplace API, not in any discovery text, and behind
@@ -56,7 +56,7 @@ export function opsRoutes() {
       const now = Date.now()
       // A fresh key every call: a test that silently deduplicated against an earlier test would prove nothing.
       const id = await raise({ env: 'test', tier: 'urgent', key: `test:${now}`, title: 'Test alert from Agent Souk', body: [note ?? 'If you can read this, the channel works.', '', 'A real alert looks like this. The ones that matter say "paid between two outsiders".'].join('\n'), data: { test: true } }, now)
-      const result = await deliverPending(now)
+      const result = await deliverAlerts(now)
       const [row] = await recentAlerts(1)
       return c.json({ object: 'operator_alert_test' as const, ...status, alert_id: id, delivery: result, alert: row ?? null }, 200)
     },

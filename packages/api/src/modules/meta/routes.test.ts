@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { APP_VERSION } from '../../version.js'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import { _setConfigForTests } from '../../config.js'
 import { generateKeyPair, canonicalJson, sign } from '../../lib/crypto.js'
@@ -14,37 +15,14 @@ describe('meta', () => {
   it('serves changelog and stats', async () => {
     const cl = await call(app, 'GET', '/v1/changelog')
     expect(cl.status).toBe(200)
-    expect(cl.body.entries[0].version).toBe('0.5.1')
-    expect(cl.body.current_version).toBe('0.5.1')
-    expect(cl.body.entries[0].changes.join(' ')).toContain('x402:terms')
-    expect(cl.body.entries[1].changes.join(' ')).toContain('/v1/x402/')
-    expect(cl.body.entries[2].changes.join(' ')).toContain('without_us_how_many_ever_tried')
-    expect(cl.body.entries[3].changes.join(' ')).toContain('graduated badge stops being free')
-    expect(cl.body.entries[4].changes.join(' ')).toContain('counterparties_without_payment')
-    expect(cl.body.entries[5].changes.join(' ')).toContain('first_party_involved')
-    expect(cl.body.entries[6].changes.join(' ')).toContain('funded_by_our_faucet')
-    expect(cl.body.entries[7].changes.join(' ')).toContain('search_listings and get_listing accept env')
-    expect(cl.body.entries[8].changes.join(' ')).toContain('orders_ignored')
-    expect(cl.body.entries[9].changes.join(' ')).toContain('between_outsiders')
-    expect(cl.body.entries[10].changes.join(' ')).toContain('raise this marketplace')
-    expect(cl.body.entries[11].changes.join(' ')).toContain('message_for_your_operator')
-    expect(cl.body.entries[12].changes.join(' ')).toContain('what_the_searching_produced')
-    expect(cl.body.entries[13].changes.join(' ')).toContain('listing_limit')
-    expect(cl.body.entries[14].changes.join(' ')).toContain('suggested_max_usdc')
-    expect(cl.body.entries[15].changes.join(' ')).toContain('/v1/series/{id}')
-    expect(cl.body.entries[16].changes.join(' ')).toContain('/v1/commitments')
-    expect(cl.body.entries[17].changes.join(' ')).toContain('First-buy programme')
-    expect(cl.body.entries[18].changes.join(' ')).toContain('gasless')
-    expect(cl.body.entries[19].changes.join(' ')).toContain('/.well-known/agent-registration.json')
-    expect(cl.body.entries[20].changes.join(' ')).toContain('/.well-known/ard.json')
-    expect(cl.body.entries[21].changes.join(' ')).toContain('bounty desk')
-    expect(cl.body.entries[22].changes.join(' ')).toContain('/robots.txt')
-    expect(cl.body.entries[23].changes.join(' ')).toContain('rating_weighted')
-    expect(cl.body.entries[24].changes.join(' ')).toContain('/v1/domains/{domain}')
-    expect(cl.body.entries[25].changes.join(' ')).toContain('/v1/disputes/{id}/verdict')
-    expect(cl.body.entries[26].changes.join(' ')).toContain('/v1/opportunities')
-    expect(cl.body.entries[27].changes.join(' ')).toContain('first_party')
-    expect(cl.body.entries[28].changes.join(' ')).toContain('wallet-to-wallet')
+    expect(cl.body.entries[0].version).toBe(APP_VERSION) // the newest entry is always the running version
+    expect(cl.body.current_version).toBe(APP_VERSION)
+    // By content, not by index: every release announced what it changed, and a new entry at the front must not
+    // make this test look like a regression in six older ones.
+    const everything = cl.body.entries.flatMap((e: { changes: string[] }) => e.changes).join(' ')
+    for (const announced of ['PAYMENT-REQUIRED', 'x402:terms', '/v1/x402/', 'without_us_how_many_ever_tried', 'graduated badge stops being free', 'counterparties_without_payment', 'first_party_involved', 'funded_by_our_faucet', "search_listings and get_listing accept env", "orders_ignored", "between_outsiders", "raise this marketplace", "message_for_your_operator", "what_the_searching_produced", "listing_limit", "suggested_max_usdc", "/v1/series/{id}", "/v1/commitments", "First-buy programme", "gasless", "/.well-known/agent-registration.json", "/.well-known/ard.json", "bounty desk", "/robots.txt", "rating_weighted", "/v1/domains/{domain}", "/v1/disputes/{id}/verdict", "/v1/opportunities", "first_party", "wallet-to-wallet"]) {
+      expect(everything, `the changelog never announced ${announced}`).toContain(announced)
+    }
     // the word a supervisor would quote back never appears in a money sense on any public surface (ADR-32)
     expect(JSON.stringify(cl.body)).not.toMatch(/is escrowed/)
     const s = await createTestAgent(app, { name: 'S' })
@@ -85,7 +63,7 @@ describe('meta', () => {
       const d = res.body
       expect(d.object).toBe('commitments')
       expect(d.env).toBe('test')
-      expect(d.api_version).toBe('0.5.1')
+      expect(d.api_version).toBe(APP_VERSION)
       expect(d.platform_did).toMatch(/^did:key:z/)
       // the licence section is a factual negative with machine-readable fields
       expect(d.licences).toMatchObject({ held: [], applied_for: [], planned: null, supervised_by: null })

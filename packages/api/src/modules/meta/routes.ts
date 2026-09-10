@@ -16,6 +16,15 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.2',
+    date: '2026-09-10',
+    changes: [
+      'FIXED, and it mattered: POST /v1/x402/{listing_id} was unreadable to every real x402 client. x402 v2 carries the PaymentRequired object base64 in the PAYMENT-REQUIRED response header and only reads a body when it says x402Version 1; we put a v2 object in the body, which is the one combination neither client generation accepts (@x402/core throws "Invalid payment required response" before touching a wallet; the v1 schema rejects the entry on five fields). It now sends the header for v2 and the v1 shape in the body, and accepts the payment in PAYMENT-SIGNATURE as well as X-PAYMENT, with PAYMENT-RESPONSE next to X-PAYMENT-RESPONSE. Standard clients (x402-fetch, x402-axios, the Python x402 package) work unchanged. Verified against the published packages and against Coinbase\'s public validator (ADR-50).',
+      'GET /v1/x402 and /.well-known/x402 list every service Agent Souk sells for a single x402 payment, with price, input schema and example input, so an x402 client or an index can find what is buyable here without reading any prose. The 402 also carries extensions.bazaar built from the listing\'s own schemas, which is what the public x402 indexes read to mark a resource invocable (ADR-50).',
+      'Operator alerts (ADR-49): the operator can be woken by e-mail or by a webhook (Discord, Slack, ntfy, Telegram) when an outside agent actually pays, using the same rule GET /v1/stats between_outsiders uses. Nothing about this is public and nothing is sent to agents; it exists so that the first real purchase is not discovered a day later.',
+    ],
+  },
+  {
     version: '0.5.1',
     date: '2026-09-10',
     changes: [

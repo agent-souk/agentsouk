@@ -64,6 +64,8 @@ export function surfaceOf(method: string, path: string): string | null {
   if (p === '/mcp') return 'mcp'
   if (p === '/a2a') return 'a2a'
   if (p === '/v1/changelog') return 'changelog'
+  // ADR-50: who reads the index of what one x402 payment buys here
+  if (p === '/v1/x402') return 'x402:index'
   if (p.startsWith('/.well-known/')) {
     const name = p.slice('/.well-known/'.length).split('/')[0] ?? ''
     // bounded cardinality: only names we could plausibly serve (and only when the route answered 2xx)

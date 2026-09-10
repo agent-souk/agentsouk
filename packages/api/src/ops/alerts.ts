@@ -64,16 +64,31 @@ const hourBucket = (now: number) => new Date(now).toISOString().slice(0, 13)
 /**
  * Record an alert for delivery. Deduplicated by `key`, so the same fact arriving twice (every job event is
  * emitted once per party) is one alert. Returns the row id, or null when nothing was recorded.
+ *
+ * The row is written even with no channel configured. It costs one insert and it buys the thing the operator
+ * actually needs on the day they wire a channel up: a record of what would have been sent. The delivery worker
+ * marks those rows `suppressed`, so nothing retries for ever.
+ *
+ * `upgrade` lets a caller that knows more about the same fact (the x402 endpoint knows the purchase came in
+ * without an account) replace a row the classifier already wrote, as long as it has not gone out yet. Without
+ * it the two paths would produce two alerts for one payment.
  */
-export async function raise(draft: AlertDraft, now = Date.now()): Promise<string | null> {
-  if (!channelStatus().configured || !tierWanted(draft.tier)) return null
+export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade?: boolean } = {}): Promise<string | null> {
+  if (!tierWanted(draft.tier)) return null
   const cap = config().OPERATOR_ALERT_MAX_PER_HOUR
-  const recent = await db()
-    .select({ n: sql<number>`count(*)` })
-    .from(operatorAlerts)
-    .where(and(gte(operatorAlerts.createdAt, now - 3600_000), inArray(operatorAlerts.status, ['pending', 'sent'])))
-  const flooded = (recent[0]?.n ?? 0) >= cap
-  const id = await insert(draft, flooded ? 'suppressed' : 'pending', now, flooded ? `more than ${cap} alerts in the last hour` : null)
+  // Counted on what was actually DELIVERED, per environment, and never applied to an urgent alert. Counting
+  // created rows instead turns a broken channel into a suppression cascade (twelve stuck rows silence the
+  // thirteenth), and counting across environments lets sandbox noise silence live.
+  let flooded = false
+  if (draft.tier !== 'urgent') {
+    const delivered = await db()
+      .select({ n: sql<number>`count(*)` })
+      .from(operatorAlerts)
+      .where(and(eq(operatorAlerts.env, draft.env), gte(operatorAlerts.sentAt, now - 3600_000)))
+    flooded = (delivered[0]?.n ?? 0) >= cap
+  }
+  const id = await insert(draft, flooded ? 'suppressed' : 'pending', now, flooded ? `more than ${cap} alerts delivered in the last hour` : null)
+  if (!id && opts.upgrade) return upgradePending(draft, now)
   if (flooded) {
     // One summary an hour, never more: the operator learns that alerts are being held back rather than reading
     // silence as calm. It bypasses the cap by construction, because its key is the hour itself.
@@ -94,13 +109,25 @@ export async function raise(draft: AlertDraft, now = Date.now()): Promise<string
   return id
 }
 
+const dataOf = (draft: AlertDraft) => ({ ...(draft.data ?? {}), ...(draft.url ? { url: draft.url } : {}) })
+
 async function insert(draft: AlertDraft, status: 'pending' | 'suppressed', now: number, lastError: string | null): Promise<string | null> {
   const id = newId('alert')
   const r = await db()
     .insert(operatorAlerts)
-    .values({ id, env: draft.env, tier: draft.tier, key: draft.key, title: draft.title, body: draft.body, data: { ...(draft.data ?? {}), ...(draft.url ? { url: draft.url } : {}) }, status, attempt: 0, nextAttemptAt: now, lastError, createdAt: now, updatedAt: now })
+    .values({ id, env: draft.env, tier: draft.tier, key: draft.key, title: draft.title, body: draft.body, data: dataOf(draft), status, attempt: 0, nextAttemptAt: now, lastError, createdAt: now, updatedAt: now })
     .onConflictDoNothing({ target: operatorAlerts.key })
   return (r.rowsAffected ?? 0) > 0 ? id : null
+}
+
+/** Replace an alert that has not gone out yet with a better-informed version of the same fact. */
+async function upgradePending(draft: AlertDraft, now: number): Promise<string | null> {
+  const r = await db()
+    .update(operatorAlerts)
+    .set({ tier: draft.tier, title: draft.title, body: draft.body, data: dataOf(draft), updatedAt: now })
+    .where(and(eq(operatorAlerts.key, draft.key), eq(operatorAlerts.status, 'pending')))
+  if (!(r.rowsAffected ?? 0)) return null
+  return (await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, draft.key), columns: { id: true } }))?.id ?? null
 }
 
 // --- what is worth an alert ---------------------------------------------------------------------
@@ -112,27 +139,33 @@ type JobFacts = {
   buyer: { handle: string; firstParty: boolean; walletAddress: string | null } | null
   seller: { handle: string; firstParty: boolean; walletAddress: string | null } | null
   paid: number
-  payer: string | null
+  payers: string[]
   transaction: string | null
-  ourMoney: boolean
 }
 
-async function factsFor(jobId: string): Promise<JobFacts | null> {
+/**
+ * Everything the classifier needs, and deliberately NOT whether the money came from us.
+ *
+ * `emit()` awaits its listeners inline (events/bus.ts) and `job.paid` is emitted once per party, so anything
+ * this function does happens twice while the buyer is still holding the HTTP connection open on
+ * POST /v1/jobs/{id}/pay. `ourFundedWallets()` is a recursive CTE over every settlement; it belongs in the
+ * delivery sweep, where it also produces a better record - the operator sees the alerts we chose not to send,
+ * and why, instead of a filter that leaves no trace.
+ */
+async function factsFor(jobId: string, withPayments: boolean): Promise<JobFacts | null> {
   const job = await db().query.jobs.findFirst({ where: eq(jobs.id, jobId) })
   if (!job) return null
   const parties = await db().query.agents.findMany({ where: inArray(agents.id, [job.buyerAgentId, job.sellerAgentId]), columns: { id: true, handle: true, firstParty: true, walletAddress: true } })
   const of = (id: string) => parties.find((a) => a.id === id) ?? null
-  const pays = await db().query.settlements.findMany({ where: and(eq(settlements.jobId, job.id), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled')) })
-  const paid = pays.reduce((sum, s) => sum + s.amount, 0)
-  const our = pays.length ? await ourFundedWallets(job.env) : new Set<string>()
+  // Oldest first: the first payer is the one that opened the payment, the newest transaction is the one to link.
+  const pays = withPayments ? await db().query.settlements.findMany({ where: and(eq(settlements.jobId, job.id), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled')), orderBy: [asc(settlements.createdAt), asc(settlements.id)] }) : []
   return {
     job,
     buyer: of(job.buyerAgentId),
     seller: of(job.sellerAgentId),
-    paid,
-    payer: pays[0]?.payerAddress ?? null,
+    paid: pays.reduce((sum, s) => sum + s.amount, 0),
+    payers: [...new Set(pays.map((s) => s.payerAddress.toLowerCase()))],
     transaction: pays[pays.length - 1]?.transaction ?? null,
-    ourMoney: pays.some((s) => our.has(s.payerAddress.toLowerCase())),
   }
 }
 
@@ -143,30 +176,34 @@ const jobLine = (f: JobFacts) => `${f.buyer?.handle ?? f.job.buyerAgentId} → $
  * desks is worth knowing but is not the thing we are waiting for, and it says so in the alert itself.
  */
 export function classifyPayment(f: JobFacts): AlertDraft | null {
-  const outsiders = f.job.firstPartyInvolved === false && f.paid >= OUTSIDER_PRICE_FLOOR && !f.ourMoney
+  if (f.paid < OUTSIDER_PRICE_FLOOR) return null
+  const outsiders = f.job.firstPartyInvolved === false
+  const payerLine = f.payers.length ? `payer wallet: ${f.payers.join(', ')}` : ''
   const tx = explorerTxUrl(networkFor(f.job.env), f.transaction)
-  const common = { env: f.job.env, key: `paid:${f.job.id}`, url: tx ?? `${base()}/v1/jobs/${f.job.id}`, data: { job_id: f.job.id, env: f.job.env, amount: f.paid, buyer: f.buyer?.handle, seller: f.seller?.handle, payer: f.payer, transaction: f.transaction, first_party_involved: f.job.firstPartyInvolved, our_money: f.ourMoney } }
+  const common = { env: f.job.env, key: `paid:${f.job.id}`, url: tx ?? `${base()}/v1/jobs/${f.job.id}`, data: { job_id: f.job.id, env: f.job.env, amount: f.paid, buyer: f.buyer?.handle, seller: f.seller?.handle, payers: f.payers, transaction: f.transaction, first_party_involved: f.job.firstPartyInvolved } }
   if (outsiders) {
     return {
       ...common,
-      tier: 'urgent',
+      // The sandbox runs on worthless testnet USDC out of our own faucet. Real money is what justifies a phone
+      // ringing at night; a sandbox trade is worth reading in the morning.
+      tier: f.job.env === 'live' ? 'urgent' : 'notable',
       title: `${formatUsdc(f.paid)} paid between two outsiders (${f.job.env})`,
       body: [
         jobLine(f),
         '',
-        'This is the figure the whole thing is measured by: a payment with Agent Souk on neither side, above the price floor, from a wallet that never held our money. Before believing it, read GET /v1/stats between_outsiders and its `excluded` block - the alert applies the same rule, but the figure is the one that counts.',
-        f.payer ? `payer wallet: ${f.payer}` : '',
+        'This is the figure the whole thing is measured by: a payment with Agent Souk on neither side, above the price floor. Before believing it, read GET /v1/stats between_outsiders and its `excluded` block - this alert applies the same rule, but the figure is the one that counts.',
+        payerLine,
       ]
         .filter(Boolean)
         .join('\n'),
     }
   }
-  if (f.seller?.firstParty && !f.buyer?.firstParty && !f.ourMoney && f.paid >= OUTSIDER_PRICE_FLOOR) {
+  if (f.seller?.firstParty && !f.buyer?.firstParty) {
     return {
       ...common,
       tier: 'notable',
       title: `${formatUsdc(f.paid)} paid to us by an outside agent (${f.job.env})`,
-      body: [jobLine(f), '', 'Someone outside paid one of OUR listings with their own money. It cannot move between_outsiders (we are one of the two parties by construction) and it does answer the question behind it: an agent out there pays for something.', f.payer ? `payer wallet: ${f.payer}` : ''].filter(Boolean).join('\n'),
+      body: [jobLine(f), '', 'Someone outside paid one of OUR listings. It cannot move between_outsiders (we are one of the two parties by construction) and it does answer the question behind it: an agent out there pays for something.', payerLine].filter(Boolean).join('\n'),
     }
   }
   return null
@@ -178,7 +215,10 @@ export function classifyOrder(f: JobFacts): AlertDraft | null {
   const outsiders = f.job.firstPartyInvolved === false
   return {
     env: f.job.env,
-    tier: 'quiet',
+    // An order with us on neither side is `between_outsiders.orders`, which on live has been 0 for the whole
+    // history of this marketplace. The first one is news, so it must not sit below the default minimum tier.
+    // An order placed with our own desk is ordinary traffic and stays quiet.
+    tier: outsiders ? 'notable' : 'quiet',
     key: `ordered:${f.job.id}`,
     title: outsiders ? `An outsider ordered from an outsider (${f.job.env})` : `An outside agent ordered from us (${f.job.env})`,
     body: [jobLine(f), '', outsiders ? 'Nothing has been paid. Ordering is free, so this is an upper bound on independent interest, not demand - GET /v1/commitments says as much next to the figure.' : 'Nothing has been paid yet; the desk delivers first.'].join('\n'),
@@ -191,20 +231,22 @@ export function classifyOrder(f: JobFacts): AlertDraft | null {
 export async function classify(e: EventRecord): Promise<AlertDraft | null> {
   const jobId = (e.data as { job_id?: unknown })?.job_id
   if (e.type === 'job.paid' && typeof jobId === 'string') {
-    const f = await factsFor(jobId)
+    const f = await factsFor(jobId, true)
     return f ? classifyPayment(f) : null
   }
   if (e.type === 'job.created' && typeof jobId === 'string') {
-    const f = await factsFor(jobId)
+    const f = await factsFor(jobId, false)
     return f ? classifyOrder(f) : null
   }
   if ((e.type === 'job.disputed' || e.type === 'dispute.escalated') && typeof jobId === 'string') {
-    const f = await factsFor(jobId)
+    const f = await factsFor(jobId, false)
     if (!f) return null
     const escalated = e.type === 'dispute.escalated'
     return {
       env: f.job.env,
-      tier: 'notable',
+      // A panel of evaluator agents decides an ordinary dispute; the operator has nothing to do until it
+      // escalates, and only then is being interrupted the right outcome.
+      tier: escalated ? 'notable' : 'quiet',
       key: `${escalated ? 'escalated' : 'disputed'}:${jobId}`,
       title: escalated ? `A dispute needs the operator (${f.job.env})` : `A job was disputed (${f.job.env})`,
       body: [jobLine(f), '', escalated ? `The evaluator panel could not decide it. Resolve with POST ${base()}/v1/admin/jobs/${jobId}/resolve.` : 'A panel of evaluator agents is voting; nothing to do unless it escalates.'].join('\n'),
@@ -213,7 +255,7 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
     }
   }
   if (e.type === 'job.refund_due' && typeof jobId === 'string') {
-    const f = await factsFor(jobId)
+    const f = await factsFor(jobId, false)
     if (!f) return null
     return {
       env: f.job.env,
@@ -233,26 +275,28 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
  * transaction happens inside one HTTP request and its point is precisely that somebody outside paid.
  */
 export async function raiseX402Purchase(input: { env: Env; jobId: string; listingTitle: string; amount: number; payer: string; transaction: string; firstBuy: boolean }, now = Date.now()): Promise<string | null> {
-  const our = await ourFundedWallets(input.env)
-  const ours = our.has(input.payer.toLowerCase())
   const tx = explorerTxUrl(networkFor(input.env), input.transaction)
+  // The SAME key the classifier used for this payment, so the two paths produce one alert and not two: the
+  // payment already went through payJob, which emitted job.paid, which wrote `paid:<job>`. This upgrades that
+  // row with the one thing only the endpoint knows - that the purchase came in without an account at all.
   return raise(
     {
       env: input.env,
-      tier: input.env === 'live' && !ours ? 'urgent' : 'notable',
-      key: `x402:${input.jobId}`,
+      tier: 'notable',
+      key: `paid:${input.jobId}`,
       title: `x402: ${formatUsdc(input.amount)} paid for "${input.listingTitle}" (${input.env})`,
       body: [
         `An agent paid through POST /v1/x402/{listing_id} without an account and without ETH${input.firstBuy ? ', and this wallet was handed its own account for the first time' : ''}.`,
-        ours ? 'The paying wallet held money that came from us, so this is our own traffic and proves nothing about outside demand.' : 'The paying wallet never held our money. It cannot move between_outsiders (we are the seller by construction), and it does answer the question behind it.',
+        'It cannot move between_outsiders - we are the seller by construction - and it does answer the question behind it: an agent out there pays for something.',
         '',
         `payer: ${input.payer}`,
         `job: ${base()}/v1/jobs/${input.jobId}`,
       ].join('\n'),
       url: tx,
-      data: { job_id: input.jobId, env: input.env, amount: input.amount, payer: input.payer, transaction: input.transaction, our_money: ours, first_buy: input.firstBuy },
+      data: { job_id: input.jobId, env: input.env, amount: input.amount, payers: [input.payer.toLowerCase()], transaction: input.transaction, first_buy: input.firstBuy, via: 'x402' },
     },
     now,
+    { upgrade: true },
   )
 }
 
@@ -279,16 +323,33 @@ async function send(req: ChannelRequest): Promise<{ channel: string; ok: boolean
  * reached, and retrying would send the same thing twice through the channel that worked. Every channel's answer
  * is kept on the row either way, so a webhook that has quietly been failing for a week is visible.
  */
-export async function deliverPending(now = Date.now()): Promise<{ sent: number; retried: number; failed: number }> {
+export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; retried: number; failed: number; suppressed: number }> {
   const due = await db().query.operatorAlerts.findMany({ where: and(eq(operatorAlerts.status, 'pending'), lte(operatorAlerts.nextAttemptAt, now)), orderBy: [asc(operatorAlerts.nextAttemptAt)], limit: 20 })
-  const stats = { sent: 0, retried: 0, failed: 0 }
+  const stats = { sent: 0, retried: 0, failed: 0, suppressed: 0 }
+  // One resolution of "money that came from us" per environment per pass, off the buyer's request path.
+  const ourMoney = new Map<Env, Set<string>>()
+  const ourWalletsFor = async (env: Env) => {
+    if (!ourMoney.has(env)) ourMoney.set(env, await ourFundedWallets(env))
+    return ourMoney.get(env)!
+  }
   for (const row of due) {
     const payload: AlertPayload = { tier: row.tier, env: row.env, title: row.title, body: row.body, url: (row.data as { url?: string })?.url ?? null, data: row.data }
-    const reqs = requestsFor(payload)
     const attempt = row.attempt + 1
+    // A payment made with money that came from us is our own traffic wearing someone else's handle. It is held
+    // back rather than dropped, so the operator can see what we chose not to send and check the judgement.
+    const payers = ((row.data as { payers?: unknown })?.payers ?? []) as string[]
+    if (payers.length) {
+      const our = await ourWalletsFor(row.env)
+      if (payers.every((p) => our.has(String(p).toLowerCase()))) {
+        await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: 'the paying wallet holds money that came from us (modules/payments/our-money.ts)', updatedAt: now }).where(eq(operatorAlerts.id, row.id))
+        stats.suppressed++
+        continue
+      }
+    }
+    const reqs = requestsFor(payload)
     if (!reqs.length) {
       await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: 'no channel configured', updatedAt: now }).where(eq(operatorAlerts.id, row.id))
-      stats.failed++
+      stats.suppressed++
       continue
     }
     const results = []
@@ -328,7 +389,6 @@ export async function alertsStatus(now = Date.now()) {
 // --- wiring --------------------------------------------------------------------------------------
 
 onEvent(async (e) => {
-  if (!channelStatus().configured) return
   try {
     const draft = await classify(e)
     if (draft) await raise(draft, e.createdAt)
@@ -338,6 +398,5 @@ onEvent(async (e) => {
 })
 
 registerSweep('operator-alerts', async (now) => {
-  if (!channelStatus().configured) return
-  await deliverPending(now)
+  await deliverAlerts(now)
 })

@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
+import { x402Index } from '../modules/x402/routes.js'
 import type { AppEnv } from '../app.js'
 import { config } from '../config.js'
 import { allKeyJwks, ed25519Jwk, serverKey } from '../lib/server-keys.js'
@@ -36,7 +37,9 @@ export const SITEMAP_PATHS: [path: string, changefreq: 'hourly' | 'daily' | 'wee
   ['/.well-known/ai-catalog.json', 'weekly'],
   ['/.well-known/jwks.json', 'weekly'],
   ['/.well-known/agent-registration.json', 'weekly'],
+  ['/.well-known/x402', 'daily'],
   ['/v1/changelog', 'weekly'],
+  ['/v1/x402', 'daily'],
   ['/v1/payments', 'weekly'],
   ['/v1/commitments', 'weekly'],
   ['/v1/stats', 'hourly'],
@@ -85,6 +88,8 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
   r.get('/.well-known/mcp/server-card.json', (c) => c.redirect('/.well-known/mcp-server-card', 301))
   r.get('/mcp/server-card', (c) => c.redirect('/.well-known/mcp-server-card', 301))
   r.get('/.well-known/mcp.json', (c) => catalog(c, mcpWellKnown(base())))
+  // ADR-50: the one document an x402 client or index reads to learn what is buyable here without an account.
+  r.get('/.well-known/x402', async (c) => catalog(c, await x402Index(base(), 'live'), 'application/json; charset=utf-8', 300))
   r.get('/.well-known/ard.json', (c) => catalog(c, ardManifest(base())))
   r.get('/.well-known/ai-catalog.json', (c) => catalog(c, aiCatalog(base(), serverKey().did), 'application/ai-catalog+json; charset=utf-8'))
   r.get('/.well-known/agent-descriptions', (c) => catalog(c, agentDescriptions(base()), 'application/ld+json; charset=utf-8'))

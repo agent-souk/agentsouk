@@ -3,8 +3,10 @@ import { and, eq } from 'drizzle-orm'
 import { freshApp, call, createTestAgent, type TestAgent } from '../../test/setup.js'
 import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings } from '../../db/schema.js'
+import { agents, jobs, listings, operatorAlerts } from '../../db/schema.js'
 import { _setSettleFetchForTests } from './routes.js'
+import { _setAlertFetchForTests } from '../../ops/alerts.js'
+import { _setConfigForTests } from '../../config.js'
 import type { App } from '../../app.js'
 
 let app: App
@@ -284,5 +286,100 @@ describe('the x402 funnel is counted (ADR-48)', () => {
     expect(summary.by_surface_7d['x402:terms']).toBe(1)
     expect(summary.by_surface_7d['x402:refused']).toBe(1)
     expect(summary.by_surface_7d['x402:paid']).toBe(1)
+  })
+})
+
+/**
+ * ADR-49: the operator hears about a purchase once, not twice. The payment goes through payJob, which emits
+ * job.paid, which the classifier turns into `paid:<job>`; the endpoint then raises the same key with the one
+ * thing only it knows - that the buyer had no account at all. Two keys would mean two alerts for one payment.
+ */
+describe('an x402 purchase raises exactly one operator alert (ADR-49)', () => {
+  afterEach(() => {
+    _setAlertFetchForTests(null)
+    _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: undefined, OPERATOR_ALERT_MIN_TIER: 'notable' })
+  })
+
+  it('upgrades the payment alert instead of adding a second one', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: 'https://ntfy.sh/agentsouk-x402-test', OPERATOR_ALERT_MIN_TIER: 'quiet' })
+    _setAlertFetchForTests(async () => ({ status: 200, text: async () => 'ok' }))
+    const { seller, listingId } = await firstPartySeller()
+    const wallet = '0x' + '5'.repeat(40)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+
+    const rows = await db().query.operatorAlerts.findMany()
+    const paid = rows.filter((a) => a.key.startsWith('paid:'))
+    expect(paid).toHaveLength(1)
+    expect(rows.some((a) => a.key.startsWith('x402:'))).toBe(false)
+    // the surviving row carries what only the endpoint knew
+    expect(paid[0]!.title).toContain('x402')
+    expect((paid[0]!.data as Record<string, unknown>).via).toBe('x402')
+    expect((paid[0]!.data as Record<string, unknown>).first_buy).toBe(true)
+  })
+})
+
+/**
+ * ADR-50: a parseable 402 makes the endpoint payable; this makes it findable. The index has to agree with the
+ * endpoint, because a list that advertises something the endpoint then refuses is worse than no list.
+ */
+describe('the index of what one x402 payment buys (ADR-50)', () => {
+  it('lists exactly what the endpoint would sell, and nothing it would refuse', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    // an outside seller's listing: never buyable here (ADR-22), so never listed here either
+    const outsider = await createTestAgent(app, { name: 'Outside seller' })
+    await call(app, 'POST', '/v1/listings', { key: outsider.api_keys.test, body: { title: 'Outside probe', description: 'Probes a domain and reports what resolves, for anyone who asks.', category: 'data', pricing_model: 'fixed', price: PRICE, input_schema: { type: 'object' } } })
+    // our own free listing and our own quote listing: the endpoint refuses both, so they must not be advertised
+    await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Free thing', description: 'A platform-operated listing that costs nothing at all.', category: 'ops', pricing_model: 'fixed', price: 0 } })
+    await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Quoted thing', description: 'A platform-operated listing whose price is agreed per job.', category: 'ops', pricing_model: 'quote' } })
+
+    const r = await call(app, 'GET', '/v1/x402?env=test')
+    expect(r.status).toBe(200)
+    expect(r.body.object).toBe('x402_index')
+    expect(r.body.services.map((s: { listing_id: string }) => s.listing_id)).toEqual([listingId])
+    const svc = r.body.services[0]
+    expect(svc).toMatchObject({ price: PRICE, pay_to: seller.wallet_address, seller: seller.agent.handle })
+    expect(svc.url).toContain(`/v1/x402/${listingId}?env=test`)
+    expect(svc.input_schema).toMatchObject({ type: 'object' })
+    expect(r.body.protocol).toMatchObject({ x402_version: 2, scheme: 'exact', network: 'base-sepolia', network_caip2: 'eip155:84532' })
+    expect(String(r.body.limit)).toContain('POST /v1/jobs')
+  })
+
+  it('is served at /.well-known/x402 too, where an index looks without being told', async () => {
+    const r = await app.request('/.well-known/x402')
+    expect(r.status).toBe(200)
+    const body = (await r.json()) as { object: string; env: string }
+    expect(body.object).toBe('x402_index')
+    expect(body.env).toBe('live') // the well-known is the real marketplace, never the sandbox
+  })
+
+  it('describes the listing to the public indexes from the listing itself, not from a guess', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Services' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: seller.api_keys.test,
+      body: {
+        title: 'Translate text',
+        description: 'Translate text between languages, preserving formatting and tone.',
+        category: 'language',
+        pricing_model: 'fixed',
+        price: PRICE,
+        input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+        output_schema: { type: 'object', properties: { text: { type: 'string' } } },
+        example_input: { text: 'Hello world', target_language: 'de' },
+        example_output: { text: 'Hallo Welt' },
+      },
+    })
+    expect(l.status).toBe(201)
+    const r = await buy(l.body.id)
+    const v2 = JSON.parse(Buffer.from(r.headers.get('payment-required')!, 'base64').toString('utf8'))
+    // exactly the paths Coinbase's public validator checks
+    expect(v2.extensions.bazaar.info.input).toMatchObject({ type: 'http', method: 'POST', bodyType: 'json', body: { text: 'Hello world', target_language: 'de' } })
+    expect(v2.extensions.bazaar.info.output).toMatchObject({ type: 'json', example: { text: 'Hallo Welt' } })
+    expect(v2.extensions.bazaar.schema.input).toMatchObject({ required: ['text'] })
+    expect(v2.extensions.bazaar.schema.output).toMatchObject({ type: 'object' })
   })
 })

@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq, gt, isNotNull, ne } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
 import { agents, jobs, listings, type Env } from '../../db/schema.js'
@@ -9,6 +9,7 @@ import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
 import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
+import { bazaarExtension } from './bazaar.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent } from '../agents/service.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
@@ -52,12 +53,6 @@ const HEX_64 = /^0x[0-9a-fA-F]{64}$/
 /** Both generations of the payment headers, so a browser-based client can read them across origins. */
 const EXPOSED_HEADERS = 'Content-Type,PAYMENT-REQUIRED,PAYMENT-RESPONSE,X-PAYMENT-RESPONSE'
 
-/**
- * ADR-50: what the public x402 indexes read to list a resource. Without it the endpoint is parseable but still
- * unfindable, which is the same nothing one step later - the agents built to pay for things find work through
- * these indexes, not by crawling.
- */
-const BAZAAR = { bazaar: { info: { input: { type: 'http', method: 'POST', bodyType: 'json' }, output: { type: 'json' } } } }
 
 export function parsePaymentHeader(header: string): PaymentPayload {
   let text: string
@@ -176,9 +171,69 @@ const ResultView = z
   })
   .openapi('X402Result')
 
+/**
+ * ADR-50: everything that can actually be bought through this endpoint, in one document.
+ *
+ * The guards are the same ones the endpoint itself applies, read from the same tables: platform-operated seller,
+ * active, a real price, a wallet to be paid into. A list that advertised something the endpoint would then refuse
+ * would be worse than no list.
+ */
+export async function sellableListings(env: Env) {
+  const rows = await db()
+    .select({ listing: listings, seller: agents })
+    .from(listings)
+    .innerJoin(agents, eq(agents.id, listings.sellerAgentId))
+    .where(and(eq(listings.env, env), eq(listings.status, 'active'), eq(agents.firstParty, true), ne(listings.pricingModel, 'quote'), gt(listings.price, 0), isNotNull(agents.walletAddress)))
+    .orderBy(asc(listings.price))
+  return rows.filter((r) => r.seller.status === 'active')
+}
+
+/** The public index of what one x402 payment buys here. Shape is ours; it exists to be read by crawlers and agents. */
+export async function x402Index(base: string, env: Env) {
+  const rows = await sellableListings(env)
+  const chain = CHAINS[networkFor(env)]
+  return {
+    object: 'x402_index' as const,
+    env,
+    protocol: { x402_version: 2, transport: 'HTTP: the PaymentRequired object arrives base64 in the PAYMENT-REQUIRED response header; send the signed authorization back in PAYMENT-SIGNATURE (X-PAYMENT is accepted too).', scheme: 'exact', network: chain.v1, network_caip2: networkFor(env), asset: chain.usdc, asset_name: chain.name },
+    what_this_is: 'Services operated by Agent Souk itself, each buyable with a single x402 payment and no account. Paying binds an agent record to your wallet, so you keep the receipt and the public record of the purchase.',
+    limit: 'Only listings Agent Souk operates can be bought this way. For any other seller the platform never touches the payment (ADR-22): order it with POST /v1/jobs and pay the seller directly.',
+    services: rows.map(({ listing, seller }) => ({
+      listing_id: listing.id,
+      url: `${base}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`,
+      title: listing.title,
+      description: listing.description,
+      tags: listing.tags,
+      price: listing.price,
+      price_display: formatUsdc(listing.price),
+      pricing_model: listing.pricingModel,
+      pay_to: seller.walletAddress,
+      seller: seller.handle,
+      input_schema: listing.inputSchema ?? null,
+      output_schema: listing.outputSchema ?? null,
+      example_input: listing.exampleInput ?? null,
+      turnaround_seconds: listing.turnaroundSeconds,
+    })),
+    generated_at: new Date().toISOString(),
+  }
+}
+
 export function x402Routes() {
   const r = new OpenAPIHono<AppEnv>()
   const base = () => config().PUBLIC_BASE_URL.replace(/\/$/, '')
+
+  r.openapi(
+    createRoute({
+      method: 'get',
+      path: '/v1/x402',
+      tags: ['payments', 'listings'],
+      summary: 'Every service Agent Souk sells for a single x402 payment, with price and input schema (ADR-50)',
+      description: 'No auth. One document an x402 client or a crawler can read to find what is buyable here without an account, and what to POST to each URL. Add ?env=test for the sandbox on Base Sepolia.',
+      request: { query: z.object({ env: z.enum(['live', 'test']).optional() }) },
+      responses: { 200: { description: 'What one x402 payment buys', content: { 'application/json': { schema: z.object({ object: z.literal('x402_index') }).passthrough().openapi('X402Index') } } }, ...errorResponses },
+    }),
+    async (c) => c.json(await x402Index(base(), c.req.valid('query').env ?? 'live'), 200),
+  )
 
   r.openapi(
     createRoute({
@@ -237,7 +292,7 @@ export function x402Routes() {
         // v2 object into the body alone - which is what this endpoint did until ADR-50 - is the one combination
         // neither reads: v2 clients only fall back to a body when it says x402Version 1, and v1 clients reject a
         // v2 requirement outright. See ADR-50 for the executed proof.
-        c.header('PAYMENT-REQUIRED', encodePaymentRequiredHeader({ ...terms.x402, error, extensions: BAZAAR }))
+        c.header('PAYMENT-REQUIRED', encodePaymentRequiredHeader({ ...terms.x402, error, extensions: bazaarExtension(listing) }))
         c.header('Access-Control-Expose-Headers', EXPOSED_HEADERS)
         return c.json(paymentRequiredV1(terms, error), 402)
       }

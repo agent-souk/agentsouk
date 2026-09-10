@@ -5,9 +5,9 @@ import { installFakeChain } from '../test/chain.js'
 import { _setConfigForTests } from '../config.js'
 import type { App } from '../app.js'
 import { db } from '../db/client.js'
-import { agents, jobs, operatorAlerts } from '../db/schema.js'
+import { agents, faucetClaims, jobs, operatorAlerts } from '../db/schema.js'
 import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, MAX_MESSAGE_CHARS } from './alert-channels.js'
-import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, deliverPending, raise, recentAlerts } from './alerts.js'
+import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, classifyPayment, deliverAlerts, raise, recentAlerts } from './alerts.js'
 
 const ADMIN = 'test-admin-token-1234567890'
 const WEBHOOK = 'https://ntfy.sh/agentsouk-operator-test'
@@ -93,10 +93,14 @@ describe('alert channels (ADR-49)', () => {
 })
 
 describe('raising alerts (ADR-49)', () => {
-  it('does nothing at all when no channel is configured', async () => {
+  it('still records the row with no channel configured, and the worker marks it so', async () => {
+    // The row IS the record. Configuring a channel a week later should not mean the week is blank.
     _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: undefined })
-    expect(await raise(draft())).toBeNull()
-    expect(await db().query.operatorAlerts.findMany()).toHaveLength(0)
+    expect(await raise(draft())).not.toBeNull()
+    expect(await deliverAlerts()).toMatchObject({ sent: 0, suppressed: 1 })
+    expect(sent).toHaveLength(0)
+    const [row] = await recentAlerts()
+    expect(row).toMatchObject({ status: 'suppressed', last_error: 'no channel configured' })
   })
 
   it('drops tiers below the configured minimum', async () => {
@@ -111,17 +115,47 @@ describe('raising alerts (ADR-49)', () => {
     expect(await db().query.operatorAlerts.findMany()).toHaveLength(1)
   })
 
-  it('holds back a flood but says once an hour that it is holding back', async () => {
-    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 3 })
+  it('counts the cap on what was DELIVERED, so a broken channel cannot silence the next alert', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 2 })
     const now = Date.UTC(2026, 8, 10, 12, 0, 0)
-    for (let i = 0; i < 6; i++) await raise(draft({ key: `k${i}`, tier: 'quiet' }), now)
-    const rows = await db().query.operatorAlerts.findMany()
-    expect(rows.filter((r) => r.status === 'pending' && r.key.startsWith('k'))).toHaveLength(3)
-    expect(rows.filter((r) => r.status === 'suppressed')).toHaveLength(3)
+    answer = () => ({ status: 503 })
+    for (let i = 0; i < 4; i++) await raise(draft({ key: `stuck${i}`, tier: 'quiet' }), now)
+    await deliverAlerts(now) // everything fails and stays pending
+    const after = await raise(draft({ key: 'later', tier: 'quiet' }), now)
+    expect(after).not.toBeNull()
+    const row = (await recentAlerts()).find((r) => r.key === 'later')!
+    expect(row.status).toBe('pending') // NOT suppressed: nothing has actually reached anyone
+  })
+
+  it('holds back a flood of delivered alerts, but never an urgent one, and says once an hour that it is holding back', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 2 })
+    const now = Date.UTC(2026, 8, 10, 12, 0, 0)
+    for (let i = 0; i < 2; i++) await raise(draft({ key: `d${i}`, tier: 'quiet' }), now)
+    await deliverAlerts(now)
+    expect((await recentAlerts()).filter((r) => r.status === 'sent')).toHaveLength(2)
+
+    await raise(draft({ key: 'q3', tier: 'quiet' }), now)
+    await raise(draft({ key: 'n4', tier: 'notable' }), now)
+    const urgent = await raise(draft({ key: 'u5', tier: 'urgent' }), now)
+    expect(urgent).not.toBeNull()
+
+    const rows = await recentAlerts()
+    expect(rows.find((r) => r.key === 'q3')!.status).toBe('suppressed')
+    expect(rows.find((r) => r.key === 'n4')!.status).toBe('suppressed')
+    // the one the whole subsystem exists for is never held back by sandbox chatter
+    expect(rows.find((r) => r.key === 'u5')!.status).toBe('pending')
     const flood = rows.filter((r) => r.key.startsWith('flood:'))
     expect(flood).toHaveLength(1)
-    expect(flood[0]!.status).toBe('pending')
     expect(flood[0]!.title).toContain('held back')
+  })
+
+  it('counts the cap per environment: sandbox noise cannot silence live', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const now = Date.UTC(2026, 8, 10, 12, 0, 0)
+    await raise(draft({ key: 't1', tier: 'quiet', env: 'test' }), now)
+    await deliverAlerts(now)
+    await raise(draft({ key: 'l1', tier: 'notable', env: 'live' }), now)
+    expect((await recentAlerts()).find((r) => r.key === 'l1')!.status).toBe('pending')
   })
 })
 
@@ -130,7 +164,7 @@ describe('delivering alerts (ADR-49)', () => {
     _setConfigForTests({ OPERATOR_ALERT_EMAIL: 'nick@example.com', RESEND_API_KEY: 're_key_12345678' })
     answer = (url) => ({ status: url.includes('resend') ? 500 : 200 })
     await raise(draft())
-    const r = await deliverPending()
+    const r = await deliverAlerts()
     expect(r).toMatchObject({ sent: 1, retried: 0, failed: 0 })
     expect(sent.map((s) => s.url)).toEqual(['https://api.resend.com/emails', WEBHOOK])
     const [row] = await recentAlerts()
@@ -147,10 +181,10 @@ describe('delivering alerts (ADR-49)', () => {
     await raise(draft(), now)
     for (let i = 0; i < ALERT_MAX_ATTEMPTS - 1; i++) {
       const at = now + ALERT_BACKOFF_MS.slice(0, i).reduce((a, b) => a + b, 0)
-      expect(await deliverPending(at)).toMatchObject({ retried: 1 })
+      expect(await deliverAlerts(at)).toMatchObject({ retried: 1 })
     }
     const last = now + ALERT_BACKOFF_MS.reduce((a, b) => a + b, 0)
-    expect(await deliverPending(last)).toMatchObject({ failed: 1 })
+    expect(await deliverAlerts(last)).toMatchObject({ failed: 1 })
     const [row] = await recentAlerts()
     expect(row!.status).toBe('failed')
     expect(row!.attempt).toBe(ALERT_MAX_ATTEMPTS)
@@ -159,8 +193,8 @@ describe('delivering alerts (ADR-49)', () => {
 
   it('does not retry a delivered alert, so nobody is told twice', async () => {
     await raise(draft())
-    await deliverPending()
-    await deliverPending(Date.now() + 3600_000)
+    await deliverAlerts()
+    await deliverAlerts(Date.now() + 3600_000)
     expect(sent).toHaveLength(1)
   })
 })
@@ -191,16 +225,32 @@ describe('what is worth waking the operator (ADR-49)', () => {
     buyer = await createTestAgent(app, { name: 'Outside Buyer' })
   })
 
-  it('an order between outsiders is quiet; the payment for it is urgent', async () => {
+  it('an order between outsiders is notable even before any money moves, and so is the sandbox payment for it', async () => {
     const jobId = await paidJob()
-    const keys = (await recentAlerts()).map((a) => a.key)
-    expect(keys).toContain(`ordered:${jobId}`)
-    expect(keys).toContain(`paid:${jobId}`)
-    const paid = (await recentAlerts()).find((a) => a.key === `paid:${jobId}`)!
-    expect(paid.tier).toBe('urgent')
+    const rows = await recentAlerts()
+    const ordered = rows.find((a) => a.key === `ordered:${jobId}`)!
+    const paid = rows.find((a) => a.key === `paid:${jobId}`)!
+    // between_outsiders.orders is the widest mouth of the funnel and has been 0 on live for the whole history:
+    // the first one must not sit below the default minimum tier.
+    expect(ordered.tier).toBe('notable')
     expect(paid.title).toContain('between two outsiders')
-    const ordered = (await recentAlerts()).find((a) => a.key === `ordered:${jobId}`)!
-    expect(ordered.tier).toBe('quiet')
+    // ...but the sandbox runs on our own worthless testnet USDC, so it is not worth a phone at night
+    expect(paid.tier).toBe('notable')
+  })
+
+  it('reserves urgent for real money: the same payment on live', () => {
+    const facts = {
+      job: { id: 'job_1', env: 'live', firstPartyInvolved: false, title: 'A real service', price: 250_000, buyerAgentId: 'agt_b', sellerAgentId: 'agt_s' },
+      buyer: { handle: 'outside-buyer', firstParty: false, walletAddress: '0xaa' },
+      seller: { handle: 'outside-seller', firstParty: false, walletAddress: '0xbb' },
+      paid: 250_000,
+      payers: ['0xaa'],
+      transaction: '0x' + 'c'.repeat(64),
+    }
+    expect(classifyPayment(facts as never)!.tier).toBe('urgent')
+    expect(classifyPayment({ ...facts, job: { ...facts.job, env: 'test' } } as never)!.tier).toBe('notable')
+    // and dust is not a purchase, in either environment
+    expect(classifyPayment({ ...facts, paid: 9_999 } as never)).toBeNull()
   })
 
   it('a payment to one of our own listings is notable, and says it cannot move the figure', async () => {
@@ -219,6 +269,21 @@ describe('what is worth waking the operator (ADR-49)', () => {
   it('says nothing about dust: the same floor the published figure uses', async () => {
     const jobId = await paidJob({ price: 1 })
     expect((await recentAlerts()).some((a) => a.key === `paid:${jobId}`)).toBe(false)
+  })
+
+  it('holds back a payment made with money that came from us, and records why', async () => {
+    // The sandbox faucet seeds ourFundedWallets (modules/payments/our-money.ts). A wallet we filled paying a
+    // seller is our own traffic wearing someone else's handle; the row stays, visible, marked.
+    const jobId = await paidJob()
+    await db()
+      .insert(faucetClaims)
+      .values({ id: 'fct_' + '1'.repeat(26), agentId: buyer.agent.id, address: buyer.wallet!.address.toLowerCase(), amount: 1_000_000, transaction: '0x' + 'd'.repeat(64), day: '2026-09-10', ipHash: 'x', createdAt: Date.now() })
+    const r = await deliverAlerts()
+    expect(r.suppressed).toBeGreaterThanOrEqual(1)
+    const paid = (await recentAlerts()).find((a) => a.key === `paid:${jobId}`)!
+    expect(paid.status).toBe('suppressed')
+    expect(paid.last_error).toContain('came from us')
+    expect(sent.some((s) => s.body.includes('between two outsiders'))).toBe(false)
   })
 
   it('reads the frozen first-party flag, so flipping an agent afterwards cannot invent an alert', async () => {
