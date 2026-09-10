@@ -7,6 +7,7 @@ import { config } from '../../config.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
+import { recordX402 } from '../../discovery/hits.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent } from '../agents/service.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
@@ -199,6 +200,7 @@ export function x402Routes() {
       const seller = await db().query.agents.findFirst({ where: eq(agents.id, listing.sellerAgentId) })
       // The legal boundary of this endpoint, as code (ADR-48): we may collect our own price, never someone else's.
       if (!seller?.firstParty) {
+        recordX402('refused', c.req.header('user-agent'))
         throw errors.state(
           'x402_first_party_only',
           'This endpoint only sells listings operated by Agent Souk itself.',
@@ -215,6 +217,7 @@ export function x402Routes() {
       const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, description: listing.title })
       const header = c.req.header('x-payment')
       if (!header) {
+        recordX402('terms', c.req.header('user-agent'))
         return c.json({ ...terms.x402, error: `Pay ${formatUsdc(price)} and retry with the X-PAYMENT header. The work is done before the payment is submitted, so a failed delivery costs you nothing.` }, 402)
       }
 
@@ -243,6 +246,7 @@ export function x402Routes() {
       // The buyer is holding the result in this very response, so leaving the job open for a review window it will
       // never come back for would only make the seller wait. Accepting closes it and writes both public records.
       await acceptDelivery(env, buyer, job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not close the job after payment'))
+      recordX402('paid', c.req.header('user-agent'))
       return c.json(
         {
           object: 'x402_result' as const,

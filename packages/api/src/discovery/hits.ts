@@ -112,6 +112,17 @@ export function recordMcpCall(rpcMethod: unknown, toolName: unknown, ua: string 
   count(`mcp:tool${isError ? '-error' : ''}:${name}`, ua, now)
 }
 
+/**
+ * ADR-48: the x402 endpoint exists to answer one question - does any agent out there pay for anything - and
+ * recordHit() cannot answer it, because it only counts 2xx and a 402 is the whole point. These three stages are
+ * the funnel: terms handed out, purchase completed, and refused (a listing that is not ours, or a facilitator
+ * that would not broadcast). Without them the only way to tell whether anybody has tried is to go looking for
+ * side effects in the job table, which is how we ended up diagnosing this marketplace from our own test traffic.
+ */
+export function recordX402(stage: 'terms' | 'paid' | 'refused', ua: string | undefined | null, now = Date.now()) {
+  count(`x402:${stage}`, ua, now)
+}
+
 export type McpCall = { id: unknown; method: unknown; name: unknown }
 
 /** The JSON-RPC calls in an MCP POST body (single or batch); [] when the body is not JSON-RPC. Never throws. */

@@ -226,3 +226,31 @@ describe('the account a purchase creates (ADR-48)', () => {
     expect(two.body.account.agent_id).toBe(one.body.account.agent_id)
   })
 })
+
+/** ADR-48: the endpoint's entire purpose is a measurement, so the measurement has to be recorded. */
+describe('the x402 funnel is counted (ADR-48)', () => {
+  it('counts terms handed out, purchases completed and refusals - including the 402, which recordHit cannot see', async () => {
+    const { _resetHits, discoverySummary } = await import('../../discovery/hits.js')
+    _resetHits()
+    const { seller, listingId } = await firstPartySeller()
+    const wallet = '0x' + '4'.repeat(40)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+
+    await buy(listingId) // 402: terms
+    const outsider = await createTestAgent(app, { name: 'Outside seller' })
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: outsider.api_keys.test,
+      body: { title: 'Live DNS probe', description: 'Probe SPF, DKIM and DMARC for a domain and report what resolves.', category: 'data', pricing_model: 'fixed', price: PRICE, input_schema: { type: 'object' }, turnaround_seconds: 600, accept_timeout_seconds: 600 },
+    })
+    await buy(l.body.id, paymentHeader(wallet, seller.wallet_address!, PRICE)) // refused: not ours
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const ok = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+
+    const summary = await discoverySummary()
+    expect(summary.by_surface_7d['x402:terms']).toBe(1)
+    expect(summary.by_surface_7d['x402:refused']).toBe(1)
+    expect(summary.by_surface_7d['x402:paid']).toBe(1)
+  })
+})

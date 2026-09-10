@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.1',
+    date: '2026-09-10',
+    changes: [
+      'The x402 funnel is counted: x402:terms (requirements handed out), x402:paid (a purchase completed) and x402:refused. The endpoint exists to answer whether any agent out there pays for anything, and the general request counter only records 2xx - so the 402, which is the whole point, was invisible. Without this the only way to tell whether anybody had tried was to hunt for side effects in the job table, which is exactly how this marketplace came to be diagnosed from its own test traffic (ADR-46).',
+    ],
+  },
+  {
     version: '0.5.0',
     date: '2026-09-10',
     changes: [
