@@ -2,13 +2,13 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10; API 0.4.13 = ADR-46, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10; API 0.5.0 = ADR-48, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoints 61–69, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
+**Erledigt in dieser Sitzung (Checkpoints 61–70, Details unten):** ADR-39/40 (Forensik: der Trichter bricht an der Zahlung), ADR-41 (ein Verkäufer,
 der nie antwortet, hat jetzt ein Zeugnis dafür), ADR-42 (der MCP-Server wies anonyme Clients an einer Schranke ab, die es nicht gibt),
 **ADR-43** (die eine Zahl zählte uns selbst mit), **ADR-44** (sie war weiterhin unsere — und „nicht herstellbar" war eine Überbehauptung)
 und **ADR-45** (dieselbe Regel für die Zahlen, an denen ein Käufer wirklich entscheidet), **ADR-46** (fast alles, was hier je bestellt wurde,
-waren wir oder Testläufe) und **ADR-47** (die x402-Route ohne Konto ist mit unserer Rechtsarchitektur unvereinbar — geprüft, nicht gebaut).
+waren wir oder Testläufe) und **ADR-47** (die x402-Route ohne Konto ist mit unserer Rechtsarchitektur unvereinbar — geprüft, nicht gebaut) und **ADR-48** (ein x402-Endpunkt auf unseren eigenen Diensten, live und end-to-end bewiesen).
 
 **Das Wichtigste, wenn nur ein Absatz gelesen wird:** von **90 Jobs, die es auf Agent Souk je gab, haben 76 eine unserer eigenen Identitäten auf
 einer Seite** — Desk, Rauchtests, alles zusammen. Es bleiben 14, alle im Sandkasten, und davon sind fast alle ein Betreiber, der bei seiner eigenen
@@ -182,6 +182,36 @@ bedienen, die es nicht gibt. Zwei Dinge sind es wert, und beide gehoeren Nick, n
   ohne einen einzigen Aufruf waere eine Aussage ueber die Praemisse, nicht ueber unser Produkt.
 
 Bis dazu etwas entschieden ist, arbeite ich an dem, was ohne diese Antwort Sinn ergibt: die letzten zwei geprueften Audit-Funde.
+
+## Stand 2026-09-10, Checkpoint 70: ein x402-Endpunkt auf eigenen Diensten, live und end-to-end bewiesen (ADR-48; API 0.5.0)
+
+- **Nicks Entscheidung:** bauen, und **kein Anwalt** — „mach was du denkst aber kein Anwalt les dich beim Recht selber ein". Die Eigenrecherche steht
+  mit woertlichen Fundstellen im Nachtrag von `docs/LEGAL-BRIEFING.md`. Sie ist keine Rechtsberatung, und dass bei ADR-21 genau so eine Recherche
+  einen Punkt uebersehen hat, den erst das Gutachten fand, ist bekannt und bewusst getragen.
+- **Die Recherche faellt in beide Richtungen deutlicher aus als erwartet.** Fuer **fremde** Verkaeufer ist es kein Grenzfall: PSD2 Art. 4 Nr. 44
+  definiert das Akquisitionsgeschaeft als Dienst eines Zahlungsdienstleisters, der *„contracting with a payee"* Zahlungsvorgaenge annimmt und
+  verarbeitet — nahezu woertlich das, was ein x402-Ressourcen-Server fuer einen fremden Verkaeufer taete. **ADR-22 war richtig**, und ein Gutachten
+  dazu eruebrigt sich weitgehend. Fuer **eigene** Dienste liegt der Fall sauber: Akquisition, Zahlungsausloesung, MiCA-Transfer und Finanztransfer
+  verlangen alle ein Handeln *fuer einen anderen*.
+- **Gebaut: `POST /v1/x402/{listing_id}`.** Ohne `X-PAYMENT` kommt 402 mit x402-v2-`accepts`; der Kaeufer signiert die EIP-3009-Autorisierung und
+  wiederholt. Drei Eigenschaften tragen den Entwurf, alle als Code und nicht als Vorsatz:
+  1. **Nur eigene Listings** — jedes fremde wird mit 409 `x402_first_party_only` abgewiesen, mit Verweis auf den gewoehnlichen Weg. Das ist die
+     Rechtsgrenze als Codezeile.
+  2. **Eingereicht wird erst, wenn die Arbeit existiert** — Job anlegen, liefern lassen, *dann* beim Facilitator abrechnen. Scheitert der
+     Verkaeufer, wird nichts eingereicht und der Kaeufer verliert nichts.
+  3. **Die Wallet ist die Identitaet** — der erste Kauf aus einer Wallet haendigt API-Schluessel und Ed25519-Paar aus, einmal und nie wieder. Die
+     erste Fassung verwarf sie und gab dem Kaeufer eine Quittungs-URL, die ihm 401 antwortete; das war eine leere Zusage.
+- **End-to-end gegen die Live-Deployment und den echten oeffentlichen Facilitator gelaufen** (`scripts/smoke-x402.ts`): 402 → signierte
+  Autorisierung → Arbeit geliefert → abgerechnet → Ergebnis, **in 21 Sekunden, ohne Konto und ohne ETH**. Zurueck kam eine echte Uebersetzung
+  („Hallo Welt", `claude-opus-5`) mit Transaktions-Hash auf Base Sepolia.
+- **Zwei echte Fehler dabei gefunden und behoben:** nach dem Broadcast fehlte der Zahlung noch ein Block (die Wartezeit gehoert in den Endpunkt,
+  nicht zum Kaeufer — er kann den Kauf gar nicht wiederholen, der Nonce ist verbraucht), und die Konto-Uebergabe oben.
+- **Was der Endpunkt ausdruecklich NICHT kann:** `between_outsiders` bewegen. Wir stehen per Konstruktion auf einer Seite, und der Endpunkt sagt
+  das selbst. Er beantwortet die Frage dahinter: **zahlt da draussen ueberhaupt irgendein Agent fuer irgendetwas?**
+- **Messlatte:** Aufrufe von aussen. Bleibt er eine Woche unberuehrt, ist das eine Aussage ueber die Praemisse und nicht ueber unser Produkt.
+- Offen fuer die naechste Sitzung: den Endpunkt dort eintragen, wo x402-Clients suchen (x402-Verzeichnisse, `llms.txt`, skill.md, die Listing-
+  Beschreibungen), sonst findet ihn niemand. Der Faucet ist bei 3 Zuteilungen pro IP und Tag ausgeschoepft; der naechste Rauchtest im Sandkasten
+  geht erst nach 00:00 UTC.
 
 ### Offen aus dem Audit von ADR-44 (Stand nach ADR-45: vier von sechs gebaut)
 

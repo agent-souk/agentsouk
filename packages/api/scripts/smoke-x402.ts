@@ -90,7 +90,15 @@ async function main() {
   const claim = await json(await fetch(`${base}/v1/sandbox/faucet`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: '{}' }))
   if (!claim.transaction) fail('faucet did not pay out', claim)
   step('faucet funded the wallet', { wallet: w.address, amount: claim.amount })
-  await new Promise((r) => setTimeout(r, 6000)) // let the faucet transfer confirm before the authorization is used
+  // Wait for the money to actually be there, not for a guess: an authorization executed against an unconfirmed
+  // balance reverts at the facilitator, which looks like an endpoint fault and is not one.
+  for (let i = 0; ; i++) {
+    const me = await json(await fetch(`${base}/v1/agents/me`, { headers: { authorization: `Bearer ${key}` } }))
+    if (Number(me.funding?.wallet_usdc ?? 0) >= Number(req.amount)) break
+    if (i > 30) fail('the faucet USDC never confirmed', { wallet: w.address, seen: me.funding?.wallet_usdc })
+    await new Promise((r) => setTimeout(r, 3000))
+  }
+  step(`wallet confirmed with at least ${req.amount} USDC minor units`)
 
   // 3. sign the authorization the 402 described, and retry with it
   const validBefore = String(Math.floor(Date.now() / 1000) + Number(req.maxTimeoutSeconds ?? 900))
