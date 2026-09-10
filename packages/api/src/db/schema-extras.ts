@@ -152,3 +152,41 @@ export const searchDemand = sqliteTable(
   },
   (t) => [uniqueIndex('search_demand_pk').on(t.day, t.env, t.term), index('search_demand_day').on(t.day)],
 )
+
+
+// ---------------------------------------------------------------------------------------------
+// OPERATOR ALERTS (ADR-49): the one thing the operator cannot learn by reading a number later.
+// One row per alert, deduplicated by `key`, delivered by the sweep with retries. Nothing here is
+// public and nothing here is agent-scoped: it is the operator's own wire.
+// ---------------------------------------------------------------------------------------------
+
+export const ALERT_TIERS = ['urgent', 'notable', 'quiet'] as const
+export type AlertTier = (typeof ALERT_TIERS)[number]
+
+export const ALERT_STATUSES = ['pending', 'sent', 'failed', 'suppressed'] as const
+export type AlertStatus = (typeof ALERT_STATUSES)[number]
+
+export const operatorAlerts = sqliteTable(
+  'operator_alerts',
+  {
+    id: text('id').primaryKey(),
+    env: text('env').$type<Env>().notNull(),
+    tier: text('tier').$type<AlertTier>().notNull(),
+    /** What happened, in the shape `<kind>:<id>`. Unique: the same fact never wakes anyone twice. */
+    key: text('key').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    /** Everything the alert was built from, so a later reader can check the judgement without the job table. */
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>().notNull().default({}),
+    status: text('status').$type<AlertStatus>().notNull().default('pending'),
+    attempt: integer('attempt').notNull().default(0),
+    nextAttemptAt: integer('next_attempt_at').notNull(),
+    /** Per channel: what the send returned, so a silent failure is visible rather than assumed away. */
+    results: text('results', { mode: 'json' }).$type<{ channel: string; ok: boolean; status?: number; error?: string }[]>(),
+    lastError: text('last_error'),
+    sentAt: integer('sent_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('operator_alerts_key').on(t.key), index('operator_alerts_due').on(t.status, t.nextAttemptAt), index('operator_alerts_created').on(t.createdAt)],
+)

@@ -8,6 +8,7 @@ import { ApiError, errors } from '../../lib/errors.js'
 import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
 import { recordX402 } from '../../discovery/hits.js'
+import { raiseX402Purchase } from '../../ops/alerts.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent } from '../agents/service.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
@@ -247,6 +248,9 @@ export function x402Routes() {
       // never come back for would only make the seller wait. Accepting closes it and writes both public records.
       await acceptDelivery(env, buyer, job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not close the job after payment'))
       recordX402('paid', c.req.header('user-agent'))
+      // ADR-49: this is the event the operator cannot usefully read about later. A failure to alert must never
+      // cost the buyer the answer it has already paid for, so it is best-effort and never in the way.
+      await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: credentials != null }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
       return c.json(
         {
           object: 'x402_result' as const,

@@ -9,6 +9,7 @@ import type { ReputationSide } from '../../db/schema-marketplace.js'
 import type { Agent } from '../../middleware/auth.js'
 import { discoverySummary } from '../../discovery/hits.js'
 import { unmetSearches, type DemandTerm } from '../demand/service.js'
+import { alertsStatus } from '../../ops/alerts.js'
 
 export type Bounty = typeof bounties.$inferSelect
 export type Listing = typeof listings.$inferSelect
@@ -102,7 +103,7 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
 }
 
 export async function adminOverview(now = Date.now()) {
-  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts, discovery] = await Promise.all([
+  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts, discovery, alerts] = await Promise.all([
     db().query.jobs.findMany({ where: eq(jobs.status, 'disputed'), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.jobs.findMany({ where: and(eq(jobs.refundDue, true), isNull(jobs.refundedAt)), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.settlements.findMany({ where: eq(settlements.status, 'orphaned'), orderBy: [desc(settlements.createdAt)], limit: 20 }),
@@ -110,6 +111,7 @@ export async function adminOverview(now = Date.now()) {
     db().select({ status: agents.status, n: sql<number>`count(*)` }).from(agents).groupBy(agents.status),
     db().select({ env: jobs.env, status: jobs.status, n: sql<number>`count(*)` }).from(jobs).groupBy(jobs.env, jobs.status),
     discoverySummary(now),
+    alertsStatus(now),
   ])
   const ageHours = (t: number) => Math.round((now - t) / 36_000) / 100
   const cases = disputes.length ? await db().query.disputes.findMany({ where: inArray(disputeTable.jobId, disputes.map((j) => j.id)) }) : []
@@ -127,5 +129,7 @@ export async function adminOverview(now = Date.now()) {
     jobs: jobCounts.map((r) => ({ env: r.env, status: r.status, count: r.n })),
     // who reads the discovery surfaces (skill.md, llms.txt, mcp, well-knowns) and how many registered, per UA class
     discovery,
+    // ADR-49: where a purchase would wake the operator, and whether anything has been failing to get through
+    alerts,
   }
 }

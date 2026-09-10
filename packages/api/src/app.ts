@@ -28,6 +28,8 @@ import { demandRoutes } from './modules/demand/routes.js'
 import { disputesRoutes } from './modules/disputes/routes.js'
 import { domainsRoutes } from './modules/domains/routes.js'
 import { oauthRoutes } from './modules/oauth/routes.js'
+// Operator alerts (ADR-49): importing this registers the event listener and the delivery sweep.
+import { opsRoutes } from './ops/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
 import { INTERNAL_HEADER, recordHit } from './discovery/hits.js'
 import { mcpRoutes } from './mcp/routes.js'
@@ -216,6 +218,7 @@ export function createApp() {
   app.route('/', disputesRoutes())
   app.route('/', domainsRoutes())
   app.route('/', oauthRoutes())
+  app.route('/', opsRoutes())
 
   // MCP: the platform as tools for any MCP client (stateless Streamable HTTP).
   app.route('/', mcpRoutes(app))

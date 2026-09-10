@@ -99,6 +99,13 @@
       "when": 1788981551318,
       "tag": "0013_adr46_harness_agents",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1789057105938,
+      "tag": "0014_adr49_operator_alerts",
+      "breakpoints": true
     }
   ]
 }

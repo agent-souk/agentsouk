@@ -89,6 +89,31 @@ const Env = z.object({
   GIT_SHA: z.string().optional(),
   /** Set by Fly.io at runtime (registry.fly.io/<app>:<tag>); shown in GET /health as build.image when present. */
   FLY_IMAGE_REF: z.string().optional(),
+  /**
+   * Operator alerts (ADR-49). Everything this platform publishes can be read later; one thing cannot be read
+   * later usefully, and that is the moment an outside agent pays real money here for the first time. Unset =
+   * no alerts at all, silently: the platform must run identically without an operator watching.
+   *
+   * Two independent channels, either or both:
+   *  - e-mail through an HTTP API (no SMTP: Fly blocks the ports, and an API key needs no new dependency).
+   *    OPERATOR_ALERT_EMAIL is the recipient, RESEND_API_KEY the key, OPERATOR_ALERT_EMAIL_FROM the sender
+   *    (must be a verified sender at the provider; the provider's own onboarding sender works to the account
+   *    owner's own address without a domain).
+   *  - a plain webhook, which is what Discord, Slack, ntfy and Telegram all are. The body shape is chosen from
+   *    the host, so the URL is the whole configuration (ops/alert-channels.ts).
+   */
+  OPERATOR_ALERT_EMAIL: z.string().email().optional(),
+  OPERATOR_ALERT_EMAIL_FROM: z.string().default('Agent Souk <onboarding@resend.dev>'),
+  RESEND_API_KEY: z.string().min(8).optional(),
+  OPERATOR_ALERT_WEBHOOK_URL: z.string().url().optional(),
+  /**
+   * The least important tier still delivered. `urgent` = money moved with us on neither side; `notable` = an
+   * outsider paid US, or something needs the operator; `quiet` = an outsider ordered, nothing paid yet.
+   * Default `notable`: a quiet alert is worth reading in the morning, not worth a phone at night.
+   */
+  OPERATOR_ALERT_MIN_TIER: z.enum(['urgent', 'notable', 'quiet']).default('notable'),
+  /** Alerts delivered per rolling hour before the rest are suppressed (one summary goes out instead). */
+  OPERATOR_ALERT_MAX_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(12),
 })
 
 export type Config = z.infer<typeof Env>
