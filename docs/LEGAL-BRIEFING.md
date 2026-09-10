@@ -153,3 +153,68 @@ Audit daran etwas? (2) Gilt die P2B-Verordnung (EU) 2019/1150 oder der DSA fuer 
 KI-Agents sind? Die Erfuellung waere billig (AGB, offengelegte Ranking-Parameter, Beschwerdeweg, Sperrpolitik).
 (3) DSGVO Art. 22, falls hinter einem Listing eine natuerliche Person steht und ein automatischer Score ihr Geschaeft
 begrenzt. Bis dahin: kein Pfand, keine Treuhand, nichts davon in oeffentlichen Texten.
+
+---
+
+## Nachtrag 2026-09-10: x402 auf eigenen Diensten — warum der Zahlungsempfänger-Fall anders liegt
+
+**Das hier ist Eigenrecherche, keine Rechtsberatung.** Nick hat am 10.09. ausdrücklich entschieden, keinen Anwalt
+einzuschalten und stattdessen selbst zu lesen. Bei ADR-21 hat genau so eine Recherche einen Punkt übersehen, den erst
+das Gutachten fand; das Risiko ist bekannt und bewusst getragen. Alle Gesetzesstellen sind unten wörtlich zitiert,
+damit die Argumentation nachprüfbar ist und nicht geglaubt werden muss.
+
+### Die Frage
+
+Darf die Plattform eine vom Käufer signierte EIP-3009-Autorisierung annehmen und bei einem **öffentlichen**
+Facilitator einreichen, wenn der Zahlungsempfänger **wir selbst** sind (`souk-services` verkauft Übersetzen,
+Zusammenfassen, Extrahieren, Klassifizieren)? ADR-22 hat genau dieses Weiterreichen für **fremde** Verkäufer
+abgeschafft.
+
+### Die drei einschlägigen Tatbestände, wörtlich
+
+1. **Akquisitionsgeschäft**, PSD2 Art. 4 Nr. 44: *„a payment service provided by a payment service provider
+   **contracting with a payee** to accept and process payment transactions, which results in a transfer of funds to
+   the payee."* Das definierende Merkmal ist das **Vertragsverhältnis mit einem Zahlungsempfänger** — also mit einem
+   Dritten. Wer sein eigenes Entgelt einzieht, kontrahiert mit niemandem als Zahlungsempfänger.
+2. **Zahlungsauslösedienst**, § 1 Abs. 33 ZAG: *„ein Dienst, bei dem auf Veranlassung des Zahlungsdienstnutzers ein
+   Zahlungsauftrag in Bezug auf ein bei **einem anderen Zahlungsdienstleister geführtes Zahlungskonto** ausgelöst
+   wird."* Eine selbstverwahrte Wallet ist kein bei einem Zahlungsdienstleister geführtes Zahlungskonto. Der
+   Tatbestand ist auf eine On-Chain-Zahlung aus einer Selbstverwahrung strukturell nicht anwendbar — und das gilt
+   für beide Varianten, nicht nur für die eigene.
+3. **Kryptowerte-Transferdienst**, MiCA Art. 3 Abs. 1 Nr. 26: *„providing services of transfer, **on behalf of a
+   natural or legal person**, of crypto-assets from one distributed ledger address or account to another."* Auch hier:
+   für einen anderen. Das eigene Entgelt einzuziehen ist kein Transfer für einen Kunden.
+4. **Finanztransfergeschäft**, § 1 Abs. 1 S. 2 Nr. 6 ZAG: ein Geldbetrag **des Zahlers** wird *„nur zur Übermittlung
+   eines entsprechenden Betrags an einen Zahlungsempfänger"* entgegengenommen. Wir übermitteln nichts an einen
+   Dritten — wir sind der Empfänger.
+
+### Was daraus folgt, in beide Richtungen
+
+**Für eigene Dienste (was gebaut wird): tragfähig.** Kein Tatbestand greift, weil jeder von ihnen ein Handeln *für
+einen anderen* verlangt. Dazu kommt die Natur der Autorisierung: eine EIP-3009-`transferWithAuthorization` ist auf
+**einen** Empfänger (uns), **einen** Betrag, **einen** Nonce und ein Zeitfenster festgelegt. Sie ist nicht
+umleitbar, nicht wiederverwendbar und gibt uns keinerlei Zugriff auf das übrige Guthaben des Käufers — funktional
+ein auf uns ausgestellter Scheck. Einen auf sich selbst ausgestellten Scheck einzureichen ist kein Zahlungsdienst;
+sonst wäre jeder Webshop, der eine Kartenautorisierung einzieht, erlaubnispflichtig. Der Kern von ADR-22 bleibt
+unberührt: Wir besitzen die Mittel zu keinem Zeitpunkt, der Transfer läuft on-chain direkt von der Wallet des
+Käufers an unsere, und der Broadcast kommt vom öffentlichen Facilitator.
+
+**Für fremde Verkäufer (was ADR-22 verboten hat): schlechter als gedacht, nicht besser.** Ich hatte erwogen, ein
+Gutachten zu genau dieser Frage vorzuschlagen. Nach dem Wortlaut erübrigt sich das weitgehend: „ein
+Zahlungsdienstleister, der **mit einem Zahlungsempfänger** kontrahiert, um Zahlungsvorgänge anzunehmen und zu
+verarbeiten, was zu einem Transfer an diesen Zahlungsempfänger führt" — das ist nahezu wörtlich die Beschreibung
+dessen, was ein x402-Ressourcen-Server für einen fremden Verkäufer täte. Das ist kein Grenzfall, den ein Anwalt
+aufhellen müsste, sondern eine Passung. **ADR-22 war richtig, und der Grund ist jetzt präzise statt vage.**
+
+### Was offen bleibt
+
+- Umsatzsteuer auf das Entgelt (wir verkaufen eine Leistung, das war schon immer so).
+- Art. 50 KI-VO (Transparenz) — unverändert offen, unabhängig von x402.
+- Sanktionsscreening der zahlenden Adresse: läuft bereits (`/health.sanctions`, 120 Adressen), und der Endpunkt muss
+  es benutzen wie jeder andere Zahlungspfad auch.
+- Die Einordnung selbst. Sie ist begründet und zitiert, aber sie ist unsere. Vor nennenswertem Volumen gehört sie
+  geprüft — dann allerdings zusammen mit den anderen offenen Punkten, nicht als Einzelfrage.
+
+Quellen: PSD2 Art. 4 Nr. 44 (Definition Akquisitionsgeschäft), ZAG § 1 Abs. 33 (Zahlungsauslösedienst),
+ZAG § 1 Abs. 1 S. 2 Nr. 6 (Finanztransfergeschäft), MiCA Art. 3 Abs. 1 Nr. 26 (Transferdienst),
+ZAG § 2 Abs. 1 Nr. 9 (technischer Dienstleister), BaFin-Merkblatt zum ZAG (Fassung 14.02.2023).
