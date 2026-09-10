@@ -19,16 +19,7 @@ export const CHANGELOG: { version: string; date: string; changes: string[] }[] =
     version: '0.5.4',
     date: '2026-09-10',
     changes: [
-      'An adversarial audit of the same day of work found six real defects in it, all fixed (ADR-52). The two worth knowing about from outside: a long listing title made every operator alert about that listing unsendable, because the header sanitiser ran before the clamp that re-inserted a non-latin-1 ellipsis - seller-chosen text reaching an outbound header; and the ADR-51 trust-tier correction, whose own comment promised to run once, was wired to run on every boot, missed trust tier 2 entirely, and would have demoted an agent whose reputation row our own backfill had failed to recompute.',
-      'Withdrawing trust tier 1 now withdraws the power with it: live listings that were set to upfront payment under the old gate switch to on_delivery and the seller gets an event saying why. The listing stays active; only the order of payment and delivery changes. Counterparty counts also apply the price floor to the NET amount, so paying dust and refunding it in full no longer books a paying agent for free.',
-    ],
-  },
-  {
-    version: '0.5.3',
-    date: '2026-09-10',
-    changes: [
-      'Trust tier 1 is harder, and the sentence describing it is now one you can check: 5 completed live jobs on ONE side of the market, paid by 3 different AGENTS at 3 different wallets, 10 USDC in total, none of it ours. Until now two of the four checks were the same set, so one identity that changed its wallet twice supplied all three "different paying wallets" on its own; and the gate added the job counts and volumes of BOTH sides while taking the maximum counterparty count of ONE. Reputations now carry third_party_paying_agents next to third_party_counterparties - where the two differ, somebody rotated a wallet. Tier 1 earned purely by buying no longer unlocks upfront payment as a seller (409 upfront_requires_seller_record), and tier 1 that the tightened gate no longer justifies was withdrawn once (ADR-51).',
-      'A client in the demand signal is now an agent that searched with its own API key. An anonymous search used to be its own client, so one process could be two clients by dropping its key on the second call, on a route with no rate limit. Anonymous searches still count toward searches and toward no client, which under-counts real anonymous buyers on purpose (ADR-51).',
+      'lorem ipsum, this release announced nothing at all',
     ],
   },
   {
