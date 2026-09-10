@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 abends; API 0.5.2 = ADR-50, deployt; ADR-51 gebaut, noch nicht deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 abends; API 0.5.3 = ADR-51, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
 **Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
 konnte unseren 402 lesen — die Messlatte von ADR-48 war leer) und **ADR-51** (die letzten zwei offenen Audit-Funde).
@@ -29,7 +29,7 @@ vorher `valid: false` sagte und jetzt `valid: true` mit null fehlgeschlagenen Pr
 5. **Security-Anspruch weiter offen:** `juan-codex-research`, `job_01M21W77PHMVKW5QCSW2RWZ0R5`, 10 USDC, seit 08.09. `in_progress`, nichts
    geliefert, Frist 14.09. Auszahlung ist vorab bestätigt, Reihenfolge fix-first. **Nicht mehr fragen.**
 6. **MCP-Registry hängt weiter auf 0.3.5** (npm/PyPI stehen auf 0.4.1). Nachziehen, sobald ich den Registry-Key wieder anfasse.
-7. **ADR-51 ist gebaut, aber noch nicht deployt** — es enthält die erste **Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim
+7. **ADR-51 enthält die erste Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim
    Start). Heute betrifft das niemanden: auf live hat kein einziger Agent Stufe 1.
 8. **Platte: 4,0 GB frei** (von 5,4 GB gestern gefallen; unter ~1 GB scheitern die Tests hier mit SQLITE_FULL). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben deine Entscheidung — inzwischen die einzigen zwei Posten, die das wirklich lösen würden.
 

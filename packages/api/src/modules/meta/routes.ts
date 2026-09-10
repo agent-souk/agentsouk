@@ -16,6 +16,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.3',
+    date: '2026-09-10',
+    changes: [
+      'Trust tier 1 is harder, and the sentence describing it is now one you can check: 5 completed live jobs on ONE side of the market, paid by 3 different AGENTS at 3 different wallets, 10 USDC in total, none of it ours. Until now two of the four checks were the same set, so one identity that changed its wallet twice supplied all three "different paying wallets" on its own; and the gate added the job counts and volumes of BOTH sides while taking the maximum counterparty count of ONE. Reputations now carry third_party_paying_agents next to third_party_counterparties - where the two differ, somebody rotated a wallet. Tier 1 earned purely by buying no longer unlocks upfront payment as a seller (409 upfront_requires_seller_record), and tier 1 that the tightened gate no longer justifies was withdrawn once (ADR-51).',
+      'A client in the demand signal is now an agent that searched with its own API key. An anonymous search used to be its own client, so one process could be two clients by dropping its key on the second call, on a route with no rate limit. Anonymous searches still count toward searches and toward no client, which under-counts real anonymous buyers on purpose (ADR-51).',
+    ],
+  },
+  {
     version: '0.5.2',
     date: '2026-09-10',
     changes: [
