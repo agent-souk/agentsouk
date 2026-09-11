@@ -20,6 +20,14 @@
  *  - Both are extrapolated from a few minutes of chain. The listed-seller count is small enough that the daily
  *    figure swings by a factor of several between runs - read it as an order of magnitude, never as a rate. Run
  *    it more than once before believing any of it.
+ *
+ * COUNT PAYMENTS, NOT RECIPIENTS. This script first counted USDC Transfer events inside an authorized
+ * transaction, which is wrong twice over: an x402 settler that forwards to the merchant produces TWO transfers
+ * for ONE payment, so both the payment count and the distinct-recipient count are inflated; and several of the
+ * biggest "recipients" turned out to be facilitator contracts and escrow buckets that buy nothing at all.
+ * One AuthorizationUsed = one payment, by construction (one signer, one unique nonce). The payer side is the
+ * honest unit for "how many parties are paying"; the recipient side needs the forwarding hop stripped first.
+ * See ADR-55.
  */
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex } from '@noble/hashes/utils.js'

@@ -7,20 +7,23 @@
 **Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
 konnte unseren 402 lesen — die Messlatte von ADR-48 war leer), **ADR-51** (die letzten zwei offenen Audit-Funde), **ADR-52** (der gegnerische Audit desselben Tages fand sechs echte Fehler in dem, was acht Stunden vorher gebaut worden war) und **ADR-53** (auf der Kette nachgezaehlt, ob es zahlende Agents ueberhaupt gibt — ja, und zwar viele).
 
-**Das Wichtigste, wenn nur ein Absatz gelesen wird (ADR-53, neu am Abend des 10.09.):** die Frage aus ADR-47/48 — **zahlt da draußen überhaupt
-irgendein Agent für irgendetwas?** — ist beantwortet, und zwar von außen, auf der Kette, nicht aus unseren eigenen Daten. Jede x402-Zahlung ist ein
-EIP-3009-`transferWithAuthorization`, und USDC feuert dabei ein Ereignis, egal wer sendet. Auf Base laufen **75.000 bis 140.000 gasfreie
-USDC-Zahlungen am Tag**, in jedem Minutenfenster **400 bis 2.000 verschiedene zahlende Wallets**, **Median 0,01 USDC**, 70 % unter 0,10 USDC.
-Niemand schickt einen Cent zehntausende Male am Tag von Hand. **Die Prämisse trägt: maschineller Kleinstzahlungsverkehr ist heute real und groß.**
-Damit liegt unsere Null **an uns**, nicht an einer Welt, die noch nicht so weit ist — die unbequemere und die brauchbarere Diagnose.
-**Die zweite Hälfte ist genauso wichtig:** der Anteil, der an einen im öffentlichen x402-Index gelisteten Verkäufer geht, ist ein *kleiner*
-Bruchteil, und die Einzelzahlung liegt bei **Cents**. Hunderte gelistete Verkäufer teilen sich diesen Fluss. **Wer dort um Reichweite kämpft,
-kämpft um Cents** — der Wert eines Verzeichniseintrags ist das Signal, nicht der Umsatz. Wiederholbar mit
-`npx tsx scripts/x402-market-size.ts`; die Streuung der kleinen Zahl steht in ADR-53 dabei, sie schwankte zwischen Läufen um den Faktor zehn.
+**Das Wichtigste, wenn nur ein Absatz gelesen wird (ADR-55, Stand 11.09. früh — er korrigiert ADR-53 vom Vorabend):** die Frage aus ADR-47/48 —
+**zahlt da draußen überhaupt irgendein Agent für irgendetwas?** — ist auf der Kette messbar, und die Messung ist gemacht: auf Base laufen rund
+**70.000 gasfreie USDC-Zahlungen am Tag** von etwa **2.400 verschiedenen Wallets** in fünf Stunden. Der Token ist **USDC, praktisch
+ausschließlich** (23.859 von 28.389 Index-Einträgen USDC/Base, 4.333 USDC/Solana), die Median-Forderung liegt bei **0,005 USDC**.
+**Aber die Deutung „also gibt es viele zahlende Agents" trägt nicht, und sie stand einen halben Tag lang falsch hier.** Die acht größten
+Empfänger wurden einzeln identifiziert: dem **Wert** nach beherrscht das **Commerce Payments Protocol von Base/Coinbase** das Feld — Menschen,
+die im Checkout Waren kaufen und dabei eine EIP-3009-Autorisierung unterschreiben; dazu passt, dass **1.667 der 2.403 Wallets genau einmal**
+zahlten. Der **Anzahl** nach beherrscht es ein einzelner Betreiber mit **Wegwerf-Wallets, die nie selbst gesendet haben**, einmalig mit
+1,49–3,90 USDC aufgeladen, die dann im 90-Minuten-Takt exakt 0,001 USDC an genau ein Ziel zahlen; 71 „Käufer" laufen auf fünf Kassen zusammen.
+Zwei weitere „Empfänger" sind gar keine Verkäufer — eine Facilitator-Vertragsadresse und ein Staub-Kreis. **Echt sind zwei Gateways**
+(StableEnrich, claw402), die fremde APIs weiterverkaufen, plus die 12 Index-Verkäufer, die in der Stichprobe Geld bekamen: am aktivsten
+**Twitter/X-Timelines abrufen**, dann Krypto-Marktdaten, Web-Seite-zu-Text, LLM-Completions, Hashes — für 0,001 bis 0,10 USDC.
 
-**Für den 23.09. heißt das:** die Frage ist nicht mehr „zahlt irgendwer?", sondern **„warum fließt nichts davon hierher, und wäre der Anteil, den
-wir realistisch bekommen könnten, überhaupt eine Firma wert?"** Die erste Hälfte ist beantwortet — unser Endpunkt war bis zum 10.09. für jeden
-echten Client unlesbar (ADR-50). Die zweite ist Nicks Entscheidung und steht zum ersten Mal auf gemessenen Tatsachen.
+**Für den 23.09. heißt das:** die sichtbare x402-Ökonomie ist eine Handvoll Gateways, die fremde Daten- und LLM-APIs für Cent-Beträge
+weiterverkaufen, plus Volumen, das man von außen nicht von Selbstbedienung unterscheiden kann. **Das ist kein Markt, in den man sich stellt und
+wartet.** Wiederholbar mit `npx tsx scripts/x402-market-size.ts`; die Zählfalle — ein weiterleitender Settler erzeugt zwei Transfers für eine
+Zahlung — steht im Kopf des Skripts.
 
 **Der zweitwichtigste Absatz (ADR-50):** der x402-Endpunkt aus ADR-48 war seit gestern live, und **kein einziger echter x402-Client
 konnte ihn bezahlen.** x402 v2 überträgt die Zahlungsbedingungen base64 in der Antwort-Kopfzeile `PAYMENT-REQUIRED`; der Körper wird nur noch
