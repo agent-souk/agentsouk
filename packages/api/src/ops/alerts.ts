@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, lte, notLike, sql } from 'drizzle-orm'
 import { db } from '../db/client.js'
 import { agents, jobs, operatorAlerts, settlements, type AlertTier, type Env } from '../db/schema.js'
 import { config } from '../config.js'
@@ -39,6 +39,18 @@ import { channelStatus, requestsFor, type AlertPayload, type ChannelRequest } fr
 export const ALERT_BACKOFF_MS = [15_000, 60_000, 5 * 60_000, 30 * 60_000]
 export const ALERT_MAX_ATTEMPTS = ALERT_BACKOFF_MS.length + 1
 export const ALERT_TIMEOUT_MS = 10_000
+
+/**
+ * The hourly cap DEFERS, it does not discard. Holding an alert back and never looking at it again would mean the
+ * first order ever placed between two outsiders - the number this marketplace is measured by, 0 for its whole
+ * history - could be dropped because twelve ordinary alerts went out in the hour before it. Held rows are
+ * re-offered every ALERT_DEFER_MS until the rolling window frees up, and only given up after ALERT_DEFER_MAX_MS.
+ */
+export const ALERT_DEFER_MS = 10 * 60_000
+export const ALERT_DEFER_MAX_MS = 6 * 3600_000
+
+/** The summary that says alerts are being held back must never itself be held back. */
+const bypassesCap = (row: { tier: AlertTier; key: string }) => row.tier === 'urgent' || row.key.startsWith('flood:')
 
 const TIER_ORDER: Record<AlertTier, number> = { urgent: 3, notable: 2, quiet: 1 }
 
@@ -86,26 +98,33 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
   // created rows instead turns a broken channel into a suppression cascade (twelve stuck rows silence the
   // thirteenth), and counting across environments lets sandbox noise silence live.
   let flooded = false
-  if (draft.tier !== 'urgent') {
+  if (!bypassesCap(draft)) {
     const delivered = await db()
       .select({ n: sql<number>`count(*)` })
       .from(operatorAlerts)
-      .where(and(eq(operatorAlerts.env, draft.env), gte(operatorAlerts.sentAt, now - 3600_000)))
+      .where(and(eq(operatorAlerts.env, draft.env), gte(operatorAlerts.sentAt, now - 3600_000), notLike(operatorAlerts.key, 'flood:%')))
     flooded = (delivered[0]?.n ?? 0) >= cap
   }
-  const id = await insert(draft, flooded ? 'suppressed' : 'pending', now, flooded ? `more than ${cap} alerts delivered in the last hour` : null)
+  // Held back, not dropped: the row stays pending and comes round again when the rolling hour has room.
+  const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now)
   if (!id && opts.upgrade) return upgradePending(draft, now)
   if (flooded) {
-    // One summary an hour, never more: the operator learns that alerts are being held back rather than reading
-    // silence as calm. It bypasses the cap by construction, because its key is the hour itself.
+    // One summary an hour, never more (its key is the hour), and it bypasses the cap in both places - a notice
+    // that alerts are being held back is worthless if it can be held back. It names the first held-back alert in
+    // the BODY, not only in data: e-mail, Discord, Slack, ntfy and Telegram all render title and body and drop
+    // data, so a detail that lives only in data reaches nobody through the channel it was meant for.
     await insert(
       {
         env: draft.env,
         tier: 'notable',
         key: `flood:${hourBucket(now)}`,
-        title: `More than ${cap} alerts in one hour - the rest are being held back`,
-        body: `Alerts beyond ${cap} an hour are recorded but not delivered. Read them with GET ${config().PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/admin/alerts (header X-Admin-Token), and raise OPERATOR_ALERT_MAX_PER_HOUR if this is normal traffic now.`,
-        data: { cap, first_suppressed: draft.key },
+        title: `More than ${cap} alerts in one hour - the rest are queued`,
+        body: [
+          `Alerts beyond ${cap} an hour wait their turn instead of going out; they are delivered as the hour frees up, and given up on after ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours.`,
+          `First one held back: ${draft.title}`,
+          `Read everything with GET ${config().PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/admin/alerts (header X-Admin-Token), and raise OPERATOR_ALERT_MAX_PER_HOUR if this is normal traffic now.`,
+        ].join('\n'),
+        data: { cap, first_held_back: draft.key },
       },
       'pending',
       now,
@@ -117,11 +136,11 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
 
 const dataOf = (draft: AlertDraft) => ({ ...(draft.data ?? {}), ...(draft.url ? { url: draft.url } : {}) })
 
-async function insert(draft: AlertDraft, status: 'pending' | 'suppressed', now: number, lastError: string | null): Promise<string | null> {
+async function insert(draft: AlertDraft, status: 'pending' | 'suppressed', now: number, lastError: string | null, nextAttemptAt = now): Promise<string | null> {
   const id = newId('alert')
   const r = await db()
     .insert(operatorAlerts)
-    .values({ id, env: draft.env, tier: draft.tier, key: draft.key, title: draft.title, body: draft.body, data: dataOf(draft), status, attempt: 0, nextAttemptAt: now, lastError, createdAt: now, updatedAt: now })
+    .values({ id, env: draft.env, tier: draft.tier, key: draft.key, title: draft.title, body: draft.body, data: dataOf(draft), status, attempt: 0, nextAttemptAt, lastError, createdAt: now, updatedAt: now })
     .onConflictDoNothing({ target: operatorAlerts.key })
   return (r.rowsAffected ?? 0) > 0 ? id : null
 }
@@ -329,9 +348,15 @@ async function send(req: ChannelRequest): Promise<{ channel: string; ok: boolean
  * reached, and retrying would send the same thing twice through the channel that worked. Every channel's answer
  * is kept on the row either way, so a webhook that has quietly been failing for a week is visible.
  */
-export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; retried: number; failed: number; suppressed: number }> {
-  const due = await db().query.operatorAlerts.findMany({ where: and(eq(operatorAlerts.status, 'pending'), lte(operatorAlerts.nextAttemptAt, now)), orderBy: [asc(operatorAlerts.nextAttemptAt)], limit: 20 })
-  const stats = { sent: 0, retried: 0, failed: 0, suppressed: 0 }
+export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; retried: number; failed: number; suppressed: number; deferred: number }> {
+  // Urgent first, live before sandbox, then oldest. Exempting urgent from the cap is worth nothing if a backlog
+  // of ordinary alerts still occupies the twenty slots this pass has: queue position would defeat the exemption.
+  const due = await db().query.operatorAlerts.findMany({
+    where: and(eq(operatorAlerts.status, 'pending'), lte(operatorAlerts.nextAttemptAt, now)),
+    orderBy: [sql`case ${operatorAlerts.tier} when 'urgent' then 0 when 'notable' then 1 else 2 end`, sql`case ${operatorAlerts.env} when 'live' then 0 else 1 end`, asc(operatorAlerts.nextAttemptAt)],
+    limit: 20,
+  })
+  const stats = { sent: 0, retried: 0, failed: 0, suppressed: 0, deferred: 0 }
   // One resolution of "money that came from us" per environment per pass, off the buyer's request path.
   const ourMoney = new Map<Env, Set<string>>()
   const ourWalletsFor = async (env: Env) => {
@@ -349,13 +374,24 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     const n = await db()
       .select({ n: sql<number>`count(*)` })
       .from(operatorAlerts)
-      .where(and(eq(operatorAlerts.env, env), gte(operatorAlerts.sentAt, now - 3600_000)))
+      .where(and(eq(operatorAlerts.env, env), gte(operatorAlerts.sentAt, now - 3600_000), notLike(operatorAlerts.key, 'flood:%')))
     deliveredThisHour.set(env, n[0]?.n ?? 0)
   }
   for (const row of due) {
-    if (row.tier !== 'urgent' && (deliveredThisHour.get(row.env) ?? 0) >= cap) {
-      await db().update(operatorAlerts).set({ status: 'suppressed', attempt: row.attempt + 1, lastError: `more than ${cap} alerts delivered in the last hour`, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
-      stats.suppressed++
+    if (!bypassesCap(row) && (deliveredThisHour.get(row.env) ?? 0) >= cap) {
+      // Deferred, not discarded - and given up on only after the row has been waiting for hours, so a busy
+      // afternoon delays an alert instead of deleting it. The one exception is age, not the cap.
+      const tooOld = now - row.createdAt >= ALERT_DEFER_MAX_MS
+      await db()
+        .update(operatorAlerts)
+        .set(
+          tooOld
+            ? { status: 'suppressed', lastError: `held back by the ${cap}/hour cap for ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours and given up on`, updatedAt: now }
+            : { nextAttemptAt: now + ALERT_DEFER_MS, lastError: `held back: more than ${cap} alerts delivered in the last hour`, updatedAt: now },
+        )
+        .where(eq(operatorAlerts.id, row.id))
+      if (tooOld) stats.suppressed++
+      else stats.deferred++
       continue
     }
     const payload: AlertPayload = { tier: row.tier, env: row.env, title: row.title, body: row.body, url: (row.data as { url?: string })?.url ?? null, data: row.data }

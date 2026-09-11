@@ -7,7 +7,7 @@ import type { App } from '../app.js'
 import { db } from '../db/client.js'
 import { agents, faucetClaims, jobs, operatorAlerts } from '../db/schema.js'
 import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, headerSafe, MAX_MESSAGE_CHARS } from './alert-channels.js'
-import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, classifyPayment, deliverAlerts, raise, recentAlerts } from './alerts.js'
+import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, ALERT_DEFER_MAX_MS, classifyPayment, deliverAlerts, raise, recentAlerts } from './alerts.js'
 
 const ADMIN = 'test-admin-token-1234567890'
 const WEBHOOK = 'https://ntfy.sh/agentsouk-operator-test'
@@ -140,13 +140,15 @@ describe('raising alerts (ADR-49)', () => {
     expect(urgent).not.toBeNull()
 
     const rows = await recentAlerts()
-    expect(rows.find((r) => r.key === 'q3')!.status).toBe('suppressed')
-    expect(rows.find((r) => r.key === 'n4')!.status).toBe('suppressed')
+    // held back, NOT discarded: the row stays pending and comes round again when the hour frees up
+    expect(rows.find((r) => r.key === 'q3')!.status).toBe('pending')
+    expect(rows.find((r) => r.key === 'q3')!.last_error).toContain('held back')
+    expect(rows.find((r) => r.key === 'n4')!.status).toBe('pending')
     // the one the whole subsystem exists for is never held back by sandbox chatter
     expect(rows.find((r) => r.key === 'u5')!.status).toBe('pending')
     const flood = rows.filter((r) => r.key.startsWith('flood:'))
     expect(flood).toHaveLength(1)
-    expect(flood[0]!.title).toContain('held back')
+    expect(flood[0]!.title).toContain('queued')
   })
 
   it('counts the cap per environment: sandbox noise cannot silence live', async () => {
@@ -374,5 +376,69 @@ describe('audit fixes (ADR-49 follow-up)', () => {
     expect(row!.attempt).toBe(ALERT_BACKOFF_MS.length + 1)
     // the window really is the sum of every wait
     expect(at - now).toBe(ALERT_BACKOFF_MS.reduce((a, b) => a + b, 0))
+  })
+})
+
+/** Second round of audit findings (ADR-54): the cap must delay an alert, never delete it. */
+describe('the hourly cap defers instead of discarding (audit fix)', () => {
+  it('holds an alert back and delivers it once the hour has room', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const t0 = Date.UTC(2026, 8, 11, 12, 0, 0)
+    await raise(draft({ key: 'first', tier: 'notable' }), t0)
+    await deliverAlerts(t0)
+    // the one that matters arrives during the busy hour and must not be lost
+    await raise(draft({ key: 'ordered:job_x', tier: 'notable' }), t0 + 60_000)
+    const held = (await recentAlerts()).find((r) => r.key === 'ordered:job_x')!
+    expect(held.status).toBe('pending')
+    expect(held.last_error).toContain('held back')
+
+    // still inside the rolling hour: deferred again, never dropped (the flood summary does go out, it bypasses the cap)
+    await deliverAlerts(t0 + 12 * 60_000)
+    expect((await recentAlerts()).find((r) => r.key === 'ordered:job_x')!.status).toBe('pending')
+
+    // an hour later the window has slid and it goes out
+    const r = await deliverAlerts(t0 + 61 * 60_000)
+    expect(r.sent).toBeGreaterThanOrEqual(1)
+    expect((await recentAlerts()).find((r) => r.key === 'ordered:job_x')!.status).toBe('sent')
+  })
+
+  it('never holds back the notice that it is holding things back', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const t0 = Date.UTC(2026, 8, 11, 12, 0, 0)
+    await raise(draft({ key: 'first', tier: 'notable' }), t0)
+    await deliverAlerts(t0)
+    await raise(draft({ key: 'held', tier: 'notable', title: 'An outsider ordered from an outsider' }), t0 + 1000)
+    await deliverAlerts(t0 + 2000)
+    const flood = (await recentAlerts()).find((r) => r.key.startsWith('flood:'))!
+    expect(flood.status).toBe('sent')
+    // and it names what was held back in the BODY, because every channel drops `data`
+    expect(sent.some((s) => s.body.includes('An outsider ordered from an outsider'))).toBe(true)
+  })
+
+  it('sends an urgent alert before a backlog of ordinary ones', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1000 })
+    const t0 = Date.UTC(2026, 8, 11, 12, 0, 0)
+    for (let i = 0; i < 25; i++) await raise(draft({ key: `noise${i}`, tier: 'quiet', env: 'test' }), t0)
+    await raise(draft({ key: 'the-one', tier: 'urgent', env: 'live', title: 'Paid between two outsiders' }), t0 + 1000)
+    await deliverAlerts(t0 + 2000)
+    // the queue takes 20 a pass; without tier ordering the urgent live alert would sit behind all 25
+    expect((await recentAlerts()).find((r) => r.key === 'the-one')!.status).toBe('sent')
+    expect(sent[0]!.headers.Title).toContain('Paid between two outsiders')
+  })
+
+  it('gives up on a held-back alert only after hours, and says that is why', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const t0 = Date.UTC(2026, 8, 11, 12, 0, 0)
+    await raise(draft({ key: 'first', tier: 'notable' }), t0)
+    await deliverAlerts(t0)
+    await raise(draft({ key: 'old', tier: 'notable' }), t0 + 1000)
+    // keep the hour permanently full by delivering a fresh alert just before the check
+    for (let t = t0; t <= t0 + ALERT_DEFER_MAX_MS + 30 * 60_000; t += 30 * 60_000) {
+      await raise(draft({ key: `keep${t}`, tier: 'urgent' }), t)
+      await deliverAlerts(t)
+    }
+    const row = (await recentAlerts()).find((r) => r.key === 'old')!
+    expect(row.status).toBe('suppressed')
+    expect(row.last_error).toContain('given up on')
   })
 })

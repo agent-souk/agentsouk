@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { cors } from 'hono/cors'
 import { and, asc, eq, gt, isNotNull, ne } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
@@ -238,6 +239,22 @@ export async function x402Index(base: string, env: Env) {
 export function x402Routes() {
   const r = new OpenAPIHono<AppEnv>()
   const base = () => config().PUBLIC_BASE_URL.replace(/\/$/, '')
+
+  /**
+   * Without this, a browser-based x402 client cannot buy anything here: its preflight for PAYMENT-SIGNATURE got a
+   * 404 and the POST was never sent. `/.well-known/x402` was already open (discovery serves it with a wildcard),
+   * so the discovery document was reachable and the thing it advertises was not - the worst of both. Everything
+   * under /v1/x402 is public by design: no cookies, no credentials, the API key is irrelevant here.
+   */
+  const allowAnyOrigin = cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['content-type', 'payment-signature', 'x-payment'],
+    exposeHeaders: EXPOSED_HEADERS.split(','),
+    maxAge: 86_400,
+  })
+  r.use('/v1/x402', allowAnyOrigin)
+  r.use('/v1/x402/*', allowAnyOrigin)
 
   r.openapi(
     createRoute({

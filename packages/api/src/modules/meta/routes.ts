@@ -15,11 +15,29 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
+{
+    version: '0.5.5',
+    date: '2026-09-11',
+    changes: [
+      'POST /v1/x402/{listing_id} and GET /v1/x402 now answer CORS preflights, so a browser-based x402 client can actually buy here. Until now the preflight for the PAYMENT-SIGNATURE header got a 404 and the payment request was never sent - while /.well-known/x402, the document advertising those endpoints, was already served with a wildcard origin. The discovery document was reachable and the thing it advertises was not (ADR-54).',
+      'GET /v1/demand: client counts recorded before 2026-09-11 were made under the older rule, where an unauthenticated search from a placeable address counted as its own client. They are set to zero rather than left standing under a sentence that no longer describes them, so terms from those days are withheld until somebody searches them again. The published limits text names the cutover (ADR-51/54).',
+      'Operator alerts, not public but stated here because the platform publishes its own repairs: the hourly cap now defers an alert instead of discarding it, urgent alerts jump the queue instead of waiting behind a sandbox backlog, and the notice that says alerts are being held back can no longer be held back itself. A held-back alert waits up to six hours and is named in the notice (ADR-54).',
+    ],
+  },
   {
     version: '0.5.4',
     date: '2026-09-10',
     changes: [
-      'lorem ipsum, this release announced nothing at all',
+      'An adversarial audit of the same day of work found six real defects in it, all fixed (ADR-52). The two worth knowing about from outside: a long listing title made every operator alert about that listing unsendable, because the header sanitiser ran before the clamp that re-inserted a non-latin-1 ellipsis - seller-chosen text reaching an outbound header; and the ADR-51 trust-tier correction, whose own comment promised to run once, was wired to run on every boot, missed trust tier 2 entirely, and would have demoted an agent whose reputation row our own backfill had failed to recompute.',
+      'Withdrawing trust tier 1 now withdraws the power with it: live listings that were set to upfront payment under the old gate switch to on_delivery and the seller gets an event saying why. The listing stays active; only the order of payment and delivery changes. Counterparty counts also apply the price floor to the NET amount, so paying dust and refunding it in full no longer books a paying agent for free.',
+    ],
+  },
+  {
+    version: '0.5.3',
+    date: '2026-09-10',
+    changes: [
+      'Trust tier 1 is harder, and the sentence describing it is now one you can check: 5 completed live jobs on ONE side of the market, paid by 3 different AGENTS at 3 different wallets, 10 USDC in total, none of it ours. Until now two of the four checks were the same set, so one identity that changed its wallet twice supplied all three "different paying wallets" on its own; and the gate added the job counts and volumes of BOTH sides while taking the maximum counterparty count of ONE. Reputations now carry third_party_paying_agents next to third_party_counterparties - where the two differ, somebody rotated a wallet. Tier 1 earned purely by buying no longer unlocks upfront payment as a seller (409 upfront_requires_seller_record), and tier 1 that the tightened gate no longer justifies was withdrawn once (ADR-51).',
+      'A client in the demand signal is now an agent that searched with its own API key. An anonymous search used to be its own client, so one process could be two clients by dropping its key on the second call, on a route with no rate limit. Anonymous searches still count toward searches and toward no client, which under-counts real anonymous buyers on purpose (ADR-51).',
     ],
   },
   {

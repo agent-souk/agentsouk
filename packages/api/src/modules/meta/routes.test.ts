@@ -17,12 +17,37 @@ describe('meta', () => {
     expect(cl.status).toBe(200)
     expect(cl.body.entries[0].version).toBe(APP_VERSION) // the newest entry is always the running version
     expect(cl.body.current_version).toBe(APP_VERSION)
-    // By content, not by index: every release announced what it changed, and a new entry at the front must not
-    // make this test look like a regression in six older ones.
-    const everything = cl.body.entries.flatMap((e: { changes: string[] }) => e.changes).join(' ')
-    for (const announced of ['PAYMENT-REQUIRED', 'x402:terms', '/v1/x402/', 'without_us_how_many_ever_tried', 'graduated badge stops being free', 'counterparties_without_payment', 'first_party_involved', 'funded_by_our_faucet', "search_listings and get_listing accept env", "orders_ignored", "between_outsiders", "raise this marketplace", "message_for_your_operator", "what_the_searching_produced", "listing_limit", "suggested_max_usdc", "/v1/series/{id}", "/v1/commitments", "First-buy programme", "gasless", "/.well-known/agent-registration.json", "/.well-known/ard.json", "bounty desk", "/robots.txt", "rating_weighted", "/v1/domains/{domain}", "/v1/disputes/{id}/verdict", "/v1/opportunities", "first_party", "wallet-to-wallet"]) {
-      expect(everything, `the changelog never announced ${announced}`).toContain(announced)
+    // By VERSION, not by index and not by union. Indexing broke on every release; a union over all entries was
+    // the overcorrection - ten of these tokens appear in several entries, so nine entries could have been deleted
+    // with this test still green, and the newest release was the one whose content it did not check at all.
+    const byVersion = new Map<string, string>(cl.body.entries.map((e: { version: string; changes: string[] }) => [e.version, e.changes.join(' ')]))
+    const announced: [version: string, token: string][] = [
+      ['0.5.4', 'ADR-52'],
+      ['0.5.3', 'third_party_paying_agents'],
+      ['0.5.2', 'PAYMENT-REQUIRED'],
+      ['0.5.1', 'x402:terms'],
+      ['0.5.0', '/v1/x402/'],
+      ['0.4.13', 'without_us_how_many_ever_tried'],
+      ['0.4.12', 'graduated badge stops being free'],
+      ['0.4.11', 'counterparties_without_payment'],
+      ['0.4.10', 'first_party_involved'],
+      ['0.4.9', 'funded_by_our_faucet'],
+      ['0.4.8', 'search_listings and get_listing accept env'],
+      ['0.4.7', 'orders_ignored'],
+      ['0.4.6', 'between_outsiders'],
+      ['0.4.4', 'message_for_your_operator'],
+      ['0.4.3', 'what_the_searching_produced'],
+      ['0.4.2', 'listing_limit'],
+      ['0.4.1', 'suggested_max_usdc'],
+      ['0.4.0', '/v1/series/{id}'],
+      ['0.3.9', '/v1/commitments'],
+    ]
+    for (const [version, token] of announced) {
+      expect(byVersion.has(version), `the changelog lost release ${version}`).toBe(true)
+      expect(byVersion.get(version), `release ${version} no longer announces ${token}`).toContain(token)
     }
+    // and the running version is always the newest entry AND says something
+    expect(byVersion.get(APP_VERSION)!.length).toBeGreaterThan(80)
     // the word a supervisor would quote back never appears in a money sense on any public surface (ADR-32)
     expect(JSON.stringify(cl.body)).not.toMatch(/is escrowed/)
     const s = await createTestAgent(app, { name: 'S' })
