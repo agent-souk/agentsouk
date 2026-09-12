@@ -5,7 +5,7 @@ import { walletMessage } from '../agents/service.js'
 import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import type { App } from '../../app.js'
 import { _setConfigForTests, config } from '../../config.js'
-import { sweepJobs, PAYMENT_GRACE_MS } from './service.js'
+import { sweepJobs, PAYMENT_GRACE_MS, GRACE_AFTER_DEADLINE_MS } from './service.js'
 
 let app: App
 let chain: FakeChain
@@ -689,6 +689,74 @@ describe('jobs: upfront (pay after acceptance)', () => {
     const ok = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 1000 }) } })
     expect(ok.status).toBe(200)
     expect((await reputation(seller)).as_seller).toMatchObject({ jobs_failed: 1, refunds_due: 0, refunds_made: 1 })
+  })
+})
+
+describe('a seller that accepts and never delivers (ADR-57)', () => {
+  it('loses an unpaid job to the platform after its own deadline plus the grace hour, and the failure is on its record', async () => {
+    const l = await makeListing() // turnaround 600 s
+    const j = await order(l.id)
+    await act(seller, j.id, 'accept')
+    const deadline = Date.parse((await get(buyer, j.id)).body.deadlines.deliver_by)
+    // inside the grace hour nothing happens: the buyer could not cancel yet either
+    expect((await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS - 1000)).undelivered).toBe(0)
+    expect((await get(buyer, j.id)).body.status).toBe('in_progress')
+    const res = await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 1000)
+    expect(res.undelivered).toBe(1)
+    const view = await get(buyer, j.id)
+    expect(view.body.status).toBe('cancelled')
+    expect(view.body.cancel_reason).toContain('platform:')
+    expect(view.body.payment.refund_due).toBe(false)
+    expect((await reputation(seller)).as_seller).toMatchObject({ jobs_failed: 1, refunds_due: 0 })
+    expect((await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 5000)).undelivered).toBe(0) // once
+  })
+
+  it('tells the buyer of a paid job once that it can cancel, and decides nothing for it', async () => {
+    const l = await makeListing()
+    const j = await order(l.id, { text: 'a' }, { max_revisions: 1 })
+    await act(seller, j.id, 'accept')
+    await act(seller, j.id, 'deliver', { output: { translation: 'x' } })
+    expect((await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE))).status).toBe(200)
+    const rev = await act(buyer, j.id, 'request_revision', { message: 'please fix' })
+    expect(rev.body.status).toBe('in_progress')
+    const deadline = Date.parse(rev.body.deadlines.deliver_by)
+    const res = await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 1000)
+    expect(res).toMatchObject({ undelivered: 0, overdue_paid: 1 })
+    const view = await get(buyer, j.id)
+    expect(view.body.status).toBe('in_progress') // paid: the buyer decides (cancel opens on the real clock, an hour after the deadline)
+    const events = await call(app, 'GET', `/v1/jobs/${j.id}/events`, { key: buyer.api_keys.test })
+    expect(events.body.data.filter((e: any) => e.type === 'delivery_overdue')).toHaveLength(1)
+    expect((await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 60_000)).overdue_paid).toBe(0) // told once, not every 15 seconds
+    const msgs = await call(app, 'GET', `/v1/threads/${view.body.thread_id}/messages`, { key: buyer.api_keys.test })
+    expect(msgs.body.data.filter((m: any) => String(m.body).includes('this is your call'))).toHaveLength(1)
+  })
+})
+
+describe('a job refunded once can owe again (ADR-57)', () => {
+  it('opens a fresh refund cycle for a transfer that lands after the first refund, instead of recording nothing', async () => {
+    const l = await makeListing({ payment: 'upfront' })
+    const j = await order(l.id)
+    await act(seller, j.id, 'accept')
+    expect((await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE))).status).toBe(200)
+    const sc = await act(seller, j.id, 'cancel', { reason: 'cannot' })
+    expect(sc.body.payment).toMatchObject({ refund_due: true, refund_expected: PRICE })
+    const first = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 1000 }) } })
+    expect(first.status).toBe(200)
+    expect(first.body.payment.refund_due).toBe(false)
+    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 0, refunds_made: 1 })
+    // a second transfer reaches the seller on the cancelled, already paid job (a double broadcast, a retry): the
+    // idempotent answer is 200, the extra transfer is recorded as orphaned - and it is OWED, in a fresh cycle
+    const again = await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE, { timestamp: Date.now() + 2000 }))
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    const view = await get(buyer, j.id)
+    expect(view.body.payment).toMatchObject({ refund_due: true, refund_expected: PRICE }) // a fresh cycle, not a sum with the settled one
+    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 1 })
+    const events = await call(app, 'GET', `/v1/jobs/${j.id}/events`, { key: buyer.api_keys.test })
+    expect(events.body.data.filter((e: any) => e.type === 'refund_due')).toHaveLength(2)
+    const second = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 3000 }) } })
+    expect(second.status, JSON.stringify(second.body)).toBe(200)
+    expect(second.body.payment.refund_due).toBe(false)
+    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 0, refunds_made: 1 })
   })
 })
 

@@ -108,30 +108,39 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
   // Held back, not dropped: the row stays pending and comes round again when the rolling hour has room.
   const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now)
   if (!id && opts.upgrade) return upgradePending(draft, now)
-  if (flooded) {
-    // One summary an hour, never more (its key is the hour), and it bypasses the cap in both places - a notice
-    // that alerts are being held back is worthless if it can be held back. It names the first held-back alert in
-    // the BODY, not only in data: e-mail, Discord, Slack, ntfy and Telegram all render title and body and drop
-    // data, so a detail that lives only in data reaches nobody through the channel it was meant for.
-    await insert(
-      {
-        env: draft.env,
-        tier: 'notable',
-        key: `flood:${hourBucket(now)}`,
-        title: `More than ${cap} alerts in one hour - the rest are queued`,
-        body: [
-          `Alerts beyond ${cap} an hour wait their turn instead of going out; they are delivered as the hour frees up, and given up on after ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours.`,
-          `First one held back: ${draft.title}`,
-          `Read everything with GET ${config().PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/admin/alerts (header X-Admin-Token), and raise OPERATOR_ALERT_MAX_PER_HOUR if this is normal traffic now.`,
-        ].join('\n'),
-        data: { cap, first_held_back: draft.key },
-      },
-      'pending',
-      now,
-      null,
-    )
-  }
+  if (flooded) await floodSummary(draft.env, cap, draft, now)
   return id
+}
+
+/**
+ * The one-an-hour notice that alerts are being held back. It bypasses the cap in both places - a notice that
+ * alerts are being held back is worthless if it can be held back - and names the first held-back alert in the
+ * BODY, not only in data: e-mail, Discord, Slack, ntfy and Telegram all render title and body and drop data.
+ *
+ * Keyed by ENVIRONMENT and hour (ADR-57). Keyed by the hour alone, the sandbox flooding first in an hour silently
+ * swallowed the live notice for the same hour: the row that says "live alerts are being held back" was itself
+ * held back, with nothing to say so. Written from raise() AND from the delivery sweep, because the sweep is where
+ * thirty rows raised inside one minute actually meet the cap - raise() sees nothing delivered yet and lets them
+ * all through, and until now the sweep then deferred them without a word.
+ */
+async function floodSummary(env: Env, cap: number, firstHeldBack: { key: string; title: string }, now: number): Promise<void> {
+  await insert(
+    {
+      env,
+      tier: 'notable',
+      key: `flood:${env}:${hourBucket(now)}`,
+      title: `More than ${cap} alerts in one hour on ${env} - the rest are queued`,
+      body: [
+        `Alerts beyond ${cap} an hour on ${env} wait their turn instead of going out; they are delivered as the hour frees up, and given up on after ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours.`,
+        `First one held back: ${firstHeldBack.title}`,
+        `Read everything with GET ${config().PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/admin/alerts (header X-Admin-Token), and raise OPERATOR_ALERT_MAX_PER_HOUR if this is normal traffic now.`,
+      ].join('\n'),
+      data: { cap, env, first_held_back: firstHeldBack.key },
+    },
+    'pending',
+    now,
+    null,
+  )
 }
 
 const dataOf = (draft: AlertDraft) => ({ ...(draft.data ?? {}), ...(draft.url ? { url: draft.url } : {}) })
@@ -279,6 +288,32 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
       data: { job_id: jobId, env: f.job.env, reason: f.job.disputeReason },
     }
   }
+  if (e.type === 'job.delivered' && typeof jobId === 'string') {
+    const f = await factsFor(jobId, false)
+    if (!f?.buyer?.firstParty) return null
+    // The one step of our own desk's process that needs a human: a bounty that pays only after the operator has
+    // reproduced the finding (catalog.ts needs_operator_confirmation, carried on the job as
+    // input.operator_confirmation_before_payment). Until 2026-09-12 a delivery here produced a log line in the
+    // desk's process and a field on its health page, nothing else - and the desk walks away an hour before pay_by
+    // if nobody answers, so a valid finding would have gone unpaid for our silence, on the one job whose public
+    // promise is "fixed before it is paid" (ADR-57).
+    if ((f.job.input as { operator_confirmation_before_payment?: unknown } | null)?.operator_confirmation_before_payment !== true) return null
+    const payBy = f.job.paymentDeadlineAt ? new Date(f.job.paymentDeadlineAt).toISOString() : null
+    return {
+      env: f.job.env,
+      tier: f.job.env === 'live' ? 'urgent' : 'notable',
+      key: `confirm:${jobId}`,
+      title: `A delivery waits for the operator's confirmation before payment (${f.job.env})`,
+      body: [
+        jobLine(f),
+        '',
+        `A sealed delivery on a bounty that pays only after a human reproduces it. Order of events: read the preview (the desk health page needs_operator, or GET ${base()}/v1/jobs/${jobId} as the desk), reproduce it, deploy the fix, then as the desk PUT memory operator/confirm/${jobId} = {"output_hash": "${f.job.outputHash ?? '<output_hash>'}"}.`,
+        `Pay by ${payBy ?? 'the deadline on the job'}; the desk walks away one hour before that if nothing is confirmed.`,
+      ].join('\n'),
+      url: `${base()}/v1/jobs/${jobId}`,
+      data: { job_id: jobId, env: f.job.env, seller: f.seller?.handle, output_hash: f.job.outputHash, pay_by: payBy },
+    }
+  }
   if (e.type === 'job.refund_due' && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
     if (!f) return null
@@ -391,7 +426,10 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
         )
         .where(eq(operatorAlerts.id, row.id))
       if (tooOld) stats.suppressed++
-      else stats.deferred++
+      else {
+        stats.deferred++
+        await floodSummary(row.env, cap, row, now)
+      }
       continue
     }
     const payload: AlertPayload = { tier: row.tier, env: row.env, title: row.title, body: row.body, url: (row.data as { url?: string })?.url ?? null, data: row.data }
@@ -447,8 +485,16 @@ export async function recentAlerts(limit = 50) {
 }
 
 export async function alertsStatus(now = Date.now()) {
-  const rows = await db().select({ status: operatorAlerts.status, n: sql<number>`count(*)` }).from(operatorAlerts).where(gte(operatorAlerts.createdAt, now - 7 * 86_400_000)).groupBy(operatorAlerts.status)
-  return { channels: channelStatus(), last_7_days: Object.fromEntries(rows.map((r) => [r.status, r.n])) as Record<string, number> }
+  const rows = await db().select({ status: operatorAlerts.status, lastError: operatorAlerts.lastError }).from(operatorAlerts).where(gte(operatorAlerts.createdAt, now - 7 * 86_400_000))
+  // Three different endings used to share the one number `suppressed`: "that was our own money" (an answer),
+  // "no channel configured" (a setting) and "held back by the cap for six hours and given up on" (a failure). On
+  // the overview, which shows the summary without the rows, the failure was indistinguishable from the answer.
+  const last7: Record<string, number> = {}
+  for (const r of rows) {
+    const k = r.status !== 'suppressed' ? r.status : r.lastError?.startsWith('held back') ? 'given_up_after_cap' : r.lastError?.startsWith('no channel') ? 'suppressed_no_channel' : 'suppressed_our_money'
+    last7[k] = (last7[k] ?? 0) + 1
+  }
+  return { channels: channelStatus(), last_7_days: last7 }
 }
 
 // --- wiring --------------------------------------------------------------------------------------

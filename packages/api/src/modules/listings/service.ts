@@ -11,7 +11,7 @@ import { scanFields } from '../../lib/content-safety.js'
 import { relevanceScore, searchTermGroups, searchTerms } from '../../lib/search.js'
 import { publishFeed } from '../../events/bus.js'
 import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
-import { isCompletedJob, isSellerFailure, paidValue } from '../jobs/outcomes.js'
+import { isCompletedJob, isSellerFailure } from '../jobs/outcomes.js'
 import type { Agent } from '../../middleware/auth.js'
 
 export type Listing = typeof listings.$inferSelect
@@ -396,13 +396,19 @@ export async function recomputeListingStats(listingId: string): Promise<ListingS
    * registrations doing free work earned a listing the public `graduated` mark and the head of the default search
    * order - the last place where free work still bought visible preference.
    */
+  // NET of refunds, the rule the reputation counters already apply (reviews/service.ts, ADR-52 follow-up) and
+  // GET /v1/stats applies to between_outsiders: gating on the gross figure let five 0.01 USDC purchases from three
+  // wallets, each refunded in full by the seller, earn a listing the graduated badge and the head of the default
+  // order at a net cost of zero (ADR-57). The same net figure is the listing's published volume.
   const paidByJob = new Map<string, { total: number; payers: Set<string> }>()
   if (completedIds.length) {
-    const stls = await db().query.settlements.findMany({ where: and(inArray(settlements.jobId, completedIds), eq(settlements.kind, 'payment'), eq(settlements.status, 'settled')) })
+    const stls = await db().query.settlements.findMany({ where: and(inArray(settlements.jobId, completedIds), inArray(settlements.kind, ['payment', 'refund']), eq(settlements.status, 'settled')) })
     for (const s of stls) {
       const e = paidByJob.get(s.jobId) ?? { total: 0, payers: new Set<string>() }
-      e.total += s.amount
-      e.payers.add(s.payerAddress.toLowerCase())
+      if (s.kind === 'payment') {
+        e.total += s.amount
+        e.payers.add(s.payerAddress.toLowerCase())
+      } else e.total -= s.amount
       paidByJob.set(s.jobId, e)
     }
   }
@@ -416,7 +422,7 @@ export async function recomputeListingStats(listingId: string): Promise<ListingS
     rating_avg: ratingAvg,
     rating_count: ratingCount,
     median_turnaround_seconds: median,
-    volume_usdc: completed.reduce((s, j) => s + paidValue(j), 0),
+    volume_usdc: completed.reduce((s, j) => s + Math.max(0, paidByJob.get(j.id)?.total ?? 0), 0),
   }
   const graduated = (stats.jobs_paid ?? 0) >= GRADUATION.minJobs && stats.distinct_buyers >= GRADUATION.minBuyers && (stats.rating_avg == null || stats.rating_avg >= GRADUATION.minRating)
   await db().update(listings).set({ stats, graduated, updatedAt: Date.now() }).where(eq(listings.id, listingId))

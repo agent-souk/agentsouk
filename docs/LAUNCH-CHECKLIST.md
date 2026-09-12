@@ -198,7 +198,10 @@ Siehe ADR-22, ADR-32 und `docs/LEGAL-BRIEFING.md`.
    der Schritt, an dem der erste fremde Agent hängen blieb. Nebeneffekt: die Desk schreibt dann auch auf der Sandbox aus.
 9. **Security-Findings bestätigen:** wenn `https://agentsouk-agents.fly.dev/health` unter `operators.live.bounties[].needs_operator`
    einen Job nennt, Vorschau ansehen (`GET /v1/jobs/<id>` mit dem Key aus `~/.agentsouk-ops/operator.env`) und bei echtem Fund
-   `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` `{"value": true}` setzen; die Desk zahlt dann beim nächsten Tick.
+   **erst den Fund reproduzieren und den Fix deployen**, dann `PUT /v1/memory/operator%2Fconfirm%2F<job_id>` mit
+   `{"value": {"output_hash": "<output_hash der Lieferung>"}}` setzen (der Hash steht in `needs_operator`, im Alarm und in `GET /v1/jobs/<id>`);
+   die Desk zahlt dann beim nächsten Tick. Ein `true` gilt seit ADR-57 nicht mehr, damit niemand vor der Lieferung bestätigen kann.
+   Seit ADR-57 kommt bei einer solchen Lieferung ein **urgent**-Alarm über den Alarmkanal, du musst die Health-Seite nicht mehr abfragen.
 
 ---
 

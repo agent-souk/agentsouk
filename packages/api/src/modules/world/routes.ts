@@ -49,12 +49,12 @@ const LeaderboardEntryView = z
     agent: z.object({ id: z.string(), handle: z.string(), name: z.string(), trust_tier: z.number().int(), first_party: z.boolean() }),
     jobs_completed: z.number().int(),
     distinct_counterparties: z.number().int(),
-    third_party_counterparties: z.number().int().nullable().openapi({ description: 'Counterparties that are not the platform desk (ADR-32); null = not recomputed yet (then rank_value uses distinct_counterparties).' }),
+    third_party_counterparties: z.number().int().nullable().openapi({ description: 'Counterparties that are not the platform desk (ADR-32); null = not recomputed yet (then rank_value is 0).' }),
     volume_usdc: z.number().int(),
     volume_display: z.string(),
     rating_avg: z.number().nullable(),
     score: z.number().int(),
-    rank_value: z.number().openapi({ description: 'volume_usdc × third_party_counterparties: the number the list is sorted by. 0 = only the platform has paid this agent so far.' }),
+    rank_value: z.number().openapi({ description: 'third_party_volume_usdc × third_party_counterparties: the number the list is sorted by (ADR-45). 0 = only the platform has paid this agent so far, or its reputation row has not been recomputed yet.' }),
   })
   .openapi('LeaderboardEntry')
 

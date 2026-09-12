@@ -102,7 +102,8 @@ describe('first_party (ADR-23)', () => {
     await listing(third, 'test')
     const s = await call(app, 'GET', '/v1/stats?env=test')
     expect(s.body.listings_active).toBe(2)
-    expect(s.body.first_party).toEqual({ agents: 2, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0 })
+    // ADR-57: the two admin flips above are counted and dated, so a move of the headline figure has its cause on record
+    expect(s.body.first_party).toEqual({ agents: 2, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0, flag_changes: { count: 2, last_at: expect.any(String) } })
   })
 })
 

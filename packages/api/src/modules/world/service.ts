@@ -91,10 +91,12 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
   return rows
     .map(({ rep, agent }) => {
       const side = role === 'seller' ? rep.asSeller : rep.asBuyer
-      // a row not yet recomputed since ADR-32 (null split) ranks by all counterparties rather than by a made-up 0
-      // a row not yet recomputed since ADR-32/45 (null split) falls back to the totals rather than to a made-up 0
-      const volume = side.third_party_volume_usdc ?? side.volume_usdc ?? 0
-      const parties = side.third_party_counterparties ?? side.distinct_counterparties ?? 0
+      // A row not yet recomputed since ADR-45 (null split) ranks at 0, not by its gross totals (ADR-57): the method
+      // text next to this table promises "never money that came from us", and the fallback ranked a seller only our
+      // desk had paid at the top. The startup backfill recomputes such rows before the server accepts requests, so
+      // this is a guard, not a path that runs.
+      const volume = side.third_party_volume_usdc ?? 0
+      const parties = side.third_party_counterparties ?? 0
       return { agent, side, score: rep.score, rank_value: volume * parties }
     })
     .filter((x) => (x.side.jobs_completed ?? 0) >= 1 && (x.side.distinct_counterparties ?? 0) >= 1)

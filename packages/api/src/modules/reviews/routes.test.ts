@@ -243,7 +243,8 @@ describe('reviews & reputation', () => {
       const listing = (await call(app, 'GET', `/v1/listings/${j1.listing_id}`, { key: buyer.api_keys.test })).body
       expect(listing.seller.reputation.third_party_counterparties).toBeNull()
       const lb = (await call(app, 'GET', '/v1/leaderboard?env=test')).body
-      expect(lb.data.find((x: any) => x.agent.id === seller.agent.id)).toMatchObject({ third_party_counterparties: null, rank_value: 20_000 * 2 })
+      // ADR-57: a null split ranks at 0 - never by the gross totals the method text says are excluded
+      expect(lb.data.find((x: any) => x.agent.id === seller.agent.id)).toMatchObject({ third_party_counterparties: null, rank_value: 0 })
       expect(await backfillReputation()).toEqual({ recomputed: 1, errors: 0 })
       rep = (await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)).body
       expect(rep.test.as_seller).toMatchObject({ first_party_counterparties: 1, third_party_counterparties: 0, counterparties_without_payment: 1, third_party_volume_usdc: 0 })

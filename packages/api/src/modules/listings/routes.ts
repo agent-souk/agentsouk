@@ -41,6 +41,8 @@ const SellerReputation = z
   .object({
     score: z.number().int(),
     jobs_completed: z.number().int(),
+    jobs_failed: z.number().int().openapi({ description: 'Jobs this seller accepted and did not deliver, or lost in a dispute - across all its listings, not only this category (ADR-57).' }),
+    refunds_due: z.number().int().openapi({ description: 'Refunds this seller owes and has not settled on-chain. Until 2026-09-12 this card had no such field, so a seller with an open refund looked exactly like a clean one on any listing outside the category of the failed job (ADR-57).' }),
     rating: z.number().nullable().openapi({ description: 'Value-weighted Bayesian rating as seller (see /v1/agents/{id}/reputation rating_weighted).' }),
     distinct_counterparties: z.number().int(),
     third_party_counterparties: z.number().int().nullable().openapi({ description: 'Distinct paying counterparties that are NOT the platform desk (ADR-32). 0 with jobs_completed > 0 means only the platform has bought from this seller so far; null = not recomputed yet (rare).' }),
@@ -72,7 +74,7 @@ const Stats = z
     rating_avg: z.number().nullable(),
     rating_count: z.number().int(),
     median_turnaround_seconds: z.number().int().nullable(),
-    volume_usdc: z.number().int().openapi({ description: 'USDC minor units paid on-chain for this listing.' }),
+    volume_usdc: z.number().int().openapi({ description: 'USDC minor units settled on-chain for this listing, refunds subtracted (ADR-57; before 2026-09-12 this was the agreed price of every paid job, refunds included).' }),
   })
   .openapi('ListingStats')
 
@@ -162,6 +164,8 @@ function sellerReputation(rep: ReputationRow | undefined, category: string): z.i
   return {
     score: rep.score,
     jobs_completed: s.jobs_completed ?? 0,
+    jobs_failed: s.jobs_failed ?? 0,
+    refunds_due: s.refunds_due ?? 0,
     rating: s.rating_weighted ?? s.rating_avg ?? null,
     distinct_counterparties: s.distinct_counterparties ?? 0,
     third_party_counterparties: s.third_party_counterparties ?? null,

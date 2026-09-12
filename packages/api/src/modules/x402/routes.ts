@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { cors } from 'hono/cors'
-import { and, asc, eq, gt, isNotNull, ne } from 'drizzle-orm'
+import { and, asc, eq, gt, isNotNull, ne, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
 import { agents, jobs, listings, type Env } from '../../db/schema.js'
@@ -12,7 +12,9 @@ import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
 import { bazaarExtension } from './bazaar.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
-import { createAgent } from '../agents/service.js'
+import { createAgent, recoverKeys } from '../agents/service.js'
+import { getMemory, putMemory } from '../memory/service.js'
+import { normalizeEvmAddress } from '../payments/address.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, type RequirementsV2 } from '../payments/x402.js'
@@ -85,15 +87,34 @@ export function parsePaymentHeader(header: string): PaymentPayload {
  */
 type BuyerAccount = { agent: Parameters<typeof createJob>[1]; credentials: Record<string, unknown> | null }
 
-async function buyerForWallet(address: string): Promise<BuyerAccount> {
-  const known = await db().query.agents.findFirst({ where: eq(agents.walletAddress, address) })
+const X402_ACCOUNT_DESCRIPTION = 'Registered by paying through the x402 endpoint (ADR-48); the wallet is the identity.'
+/** Memory key written on the account the moment a response actually carried its credentials. */
+const CREDENTIALS_SHOWN_KEY = 'x402/credentials_shown'
+
+async function credentialsShown(agentId: string): Promise<boolean> {
+  return getMemory(agentId, CREDENTIALS_SHOWN_KEY).then(() => true, () => false)
+}
+
+async function buyerForWallet(rawAddress: string): Promise<BuyerAccount> {
+  // Case-insensitive, and stored checksummed like every other wallet binding (ADR-57): the signed authorization's
+  // `from` arrives in whatever case the client used, and an exact match against a checksummed binding created a
+  // second account for the same wallet on the first lowercase call.
+  const address = normalizeEvmAddress(rawAddress) ?? rawAddress
+  const known = await db().query.agents.findFirst({ where: sql`lower(${agents.walletAddress}) = ${address.toLowerCase()}` })
   if (known) {
     if (known.status !== 'active') throw errors.state('buyer_not_active', 'The agent bound to this wallet is not active.')
-    // Never hand out the credentials of an account that already existed: proving control of the wallet again is
-    // not proof that this caller is the one that created it.
+    // An account this endpoint created whose credentials never reached the buyer - the purchase failed after the
+    // account existed: a slow seller, a facilitator refusal - is not "an account whose credentials were shown
+    // once". Its keys are replaced and handed over now, and the marker is written only when a response carries
+    // them (ADR-57). Any other existing account keeps its secret: proving control of the wallet again is not
+    // proof that this caller is the one that created it.
+    if (known.description === X402_ACCOUNT_DESCRIPTION && !(await credentialsShown(known.id))) {
+      const keys = await recoverKeys(known, true)
+      return { agent: known, credentials: { agent_id: known.id, handle: known.handle, api_keys: keys, keypair: null, keypair_note: 'The Ed25519 keypair was generated when this account was created by an earlier, failed purchase and cannot be recovered; rotate it with POST /v1/agents/me/key if you need one.' } }
+    }
     return { agent: known, credentials: null }
   }
-  const created = await createAgent({ name: `x402 buyer ${address.slice(0, 6)}${address.slice(-4)}`, description: 'Registered by paying through the x402 endpoint (ADR-48); the wallet is the identity.' })
+  const created = await createAgent({ name: `x402 buyer ${address.slice(0, 6)}${address.slice(-4)}`, description: X402_ACCOUNT_DESCRIPTION })
   await db().update(agents).set({ walletAddress: address, updatedAt: Date.now() }).where(eq(agents.id, created.agent.id))
   const agent = (await db().query.agents.findFirst({ where: eq(agents.id, created.agent.id) }))!
   return { agent, credentials: { agent_id: agent.id, handle: agent.handle, api_keys: created.apiKeys, keypair: created.keypair ?? null } }
@@ -276,7 +297,7 @@ export function x402Routes() {
       tags: ['payments', 'listings'],
       summary: 'Buy one job from a platform-operated listing with an x402 payment, without an account (ADR-48)',
       description:
-        'Send the listing input as JSON. Without an X-PAYMENT header the answer is 402 with x402 v2 requirements (accepts[]): sign the EIP-3009 authorization they describe and retry with X-PAYMENT set to the base64 payment payload. The work is done FIRST and the authorization is submitted to a public facilitator only once the delivery exists, so a seller that fails costs you nothing. Paying registers an agent bound to your wallet, so you get the same receipts and public record as any other buyer; the wallet is the identity, there is no signup. Only listings operated by Agent Souk itself can be bought this way - for anyone else\'s listing the platform never touches the payment (ADR-22), so order it normally with POST /v1/jobs.',
+        'Send the listing input as JSON. Without a payment header the answer is 402 with the x402 v2 PaymentRequired object base64 in the PAYMENT-REQUIRED response header (the same terms are in the body in v1 form): sign the EIP-3009 authorization it describes and retry with PAYMENT-SIGNATURE set to the base64 payment payload (X-PAYMENT is accepted for v1 clients). The work is done FIRST and the authorization is submitted to a public facilitator only once the delivery exists, so a seller that fails costs you nothing. Paying registers an agent bound to your wallet, so you get the same receipts and public record as any other buyer; the wallet is the identity, there is no signup. Only listings operated by Agent Souk itself can be bought this way - for anyone else\'s listing the platform never touches the payment (ADR-22), so order it normally with POST /v1/jobs.',
       middleware: [rateLimit({ name: 'x402', limit: 30, windowSec: 3600 })],
       request: {
         params: z.object({ listing_id: z.string() }),
@@ -369,6 +390,8 @@ export function x402Routes() {
       // ADR-49: this is the event the operator cannot usefully read about later. A failure to alert must never
       // cost the buyer the answer it has already paid for, so it is best-effort and never in the way.
       await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: credentials != null }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
+      // The marker that makes "shown once" true: written only on the response that actually carries the credentials.
+      if (credentials) await putMemory(buyer.id, CREDENTIALS_SHOWN_KEY, { at: new Date().toISOString(), job_id: job.id }).catch((err) => log.warn({ err, job: job.id }, 'x402: could not mark the credentials as shown'))
       return c.json(
         {
           object: 'x402_result' as const,

@@ -2,7 +2,77 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-12 mittags; API 0.5.6 = ADR-56, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-12 abends; API 0.5.7 = ADR-57, Agents 0.2.1; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Erledigt in dieser Sitzung (Checkpoint 73, ADR-57):** die vier offenen Stränge der Mittags-Übergabe wurden nicht abgearbeitet, sondern zuerst
+gegnerisch geprüft (144 Agenten, 98 fertig, **46 am Sitzungslimit gestorben** — 15 Funde blieben dadurch ungeprüft, drei davon habe ich von
+Hand nachgestellt). **22 Funde bestätigt, alle gebaut.** Der schlimmste war wieder unserer: die Desk **reservierte den zugesagten 10-USDC-Anspruch
+nicht** — Wallet 12,20 USDC, Erstkäufe 1 USDC je Listing und 5 am Tag, drei Erstkäufe vor der Lieferung und die vorab bestätigte Auszahlung
+wäre unmöglich gewesen. Der zweite: **eine Lieferung hätte niemanden geweckt** (kein Alarm auf `job.delivered`, nur eine Logzeile und ein Feld
+auf der Health-Seite, dann 71 Stunden später stiller Walk-away). Beides ist zu; die Details stehen in ADR-57 und im Checkpoint-Eintrag darunter.
+Tests: **API 44 Dateien / 353 Tests, Agents 66 Tests, alle grün.** Deploy: siehe Nachtrag im Checkpoint-73-Eintrag.
+
+**Der Security-Anspruch, Stand abends (Punkt 1 der Übergabe):** `job_01M21W77PHMVKW5QCSW2RWZ0R5`, weiterhin **nichts geliefert, kein Wort im
+Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und Ausstieg ohne Verlust ging um 12:24 UTC in den Thread.
+**Was jetzt ohne Sitzung passiert, in beiden Fällen:**
+1. **Er liefert.** Die Desk wacht auf (Webhook `job.delivered`, dazu der 30-Minuten-Tick), triagiert die Vorschau, und **die API schickt einen
+   urgent-Alarm** mit Frist, Job-Link und dem exakten Schreibbefehl — auf ntfy, sobald Nick das Thema abonniert hat. **Die Desk zahlt nicht**, bis
+   `operator/confirm/<job_id>` den `output_hash` der Lieferung nennt (`{"output_hash": "…"}`; ein `true` gilt seit ADR-57 nicht mehr, damit
+   niemand vor der Lieferung bestätigen kann). Fenster: 72 Stunden ab Lieferung, die Desk geht eine Stunde vor `pay_by`. **Nächste Sitzung dann:**
+   Vorschau lesen (`needs_operator` auf `https://agentsouk-agents.fly.dev/health`, oder `GET /v1/jobs/<id>` mit dem Key aus
+   `~/.agentsouk-ops/operator.env`), reproduzieren, fixen, deployen, dann den Memory-Schlüssel als `souk-bounties` setzen. Fix-first ist jetzt
+   erzwungen, nicht versprochen.
+2. **Er liefert nicht.** Ab 2026-09-14T02:23:50Z (Frist plus Gnadenstunde) schließt der neue Sweep der API — oder die Desk beim nächsten Tick, wer
+   zuerst kommt — den Job als Verkäuferfehler (`cancelled`, `jobs_failed` bei ihm), und die Desk schreibt die Bounty neu aus. Das Budget reicht
+   dafür (37,79 + 10 ≤ 50; Wallet 12,20 ≥ 10). Nichts davon braucht einen Menschen.
+3. **Das Geld ist ab jetzt reserviert:** Erstkäufe können höchstens noch 2,20 USDC ausgeben, solange der Anspruch offen ist.
+
+**Rückerstattung 0,12 USDC von `sutt-fogomen` (Punkt 2):** unverändert offen (seit 11.09. 05:34 UTC). Nachricht mit Betrag, Weg und der Bitte,
+sonst zu sagen warum nicht, um 12:24 UTC gesendet. Neu seit ADR-57 steht die offene Erstattung auch auf der Verkäufer-Karte **jedes** seiner
+Listings (`refunds_due`, `jobs_failed`), und seine Pünktlichkeit ist nicht mehr 100 % (ein verpasster Revisionstermin zählte als pünktlich).
+Die Plattform kann weiterhin nichts erzwingen; mehr als das steht nicht an.
+
+**Nur Nick (Punkt 3), unverändert und jetzt dringlicher:** **ntfy-Thema abonnieren** (Name in `~/.agentsouk-ops/agentsouk-api.env`) — der
+Lieferungs-Alarm aus Punkt 1 landet dort; ohne Abonnement ist er zugestellt und ungelesen. Fünf Alarme vom 11./12.09. liegen dort bereits.
+Dazu x402scan (Browser + Wallet).
+
+**Messlatte 23.09. (Punkt 4):** unverändert `orders` 4 / `orders_from_distinct_wallets` 1 / `jobs_completed` 0, alle vier `excluded.funded_by_us`.
+**Prüfreihenfolge, wenn sich etwas bewegt (aus dem Audit, in dieser Reihenfolge):** (1) `first_party.flag_changes.count` und `first_party.agents`
+(heute 9) gegen den letzten Stand — ein Flip des `first_party`-Flags bewegt `jobs_completed` ohne eine einzige neue Zahlung, und bis ADR-57 war
+das spurlos; (2) `excluded.funded_by_us` und `orders_from_distinct_wallets` (letztere liest die **heutige** Wallet-Bindung und kann sich ohne
+neue Bestellung ändern); (3) für jeden neu gezählten Job die Käufer-Wallet on-chain rückwärts lesen: kommt ihre erste USDC-Einzahlung von einer
+Adresse, an die unsere Desk je gezahlt hat, ist es unser Geld mit gebrochener Spur (ein gewöhnlicher Transfer plus Neubindung genügt, ADR-57);
+(4) `agents_qualified.ever_paid_or_paid_for` zählt seit ADR-57 nur noch fremdes Geld — die Zahl vor dem Deploy war 15, die danach steht im
+Nachtrag. Neu am 12.09.: ein fremder Käufer (`moneyagent-souk-73bz`) hat eine Bounty „Echo test live" über 0,01 USDC ausgeschrieben und **elf**
+Vorschläge bekommen — Nachfrage am Boden der Untergrenze, aber die erste fremde Bounty mit fremden Vorschlägen.
+
+**Offen und notiert, nicht gebaut (Begründungen in ADR-57):** keine Spalte für den Fälligkeitszeitpunkt einer Erstattung (`due_for_hours` misst die
+letzte Änderung am Job); `orders_from_distinct_wallets` nicht eingefroren; Ablehnungsgrund des Verkäufers im x402-Pfad wird verworfen; `/v1/x402`
+nennt bei Stückpreisen keine Einheit; `/v1/commitments` nennt Desk-Kappen, die auf der Health-Seite nicht alle stehen, und `/v1/opportunities` als
+Prüfweg, der ohne Schlüssel 401 gibt. **Ungeprüft** (Widerleger gestorben): Weck-Webhooks könnten beim Kaltstart der Desk-Maschine in den
+10-Sekunden-Timeout laufen (live 0 Fehlschläge); `ensureWakeups` gleicht die Ereignisliste eines bestehenden Webhooks nicht ab.
+
+## Stand 2026-09-12, Checkpoint 73: die Desk hätte ihr eigenes Versprechen wegkaufen können (ADR-57; API 0.5.7, Agents 0.2.1)
+
+- **Methode:** Workflow mit sechs Blickwinkeln (Bounty-Endspiel, Rückerstattung, Messlatte, Alarmpfad, x402-Regression, Geld und Bücher), jeder
+  Fund von drei Widerlegern angegriffen. 22 bestätigt, 9 widerlegt, 15 ungeprüft (Limit). Die Lesart „x widerlegt" war zunächst falsch: bei
+  drei Blickwinkeln waren alle Widerleger tot, die Funde also nicht widerlegt, sondern ungeprüft — dieselbe Falle wie in ADR-54.
+- **Gebaut, Agents (0.2.1):** `canSpend()` reserviert jede offene Zusage und prüft die Wallet; `refreshSpend()` vereinigt Settlements und Ledger
+  nach Hash statt Maximum; die Bestätigung ist an den `output_hash` gebunden; ein bezahlter Job ohne Nachlieferung wird nach der Frist storniert
+  (Erstattung auf dem Record) statt ewig `in_progress`; „without a mark against you" an drei Stellen durch die Wahrheit ersetzt
+  (`deliveries_unpaid`, ohne Score-Wirkung); der tote ATTENTION-Wächter in `firstbuy.ts` feuert jetzt.
+- **Gebaut, API (0.5.7):** Alarm `confirm:<job>` (urgent live) auf `job.delivered` für Jobs unserer Desk mit Operator-Bestätigung; Sweep für
+  `in_progress` nach Frist plus Gnadenstunde (unbezahlt → Verkäuferfehler; bezahlt → einmalige Nachricht `delivery_overdue`); `markRefundDue`
+  öffnet nach einer Erstattung einen neuen Zyklus; Listing-Karte mit `jobs_failed` und `refunds_due`; `on_time_rate` nur über abgeschlossene
+  Jobs; Listing-Graduierung und -Volumen netto; `ever_paid_or_paid_for` nach der `between_outsiders`-Regel; `first_party.flag_changes`;
+  Sammelmeldung je Umgebung und auch aus dem Zusteller; `suppressed` in drei Zahlen getrennt; Leaderboard ohne Brutto-Fallback; x402:
+  Schlüsselübergabe nach gescheitertem Erstkauf, Wallet-Suche ohne Groß/Klein, OpenAPI-Text nach ADR-50, CORS-Test.
+- **Bewusst nicht:** der Seed von `ourFundedWallets` bleibt am lebenden Flag (ADR-44 brauchte die nachträgliche Korrektur); stattdessen wird
+  jeder Flip gezählt und veröffentlicht.
+- **Operativ:** zwei Nachrichten (juan-codex-research, sutt-fogomen); Bestätigungsschlüssel absichtlich nicht gesetzt; Messlatte unverändert.
+- **Deploy:** siehe Nachtrag.
+
+## Übergabe vom 2026-09-12 mittags (Checkpoint 72; weiter gültig, soweit oben nichts anderes steht)
 
 **Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
 konnte unseren 402 lesen — die Messlatte von ADR-48 war leer), **ADR-51** (die letzten zwei offenen Audit-Funde), **ADR-52** (der gegnerische Audit desselben Tages fand sechs echte Fehler in dem, was acht Stunden vorher gebaut worden war) und **ADR-53** (auf der Kette nachgezaehlt, ob es zahlende Agents ueberhaupt gibt — ja, und zwar viele).

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, jobEvents, jobs, jobSeries, listings, settlements, type CancelKind, type Env, type JobResolution, type JobStatus, type PaymentTiming, type SeriesMilestone, type SeriesTerms } from '../../db/schema.js'
 import { ApiError, errors } from '../../lib/errors.js'
@@ -743,11 +743,15 @@ function alreadyUsed(): ApiError {
 /** Puts (or raises) the refund obligation on the seller. `amount` is what the buyer is owed for THIS trigger. */
 async function markRefundDue(jobId: string, actorId: string | null, why: string, amount: number, extra: Record<string, unknown> = {}): Promise<Job> {
   const before = await reload(jobId)
-  if (before.refundedAt != null) return before // already refunded once; a second obligation would need a fresh cycle
-  const expected = (before.refundDue ? (before.refundExpected ?? 0) : 0) + amount
-  await db().update(jobs).set({ refundDue: true, refundExpected: expected, updatedAt: Date.now() }).where(eq(jobs.id, jobId))
+  // A job refunded once can owe again: a second transfer that lands after the first refund, a seller cancelling
+  // after a voluntary refund, a verdict. Returning early here left refund_due false while the callers went on to
+  // tell the buyer "the seller has been told to refund you" - so a settled refund opens a FRESH cycle (ADR-57).
+  // The earlier refund stays on record as its settlement row and in the job events.
+  const fresh = before.refundedAt != null
+  const expected = (before.refundDue && !fresh ? (before.refundExpected ?? 0) : 0) + amount
+  await db().update(jobs).set({ refundDue: true, refundExpected: expected, refundedAt: null, refundSettlementId: null, updatedAt: Date.now() }).where(eq(jobs.id, jobId))
   const updated = await reload(jobId)
-  await logJobEvent(jobId, 'refund_due', actorId, { why, amount, expected, ...extra })
+  await logJobEvent(jobId, 'refund_due', actorId, { why, amount, expected, ...(fresh ? { fresh_cycle: true, previous_refund_settlement_id: before.refundSettlementId } : {}), ...extra })
   await note(updated, null, undefined, `Refund due: ${why} Seller: send ${money(expected)} back to the buyer wallet (payment.pay_from) in ONE transfer and submit the hash with POST /v1/jobs/{id}/refund. An open refund counts against your reputation.`, { job_id: jobId, refund_due: true, refund_expected: expected, ...extra })
   await notify(updated, 'refund_due', { why, amount, refund_expected: expected, ...extra })
   return updated
@@ -1171,8 +1175,8 @@ setDisputeResolver((jobId, resolution) => resolve(jobId, resolution))
 
 // --- sweeps -----------------------------------------------------------------------------------
 
-export async function sweepJobs(now = Date.now()): Promise<{ expired: number; expired_unpaid: number; auto_completed: number; errors: number }> {
-  const stats = { expired: 0, expired_unpaid: 0, auto_completed: 0, errors: 0 }
+export async function sweepJobs(now = Date.now()): Promise<{ expired: number; expired_unpaid: number; undelivered: number; overdue_paid: number; auto_completed: number; errors: number }> {
+  const stats = { expired: 0, expired_unpaid: 0, undelivered: 0, overdue_paid: 0, auto_completed: 0, errors: 0 }
   const toExpire = await db().query.jobs.findMany({ where: and(inArray(jobs.status, ['open', 'quote_requested', 'quoted']), lt(jobs.acceptDeadlineAt, now)), limit: 200 })
   for (const job of toExpire) {
     try {
@@ -1212,6 +1216,53 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
     } catch (e) {
       stats.errors++
       log.error({ err: e, job: job.id }, 'sweep: unpaid expiry failed')
+    }
+  }
+  // ADR-57: a seller that accepted and never delivered. No sweep ended such a job: it stayed in_progress until the
+  // buyer came back to cancel it, and a buyer left waiting does not come back (ADR-41, one stage later in the
+  // funnel), so the seller's record stayed clean. Unpaid jobs are closed as the seller's failure once the deadline
+  // it set itself plus the grace hour have passed - the outcome the buyer's own cancel would have produced. A PAID
+  // job is the buyer's decision (cancelling puts the refund on the seller); it is told once that it can.
+  const overdueBefore = now - GRACE_AFTER_DEADLINE_MS
+  const undelivered = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'in_progress'), isNull(jobs.paidAt), lt(jobs.deadlineAt, overdueBefore)), limit: 200 })
+  for (const job of undelivered) {
+    try {
+      const flipped = await setJobIf(job.id, ['in_progress'], { status: 'cancelled', cancelKind: 'seller_failed', cancelReason: 'platform: accepted and not delivered by the deadline', reviewDeadlineAt: null })
+      if (!flipped) continue
+      await logJobEvent(job.id, 'cancelled', null, { seller_failure: true, by: 'platform', reason: 'delivery deadline passed' })
+      await note(
+        flipped,
+        null,
+        undefined,
+        'Cancelled by the platform: the seller accepted and did not deliver by the deadline it set itself, plus one hour. Nothing was charged. Seller: this counts as a failed job on your public record (GET /v1/agents/{id}/reputation as_seller.jobs_failed). Buyer: nothing was owed; other sellers are in GET /v1/listings, and GET /v1/demand takes a bounty if nobody offers it.',
+        { job_id: job.id, status: 'cancelled', seller_failure: true },
+      )
+      await notify(flipped, 'cancelled', { by: 'platform', seller_failure: true, refund_due: false })
+      await finalize(flipped, 'failed')
+      stats.undelivered++
+    } catch (e) {
+      stats.errors++
+      log.error({ err: e, job: job.id }, 'sweep: closing an undelivered job failed')
+    }
+  }
+  const overduePaid = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'in_progress'), isNotNull(jobs.paidAt), lt(jobs.deadlineAt, overdueBefore)), limit: 200 })
+  for (const job of overduePaid) {
+    try {
+      const told = await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'delivery_overdue')) })
+      if (told) continue
+      await logJobEvent(job.id, 'delivery_overdue', null)
+      await note(
+        job,
+        null,
+        undefined,
+        'The delivery deadline passed and nothing new was delivered. Buyer: you already paid, so this is your call - POST /v1/jobs/{id}/cancel now puts a refund obligation on the seller and counts as a failed job on its record, or keep waiting and message the seller here. Seller: deliver, or say in this thread why you cannot.',
+        { job_id: job.id, status: 'in_progress', overdue: true },
+      )
+      await notify(job, 'delivery_overdue')
+      stats.overdue_paid++
+    } catch (e) {
+      stats.errors++
+      log.error({ err: e, job: job.id }, 'sweep: overdue notice failed')
     }
   }
   const toComplete = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'delivered'), lt(jobs.reviewDeadlineAt, now)), limit: 200 })

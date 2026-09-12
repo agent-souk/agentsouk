@@ -230,6 +230,72 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
   })
 })
 
+describe('the edges around the wire (ADR-54, ADR-57)', () => {
+  it('answers the CORS preflight a browser client sends before the payment request', async () => {
+    const { listingId } = await firstPartySeller()
+    for (const path of ['/v1/x402', `/v1/x402/${listingId}?env=test`]) {
+      // straight to the app: a preflight has no JSON body for the test helper to parse
+      const r = await app.request(path, { method: 'OPTIONS', headers: { origin: 'https://example.com', 'access-control-request-method': 'POST', 'access-control-request-headers': 'PAYMENT-SIGNATURE' } })
+      expect(r.status, path).toBe(204)
+      expect(r.headers.get('access-control-allow-origin')).toBe('*')
+      expect(r.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('payment-signature')
+      expect(r.headers.get('access-control-expose-headers')).toContain('PAYMENT-REQUIRED')
+    }
+  })
+
+  it('binds one account to a wallet however the client spells it', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const checksummed = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(checksummed, seller.wallet_address!, PRICE) }) }))
+    for (const spelled of [checksummed.toLowerCase(), checksummed]) {
+      const runtime = deliverWhenOrdered(seller, listingId)
+      const r = await buy(listingId, paymentHeader(spelled, seller.wallet_address!, PRICE))
+      await runtime.done
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+    }
+    const bound = (await db().select().from(agents)).filter((a) => a.walletAddress?.toLowerCase() === checksummed.toLowerCase())
+    expect(bound).toHaveLength(1)
+    expect(bound[0]!.walletAddress).toBe(checksummed) // stored checksummed, like every other binding
+  })
+
+  it('hands the credentials over on the next purchase when the first one failed after creating the account, once', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const wallet = '0x' + '6'.repeat(40)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    // first purchase: the account is created, then the seller backs out - the buyer never sees its keys
+    const giveUp = (async () => {
+      for (let i = 0; i < 80; i++) {
+        const job = await db().query.jobs.findFirst({ where: and(eq(jobs.listingId, listingId), eq(jobs.status, 'open')) })
+        if (job) return call(app, 'POST', `/v1/jobs/${job.id}/decline`, { key: seller.api_keys.test, body: { reason: 'not today' } })
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      return null
+    })()
+    const failed = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await giveUp
+    expect(failed.status).toBe(409)
+    expect(await db().select().from(agents).where(eq(agents.walletAddress, wallet))).toHaveLength(1)
+
+    // second purchase: the same wallet gets fresh keys, and is told what could not be recovered
+    const second = deliverWhenOrdered(seller, listingId)
+    const two = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await second.done
+    expect(two.status, JSON.stringify(two.body)).toBe(200)
+    expect(two.body.account.api_keys.test).toMatch(/^as_test_/)
+    expect(two.body.account.keypair).toBeNull()
+    expect(String(two.body.account.keypair_note)).toContain('cannot be recovered')
+    expect((await call(app, 'GET', `/v1/jobs/${two.body.job_id}/receipt`, { key: two.body.account.api_keys.test })).status).toBe(200)
+
+    // third purchase: shown once means once
+    const third = deliverWhenOrdered(seller, listingId)
+    const three = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    await third.done
+    expect(three.status).toBe(200)
+    expect(three.body.account.api_keys).toBeUndefined()
+    expect(three.body.account.agent_id).toBe(two.body.account.agent_id)
+  })
+})
+
 /** ADR-48: "the wallet is the identity" is only true if the first purchase actually hands the account over. */
 describe('the account a purchase creates (ADR-48)', () => {
   it('hands back the credentials the first time a wallet pays, and never again', async () => {

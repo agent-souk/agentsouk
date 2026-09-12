@@ -203,6 +203,67 @@ describe('OperatorRuntime', () => {
     expect(again.stateOf(spec.key)).toMatchObject({ awards_paid: 1, paid_distinct: ['python-sdk'], bounty_id: null, job_id: null })
   })
 
+  it('reserves an awarded, unpaid bounty against the budget AND the wallet before any other spending (ADR-57)', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk)
+    const seller = await createTestAgent(app, { name: 'Seller' })
+    const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 1n }, { usdc: 1_500_000n })
+    const tight = new OperatorRuntime(client(app, desk.api_keys.test), wallet, scriptedJudge(), [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 1_200_000n })
+    await tight.init()
+    expect(await tight.canSpend(1_100_000n)).toBe(true) // nothing promised yet: 1.1 fits 1.2 of budget and 1.5 in the wallet
+    await tight.tick() // posts the bounty: its 1.0 USDC is now a promise
+    expect(tight.stateOf(spec.key)!.bounty_id).toMatch(/^bty_/)
+    expect(await tight.canSpend(300_000n)).toBe(false) // 1.0 promised + 0.3 > 1.2 lifetime budget
+    expect(await tight.canSpend(200_000n)).toBe(true)
+    // budget is only a number in a config; the wallet is the money
+    const rich = new OperatorRuntime(client(app, desk.api_keys.test), wallet, scriptedJudge(), [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n })
+    await rich.init()
+    expect(rich.stateOf(spec.key)!.bounty_id).toBe(tight.stateOf(spec.key)!.bounty_id) // same promise, read from the platform memory
+    expect(await rich.canSpend(600_000n)).toBe(false) // 1.0 promised + 0.6 > 1.5 USDC in the wallet
+    expect(await rich.canSpend(400_000n)).toBe(true)
+  })
+
+  it('pays a confirmation-gated bounty only for the delivery the operator actually confirmed (ADR-57)', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk)
+    const seller = await createTestAgent(app, { name: 'Researcher' })
+    const { wallet, sent } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
+    const gated: BountySpec = { ...spec, key: 'test-security', needs_operator_confirmation: true }
+    const judge = scriptedJudge()
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [gated], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 0 })
+    await rt.init()
+    await rt.tick()
+    const st = rt.stateOf(gated.key)!
+    const s = client(app, seller.api_keys.test)
+    await s.bounties.propose(st.bounty_id!, 800_000, 'I found a reproducible flaw and will deliver the report.')
+    await rt.tick()
+    expect(st.job_id).toMatch(/^job_/)
+    const desk$ = client(app, desk.api_keys.test)
+
+    // a confirmation written BEFORE anything is delivered is worthless: it names no delivery
+    await desk$.memory.set(`operator/confirm/${st.job_id}`, true)
+    await s.jobs.deliver(st.job_id!, { client: { kind: 'http' }, notes: 'ten words of honest notes about the reproducible security finding here' }, 'done', { client_kind: 'http' })
+    await rt.tick()
+    expect(judge.seen).toEqual(['score', 'triage'])
+    expect(sent).toHaveLength(0)
+    const job = await s.jobs.get(st.job_id!)
+    expect(job.output_hash).toBeTruthy()
+    expect(st.needs_operator).toContain(`"output_hash": "${job.output_hash}"`)
+    await rt.tick()
+    expect(sent).toHaveLength(0) // still: `true` is not a confirmation of this delivery
+
+    // the confirmation that names the sealed output is the one that pays
+    await desk$.memory.set(`operator/confirm/${st.job_id}`, { output_hash: job.output_hash })
+    await rt.tick()
+    expect(sent).toHaveLength(1)
+    expect(st.pay_hash).toBe(sent[0])
+    expect((await s.jobs.get(job.id)).payment.status).toBe('paid')
+  })
+
   it('asks for a better preview (mechanically, then via the judge), walks away near the deadline, and never posts what it cannot pay', async () => {
     const app = await freshApp()
     const chain = installFakeChain('test')

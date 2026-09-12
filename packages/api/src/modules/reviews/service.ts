@@ -133,7 +133,7 @@ export function categoryCards(sellerJobs: JobRow[], categoryOf: Map<string, stri
       volume += rows.filter((s) => s.kind === 'payment' && s.status === 'settled').reduce((s, p) => s + p.amount, 0) - rows.filter((s) => s.kind === 'refund').reduce((s, p) => s + p.amount, 0)
     }
     const revs = ratings.filter((r) => ids.has(r.jobId))
-    const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null)
+    const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null && isCompletedJob(j))
     const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
     cards.push({
       category,
@@ -246,7 +246,10 @@ function sideFromJobs(
   // leaves a buyer with no answer at all inside its own accept window.
   const ignored = side === 'seller' ? new Set([...walletsOf(list.filter(isSellerNoShow))].filter((w) => !answered.has(w))) : new Set<string>()
   const disputed = list.filter((j) => j.disputeReason != null)
-  const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null)
+  // Finished jobs only (ADR-57): request_revision moves deadline_at forward and leaves delivered_at on the first
+  // delivery, so a seller that let the revision deadline pass - a failed job with a refund due - read as 100 % on
+  // time, worth 10 of its score points; live, that was exactly the record of the one seller owing us a refund.
+  const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null && isCompletedJob(j))
   const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
   const sideStats: ReputationSide = {
     jobs_completed: completed.length,

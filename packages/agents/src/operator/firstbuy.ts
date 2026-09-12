@@ -750,7 +750,9 @@ export class FirstBuyer {
     p.outcome = outcome
     p.ended_at = this.iso()
     if (st.index[p.listing_id]) st.index[p.listing_id]!.outcome = outcome
-    if (job && p.pay_hash && !outcome.startsWith('paid')) this.log('ATTENTION: first-buy job ended after payment', { env: this.env, job_id: job.id, status: job.status, hash: p.pay_hash })
+    // Every outcome that can carry a pay_hash is named 'paid_...', so `!startsWith('paid')` never fired: the guard
+    // for "we paid and the job still ended badly" was dead code the day it was written (ADR-57).
+    if (job && p.pay_hash && outcome !== 'paid') this.log('ATTENTION: first-buy job ended after payment', { env: this.env, job_id: job.id, status: job.status, outcome, hash: p.pay_hash })
     await this.save(st)
   }
 

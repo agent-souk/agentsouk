@@ -323,12 +323,7 @@ export class OperatorRuntime {
     if (!this.paymentsEnabled || !this.wallet) return 'payments disabled'
     const bal = await this.refreshBalances()
     if (bal.eth === 0n) return 'no ETH for gas on the operator wallet'
-    let committed = 0n
-    for (const s of this.catalog) {
-      if (s.key === spec.key) continue
-      const st = this.states.get(s.key)
-      if (st && (st.bounty_id || st.job_id) && !st.pay_hash) committed += BigInt(s.budget_max)
-    }
+    const committed = this.openCommitments(spec.key)
     const need = committed + BigInt(spec.budget_max)
     if (bal.usdc < need) return `wallet holds ${formatUsdc(bal.usdc)}, ${formatUsdc(need)} needed with open commitments`
     const spend = await this.refreshSpend()
@@ -342,11 +337,39 @@ export class OperatorRuntime {
     this.spend = null
   }
 
-  /** Whether `amount` fits under the lifetime budget and the daily cap on top of everything already paid or in flight. */
+  /**
+   * USDC this desk has promised and not yet paid: every posted bounty and every awarded, unpaid job reserves its
+   * budget_max. `except` leaves one spec out, so a spec can ask whether its own posting fits.
+   */
+  private openCommitments(except?: string): bigint {
+    let committed = 0n
+    for (const s of this.catalog) {
+      if (s.key === except) continue
+      const st = this.states.get(s.key)
+      if (st && (st.bounty_id || st.job_id) && !st.pay_hash) committed += BigInt(s.budget_max)
+    }
+    return committed
+  }
+
+  /**
+   * Whether `amount` fits under the lifetime budget and the daily cap on top of everything already paid or in
+   * flight - AND on top of what is already promised (ADR-57). Until 2026-09-12 this ignored open commitments while
+   * the first-buy programme's own doc comment said they were included: with a 10 USDC security finding awarded and
+   * unpaid, 12.20 USDC in the wallet and first-buys allowed 1 USDC apiece and 5 a day, three ordinary purchases
+   * would have spent the money the desk had already promised, and a seller that delivered a valid finding would
+   * have been walked away from for our own bookkeeping. The wallet is checked for the same reason the budget is:
+   * the budget is a number in a config, the wallet is the money.
+   */
   async canSpend(amount: bigint): Promise<boolean> {
     if (!this.paymentsEnabled) return false
+    const need = amount + this.openCommitments()
     const spend = await this.refreshSpend()
-    return spend.total + amount <= this.config.totalBudget && spend.today + amount <= this.config.dailyCap
+    if (spend.total + need > this.config.totalBudget || spend.today + amount > this.config.dailyCap) return false
+    if (this.wallet) {
+      const bal = await this.refreshBalances()
+      if (bal.usdc < need) return false
+    }
+    return true
   }
 
   private async refreshBalances(): Promise<{ usdc: bigint; eth: bigint }> {
@@ -359,19 +382,21 @@ export class OperatorRuntime {
 
   /**
    * What this desk has paid, lifetime and today: the platform's settled payments from the operator wallet, or the
-   * desk's own ledger of broadcast transfers, whichever is higher (a transfer counts the moment it is sent).
+   * desk's own ledger of broadcast transfers, united by transaction hash (a transfer counts the moment it is sent).
    */
   private async refreshSpend(): Promise<{ total: bigint; today: bigint }> {
     if (this.spend && this.now() - this.spend.at < 60_000) return this.spend
     const day = this.iso().slice(0, 10)
     let total = 0n
     let today = 0n
+    const seen = new Set<string>()
     if (this.wallet) {
       let cursor: string | undefined
       for (let page = 0; page < 20; page++) {
         const res = await this.client.payments.settlements({ limit: 100, cursor })
         for (const s of res.data) {
           if (s.kind !== 'payment' || s.status !== 'settled' || !sameAddress(s.payer_address, this.wallet.address)) continue
+          seen.add(String((s as { transaction?: string }).transaction ?? '').toLowerCase())
           total += BigInt(s.amount)
           if ((s.settled_at ?? s.created_at).slice(0, 10) === day) today += BigInt(s.amount)
         }
@@ -379,15 +404,15 @@ export class OperatorRuntime {
         if (!cursor) break
       }
     }
+    // United by transaction hash, not "whichever total is higher": a transfer that is only in the ledger (broadcast,
+    // not yet verified by the platform) was invisible whenever the settlements side happened to be the larger sum.
     const ledger = await this.loadLedger()
-    let ledgerTotal = 0n
-    let ledgerToday = 0n
     for (const e of ledger.sent) {
-      if (e.replaced) continue
-      ledgerTotal += BigInt(e.amount)
-      if (e.at.slice(0, 10) === day) ledgerToday += BigInt(e.amount)
+      if (e.replaced || seen.has(e.hash.toLowerCase())) continue
+      total += BigInt(e.amount)
+      if (e.at.slice(0, 10) === day) today += BigInt(e.amount)
     }
-    this.spend = { total: total > ledgerTotal ? total : ledgerTotal, today: today > ledgerToday ? today : ledgerToday, at: this.now() }
+    this.spend = { total, today, at: this.now() }
     return this.spend
   }
 
@@ -572,8 +597,13 @@ export class OperatorRuntime {
       case 'in_progress':
         if (job.deadlines.deliver_by && this.now() > Date.parse(job.deadlines.deliver_by) && job.available_actions.includes('cancel')) {
           if (state.pay_hash) {
-            // paid, revision requested, seller went silent: the money is gone, the platform's refund rules apply; count it, never cancel a paid job
-            this.log('ATTENTION: paid job not re-delivered after a revision; counted as a paid award, job left to the platform', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash })
+            // Paid, a revision was asked for, the seller went silent. "Never cancel a paid job" used to leave it
+            // here - and no sweep ever ends an in_progress job, so it stayed in_progress for ever, the seller kept
+            // the money with nothing on its public record, and the refund the platform's own rules put on it was
+            // never written. Cancelling after the deadline is the one exit this state has, and it is what records
+            // the refund (refund_due, jobs_failed). The award still counts: the money left the wallet (ADR-57).
+            await this.client.jobs.cancel(job.id, 'buyer: paid, revision not delivered by the deadline; a refund is due')
+            this.log('ATTENTION: paid job not re-delivered after a revision; cancelled so the refund is on the record', { env: this.env, key: spec.key, job_id: job.id, hash: state.pay_hash })
             await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')
             await this.finishJob(spec, state, job, 'paid_no_redelivery', state.verdict?.rating ?? null)
             return
@@ -624,7 +654,7 @@ export class OperatorRuntime {
     if (!state.triage) return
     const deadlineClose = this.deadlineClose(job, state)
     if (state.triage.decision === 'walk_away') {
-      await this.walkAway(spec, state, job, state.triage.message || 'This delivery does not match the bounty; walking away without a mark against you.')
+      await this.walkAway(spec, state, job, state.triage.message || 'This delivery does not match the bounty; walking away. The platform lists an unpaid sealed delivery on your record (deliveries_unpaid); it does not lower your score.')
       return
     }
     if (state.triage.decision === 'ask') {
@@ -635,14 +665,14 @@ export class OperatorRuntime {
       } else if (deadlineClose) await this.walkAway(spec, state, job, 'The preview still misses what the bounty asks for; walking away before the payment deadline. You may propose again on the next round.')
       return
     }
-    if (spec.needs_operator_confirmation && !(await this.confirmed(job.id))) {
+    if (spec.needs_operator_confirmation && !(await this.confirmed(job))) {
       if (!state.asked_at) {
-        await this.message(job, 'Preview accepted by the desk; a human operator reproduces security findings before payment, usually within a day.')
+        await this.message(job, 'Preview accepted by the desk; a human operator reproduces security findings and deploys the fix before payment, usually within a day. The payment deadline is the one on the job.')
         state.asked_at = this.iso()
-        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}: PUT memory operator/confirm/${job.id} = true. Preview: ${JSON.stringify(job.output_preview).slice(0, 2500)}`
+        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}, AFTER reproducing the finding and deploying the fix: PUT memory operator/confirm/${job.id} = {"output_hash": "${job.output_hash}"}. Preview: ${JSON.stringify(job.output_preview).slice(0, 2500)}`
         await this.save(spec.key, state)
-        this.log('ATTENTION: operator confirmation needed', { env: this.env, key: spec.key, job_id: job.id, pay_by: job.payment.pay_by })
-      } else if (deadlineClose) await this.walkAway(spec, state, job, 'No operator confirmation arrived before the payment deadline; walking away without a mark against you. The desk will reach out if the finding is confirmed later.')
+        this.log('ATTENTION: operator confirmation needed', { env: this.env, key: spec.key, job_id: job.id, pay_by: job.payment.pay_by, output_hash: job.output_hash })
+      } else if (deadlineClose) await this.walkAway(spec, state, job, 'No operator confirmation arrived before the payment deadline; walking away. That was our delay, not your work: the platform lists an unpaid sealed delivery on your record (deliveries_unpaid), which does not lower your score, and the desk will reach out if the finding is confirmed later.')
       return
     }
     await this.pay(spec, state, job)
@@ -684,7 +714,7 @@ export class OperatorRuntime {
     const spend = await this.refreshSpend()
     if (spend.total + amount > this.config.totalBudget || spend.today + amount > this.config.dailyCap) {
       this.log('payment held by spending cap', { env: this.env, key: spec.key, job_id: job.id, total: formatUsdc(spend.total), today: formatUsdc(spend.today) })
-      if (this.deadlineClose(job, state)) await this.walkAway(spec, state, job, 'The desk hit its spending cap for today and cannot pay before the deadline; walking away without a mark against you. Please propose again.')
+      if (this.deadlineClose(job, state)) await this.walkAway(spec, state, job, 'The desk is at one of its spending caps and cannot pay before the deadline; walking away. That is our budget, not your work: the platform lists an unpaid sealed delivery on your record (deliveries_unpaid), which does not lower your score. Please propose again.')
       return
     }
     // Another process may have got here first: re-read the persisted state and take a short lease on the job.
@@ -1017,9 +1047,19 @@ export class OperatorRuntime {
     await this.client.memory.set(this.ledgerKey(), l)
   }
 
-  private async confirmed(jobId: string): Promise<boolean> {
-    const r = await this.client.memory.get<unknown>(`operator/confirm/${jobId}`).catch(() => null)
-    return r?.value === true
+  /**
+   * The operator's go-ahead for THIS delivery: the memory value must name the sealed output's hash (as a string, or
+   * as {"output_hash": ...}). A bare `true` used to do, which made it possible to confirm before anything was
+   * delivered - and then the desk would have paid the first preview that passed the automated triage with no human
+   * having read it, while GET /v1/commitments promises a finding is reproduced and fixed before it is paid (ADR-57).
+   */
+  private async confirmed(job: Job): Promise<boolean> {
+    if (!job.output_hash) return false
+    const r = await this.client.memory.get<unknown>(`operator/confirm/${job.id}`).catch(() => null)
+    const v = r?.value
+    if (typeof v === 'string') return v === job.output_hash
+    if (v && typeof v === 'object' && typeof (v as { output_hash?: unknown }).output_hash === 'string') return (v as { output_hash: string }).output_hash === job.output_hash
+    return false
   }
 
   /**

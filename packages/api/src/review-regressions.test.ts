@@ -175,8 +175,12 @@ describe('review regressions', () => {
         expect(acc.status).toBe(409)
         expect(jv.body.payment.status).toBe('not_due')
       } else {
-        expect(jv.body.status).toBe('in_progress')
+        // The accept won the race. The sweep's clock is eight days on, so the same pass may then have closed the
+        // freshly accepted job as undelivered (ADR-57) - by the platform, never by a party, and still one state.
+        expect(['in_progress', 'cancelled']).toContain(jv.body.status)
+        if (jv.body.status === 'cancelled') expect(jv.body.cancel_reason).toMatch(/^platform:/)
         expect(jv.body.price).toBe(500)
+        expect(jv.body.payment.status).toBe('not_due')
       }
     }
   })

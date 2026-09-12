@@ -1,12 +1,13 @@
 import { and, desc, eq, like, lt, ne, or, isNotNull } from 'drizzle-orm'
 import { db } from '../../db/client.js'
-import { agentReputation, agents, apiKeys, listings, type AgentEndpoints, type Env } from '../../db/schema.js'
+import { agentReputation, agents, apiKeys, listings, platformState, type AgentEndpoints, type Env } from '../../db/schema.js'
 import { didKeyFromPublicKey, generateApiKey, generateKeyPair, hashSecret, isValidPublicKeyHex, publicKeyFromDidKey, verify } from '../../lib/crypto.js'
 import { emit } from '../../events/bus.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import { config } from '../../config.js'
 import { normalizeEvmAddress } from '../payments/address.js'
+import { FIRST_PARTY_FLIPS_KEY } from '../meta/stats.js'
 import { verifyWalletSignature } from '../payments/evm-signature.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import { qualifiesT1 } from '../reviews/service.js'
@@ -329,12 +330,35 @@ export async function setAgentStatus(idOrHandle: string, status: 'active' | 'sus
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
-/** ADR-23: flag an agent as operated by the platform itself. Admin only; the flag is public. */
+/**
+ * ADR-23: flag an agent as operated by the platform itself. Admin only; the flag is public.
+ *
+ * ADR-57: the money half of between_outsiders (modules/payments/our-money.ts) seeds from this LIVE flag - ADR-44
+ * froze only the party half on the job - so one call here can move the headline figure with no new job: on
+ * 2026-09-12 un-flagging the desk would have taken between_outsiders.jobs_completed on live from 0 to 4. Freezing
+ * the seed too was rejected, because ADR-44 itself re-flagged twelve smoke identities after the fact and needed
+ * their past payments to count as ours. So the flip stays possible and stops being silent: every actual change is
+ * counted and dated in platform_state and published in GET /v1/stats first_party.flag_changes.
+ */
 export async function setFirstParty(idOrHandle: string, firstParty: boolean): Promise<Agent> {
   const agent = await getAgentByIdOrHandle(idOrHandle)
   if (!agent) throw errors.notFound('Agent', idOrHandle)
-  await db().update(agents).set({ firstParty, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+  if (agent.firstParty !== firstParty) {
+    await db().update(agents).set({ firstParty, updatedAt: Date.now() }).where(eq(agents.id, agent.id))
+    await recordFirstPartyFlip(agent.id, agent.firstParty, firstParty)
+  }
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
+}
+
+type FirstPartyFlips = { count: number; last_at: string | null; recent: { agent_id: string; from: boolean; to: boolean; at: string }[] }
+
+async function recordFirstPartyFlip(agentId: string, from: boolean, to: boolean): Promise<void> {
+  const now = Date.now()
+  const at = new Date(now).toISOString()
+  const row = await db().query.platformState.findFirst({ where: eq(platformState.key, FIRST_PARTY_FLIPS_KEY) })
+  const prev = (row?.value ?? {}) as Partial<FirstPartyFlips>
+  const value: FirstPartyFlips = { count: (prev.count ?? 0) + 1, last_at: at, recent: [...(prev.recent ?? []), { agent_id: agentId, from, to, at }].slice(-50) }
+  await db().insert(platformState).values({ key: FIRST_PARTY_FLIPS_KEY, value, createdAt: now }).onConflictDoUpdate({ target: platformState.key, set: { value } })
 }
 
 /**

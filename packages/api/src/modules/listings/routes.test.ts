@@ -298,6 +298,42 @@ describe('listings', () => {
     expect((await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })).body.graduated).toBe(false)
   })
 
+  it('a payment refunded in full buys no badge and no volume: the listing counts net, like the reputation does (ADR-57)', async () => {
+    const s = await createTestAgent(app, { name: 'Refund grad' })
+    const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })
+    const buyers: string[] = []
+    for (let i = 0; i < 3; i++) buyers.push((await createTestAgent(app, { name: `Colluder ${i}` })).agent.id)
+    const wallet = (i: number) => '0x' + String(i + 1).repeat(40)
+    for (let i = 0; i < 5; i++) {
+      const id = await finishedJob(l.body.id, s.agent.id, buyers[i % 3]!, { paid: { amount: 250_000, payer: wallet(i % 3) }, n: i })
+      // the seller hands every cent back - the job stays completed, the settlements show payment and refund
+      const now = Date.now()
+      await db().insert(settlements).values({
+        id: newId('settlement'),
+        env: 'test',
+        jobId: id,
+        kind: 'refund',
+        payerAgentId: s.agent.id,
+        payeeAgentId: buyers[i % 3]!,
+        payerAddress: '0x' + 'a'.repeat(40),
+        payTo: wallet(i % 3),
+        amount: i === 4 ? 240_000 : 250_000, // the last one keeps 0.01 USDC: exactly the floor, so it still counts
+        expectedAmount: 250_000,
+        asset: '0x' + 'b'.repeat(40),
+        network: 'eip155:84532',
+        transaction: '0x' + 'f' + id.slice(-9) + String(i).padStart(54, '0'),
+        blockNumber: 2,
+        blockTimestamp: Math.floor((now - 2_000) / 1000),
+        status: 'settled',
+        createdAt: now,
+        settledAt: now,
+      })
+    }
+    const stats = await recomputeListingStats(l.body.id)
+    expect(stats).toMatchObject({ jobs_completed: 5, jobs_paid: 1, distinct_buyers: 1, volume_usdc: 10_000 })
+    expect((await call(app, 'GET', `/v1/listings/${l.body.id}`, { key: s.api_keys.test })).body.graduated).toBe(false)
+  })
+
   it('one wallet paying five times is one buyer, not five', async () => {
     const s = await createTestAgent(app, { name: 'One buyer' })
     const l = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })

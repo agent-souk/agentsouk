@@ -157,7 +157,11 @@ describe('raising alerts (ADR-49)', () => {
     await raise(draft({ key: 't1', tier: 'quiet', env: 'test' }), now)
     await deliverAlerts(now)
     await raise(draft({ key: 'l1', tier: 'notable', env: 'live' }), now)
-    expect((await recentAlerts()).find((r) => r.key === 'l1')!.status).toBe('pending')
+    const l1 = (await recentAlerts()).find((r) => r.key === 'l1')!
+    // Since ADR-54 a held-back row is ALSO 'pending' (deferred, not dropped), so the status alone proved nothing:
+    // this test stayed green with the environment filter removed. What tells the two apart is last_error.
+    expect(l1.status).toBe('pending')
+    expect(l1.last_error).toBeNull()
   })
 })
 
@@ -286,6 +290,32 @@ describe('what is worth waking the operator (ADR-49)', () => {
     expect(paid.status).toBe('suppressed')
     expect(paid.last_error).toContain('came from us')
     expect(sent.some((s) => s.body.includes('between two outsiders'))).toBe(false)
+  })
+
+  it('a sealed delivery on a bounty that pays only after a human confirms it wakes the operator (ADR-57)', async () => {
+    // the desk is ours; the seller is an outsider delivering a security finding
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, buyer.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Security finding', description: 'A reproducible flaw in the platform, with steps.', category: 'ops', pricing_model: 'fixed', price: 10_000_000 } })
+    const withFlag = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: { operator_confirmation_before_payment: true } } })
+    const without = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: { round: 2 } } })
+    for (const j of [withFlag, without]) {
+      expect(j.status).toBe(201)
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: { title: 'Auth bypass', steps: ['a', 'b'] }, preview: { title: 'Auth bypass' } } })
+    }
+    const rows = await recentAlerts()
+    const confirm = rows.find((a) => a.key === `confirm:${withFlag.body.id}`)
+    expect(confirm).toBeTruthy()
+    expect(confirm!.tier).toBe('notable') // sandbox; urgent on live
+    expect(confirm!.title).toContain("operator's confirmation")
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, withFlag.body.id) }))!
+    const alert = (await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, `confirm:${withFlag.body.id}`) }))!
+    // the body names the exact write the operator has to make, bound to THIS delivery
+    expect(alert.body).toContain(`operator/confirm/${withFlag.body.id}`)
+    expect(alert.body).toContain(job.outputHash!)
+    expect((alert.data as { output_hash?: string }).output_hash).toBe(job.outputHash)
+    // an ordinary delivery to our desk is the desk's business, not the operator's
+    expect(rows.find((a) => a.key === `confirm:${without.body.id}`)).toBeUndefined()
   })
 
   it('reads the frozen first-party flag, so flipping an agent afterwards cannot invent an alert', async () => {
