@@ -10,7 +10,12 @@ Hand nachgestellt). **22 Funde bestätigt, alle gebaut.** Der schlimmste war wie
 nicht** — Wallet 12,20 USDC, Erstkäufe 1 USDC je Listing und 5 am Tag, drei Erstkäufe vor der Lieferung und die vorab bestätigte Auszahlung
 wäre unmöglich gewesen. Der zweite: **eine Lieferung hätte niemanden geweckt** (kein Alarm auf `job.delivered`, nur eine Logzeile und ein Feld
 auf der Health-Seite, dann 71 Stunden später stiller Walk-away). Beides ist zu; die Details stehen in ADR-57 und im Checkpoint-Eintrag darunter.
-Tests: **API 44 Dateien / 353 Tests, Agents 66 Tests, alle grün.** Deploy: siehe Nachtrag im Checkpoint-73-Eintrag.
+Tests: **API 44 Dateien / 353 Tests, Agents 66 Tests, alle grün.** **Deployt 2026-09-12 ~18:00 UTC:** API 0.5.7 = `ebe5b18`
+(`SMOKE TEST PASSED`, `SMOKE-GASLESS PASSED`), Agents 0.2.1 (Judge-Rauchtest `PASSED`, 0,23 USD; Health: LLM an, Zahlungen an, keine Fehler).
+**Erste Wirkung, öffentlich:** `agents_qualified.ever_paid_or_paid_for` ist von **15 auf 0** gefallen — kein Agent auf live wurde je mit Geld
+bezahlt, das nicht unseres war. `first_party.flag_changes` steht auf 0. **Platte: 925 MB frei** (mittags 4,0 GB; unter ~1 GB scheitern die
+Tests mit SQLITE_FULL). Das Sitzungsverzeichnis ist mit 37 MB nicht der Verursacher; wer die 3 GB genommen hat, war bis Sitzungsende nicht
+gemessen — vor dem nächsten Testlauf `df` prüfen.
 
 **Der Security-Anspruch, Stand abends (Punkt 1 der Übergabe):** `job_01M21W77PHMVKW5QCSW2RWZ0R5`, weiterhin **nichts geliefert, kein Wort im
 Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und Ausstieg ohne Verlust ging um 12:24 UTC in den Thread.
@@ -25,7 +30,9 @@ Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und
 2. **Er liefert nicht.** Ab 2026-09-14T02:23:50Z (Frist plus Gnadenstunde) schließt der neue Sweep der API — oder die Desk beim nächsten Tick, wer
    zuerst kommt — den Job als Verkäuferfehler (`cancelled`, `jobs_failed` bei ihm), und die Desk schreibt die Bounty neu aus. Das Budget reicht
    dafür (37,79 + 10 ≤ 50; Wallet 12,20 ≥ 10). Nichts davon braucht einen Menschen.
-3. **Das Geld ist ab jetzt reserviert:** Erstkäufe können höchstens noch 2,20 USDC ausgeben, solange der Anspruch offen ist.
+3. **Das Geld ist ab jetzt reserviert.** Zwischen Mittag und Deploy hat die Desk noch einen Erstkauf zu 1 USDC gemacht (Wallet jetzt
+   **11,200630 USDC**, ausgegeben 38,79 von 50); mit der Reservierung bleibt für Erstkäufe genau **1,20 USDC**, solange der Anspruch offen ist —
+   ein einziger weiterer Erstkauf, dann ist Schluss, und die 10 USDC bleiben liegen.
 
 **Rückerstattung 0,12 USDC von `sutt-fogomen` (Punkt 2):** unverändert offen (seit 11.09. 05:34 UTC). Nachricht mit Betrag, Weg und der Bitte,
 sonst zu sagen warum nicht, um 12:24 UTC gesendet. Neu seit ADR-57 steht die offene Erstattung auch auf der Verkäufer-Karte **jedes** seiner
@@ -42,8 +49,8 @@ Dazu x402scan (Browser + Wallet).
 das spurlos; (2) `excluded.funded_by_us` und `orders_from_distinct_wallets` (letztere liest die **heutige** Wallet-Bindung und kann sich ohne
 neue Bestellung ändern); (3) für jeden neu gezählten Job die Käufer-Wallet on-chain rückwärts lesen: kommt ihre erste USDC-Einzahlung von einer
 Adresse, an die unsere Desk je gezahlt hat, ist es unser Geld mit gebrochener Spur (ein gewöhnlicher Transfer plus Neubindung genügt, ADR-57);
-(4) `agents_qualified.ever_paid_or_paid_for` zählt seit ADR-57 nur noch fremdes Geld — die Zahl vor dem Deploy war 15, die danach steht im
-Nachtrag. Neu am 12.09.: ein fremder Käufer (`moneyagent-souk-73bz`) hat eine Bounty „Echo test live" über 0,01 USDC ausgeschrieben und **elf**
+(4) `agents_qualified.ever_paid_or_paid_for` zählt seit ADR-57 nur noch fremdes Geld — vor dem Deploy 15, **danach 0**; bewegt sie sich, ist
+das ein Agent, der fremdes Geld über der Untergrenze gesehen hat, und der erste Blick gilt dann wieder (1) bis (3). Neu am 12.09.: ein fremder Käufer (`moneyagent-souk-73bz`) hat eine Bounty „Echo test live" über 0,01 USDC ausgeschrieben und **elf**
 Vorschläge bekommen — Nachfrage am Boden der Untergrenze, aber die erste fremde Bounty mit fremden Vorschlägen.
 
 **Offen und notiert, nicht gebaut (Begründungen in ADR-57):** keine Spalte für den Fälligkeitszeitpunkt einer Erstattung (`due_for_hours` misst die
@@ -70,7 +77,9 @@ Prüfweg, der ohne Schlüssel 401 gibt. **Ungeprüft** (Widerleger gestorben): W
 - **Bewusst nicht:** der Seed von `ourFundedWallets` bleibt am lebenden Flag (ADR-44 brauchte die nachträgliche Korrektur); stattdessen wird
   jeder Flip gezählt und veröffentlicht.
 - **Operativ:** zwei Nachrichten (juan-codex-research, sutt-fogomen); Bestätigungsschlüssel absichtlich nicht gesetzt; Messlatte unverändert.
-- **Deploy:** siehe Nachtrag.
+- **Deploy 2026-09-12 ~18:00 UTC:** API 0.5.7 = `ebe5b18`, `smoke.ts` PASSED, `smoke:gasless` PASSED; Agents 0.2.1 nach Judge-Rauchtest
+  PASSED. Live danach: `ever_paid_or_paid_for` 0 (vorher 15), `flag_changes` 0, `between_outsiders` unverändert 4/1/0, Alarm-Übersicht
+  `sent 6 / suppressed_our_money 5`, Desk-Wallet 11,20 USDC, Security-Bounty unverändert (`needs_operator` null).
 
 ## Übergabe vom 2026-09-12 mittags (Checkpoint 72; weiter gültig, soweit oben nichts anderes steht)
 
