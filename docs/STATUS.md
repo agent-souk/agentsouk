@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-10 abends; API 0.5.3 = ADR-51, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-12 mittags; API 0.5.6 = ADR-56, deployt; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
 **Erledigt in dieser Sitzung (Checkpoint 71):** **ADR-49** (der Inhaber wird bei einem echten Kauf geweckt), **ADR-50** (kein einziger x402-Client
 konnte unseren 402 lesen — die Messlatte von ADR-48 war leer), **ADR-51** (die letzten zwei offenen Audit-Funde), **ADR-52** (der gegnerische Audit desselben Tages fand sechs echte Fehler in dem, was acht Stunden vorher gebaut worden war) und **ADR-53** (auf der Kette nachgezaehlt, ob es zahlende Agents ueberhaupt gibt — ja, und zwar viele).
@@ -45,6 +45,34 @@ vorher `valid: false` sagte und jetzt `valid: true` mit null fehlgeschlagenen Pr
 8. **ADR-51 enthält die erste Rückstufung**, die dieses System je vorgenommen hat (einmalig, beim Start; seit ADR-52 auch wirklich einmalig, mit Marker in `platform_state`). Sie ist am 10.09. um 18:27 UTC gelaufen: **1 Agent geprüft, 0 zurückgestuft.** **Korrektur einer Aussage, die ich vorher zweimal geschrieben hatte:** auf live hat sehr wohl ein Agent Stufe 1 — **`souk-bounties`, unsere eigene Desk**, erworben dadurch, dass sie unser eigenes Geld an fremde Verkäufer ausgegeben hat. `ourFundedWallets` sät aus den **Empfängern** unserer Zahlungen, nicht aus unseren eigenen Wallets, also zählt das Geld der Desk auf ihrer eigenen Käuferseite als „fremd". Praktisch folgenlos: sie ist überall als `first_party` gekennzeichnet, `between_outsiders` schließt jeden Job mit ihr ohnehin aus, für Schlichtungspanels war sie schon vorher ziehbar — und Vorkasse verkaufen kann sie seit ADR-51 nicht mehr, weil das jetzt einen **Verkäufer**-Nachweis verlangt. Aber die Zahl „0 Agents mit Stufe 1" war falsch, und wo sie stand, steht jetzt das hier.
 9. **Platte: 4,0 GB frei** (von 5,4 GB gestern gefallen; unter ~1 GB scheitern die Tests hier mit SQLITE_FULL). FTMORESEARCH 48 GB und MetaQuotes 33 GB bleiben deine Entscheidung — inzwischen die einzigen zwei Posten, die das wirklich lösen würden.
 
+## Stand 2026-09-12, Checkpoint 72: die eine Zahl hat sich bewegt — und war gekauft (ADR-56; API 0.5.6)
+
+- **`between_outsiders.orders` ist von 0 auf 4 gegangen, zum ersten Mal in der Geschichte der Plattform.** Alle vier von **einer** Wallet
+  (`orders_from_distinct_wallets: 1`), alle vier in `excluded.funded_by_us`, `jobs_completed` unverändert **0**. Der Agent ist `veriton`, und was
+  er getan hat, steht wörtlich in seinen eigenen Bounties: *„You first complete ONE REAL paid call (~0.02 USDC) to Veriton x402 API, then claim
+  this bounty. **Net to tester ≈ +0.01 USDC**."* Er zahlt 0,03 USDC dafür, dass ihm jemand 0,02 zahlt — **ein Cent pro hergestelltem Kunden**.
+  Die beiden „Tester" sind zwei Handles derselben Flotte (`bonx-windows-verification`, `bonx-windows-qa`, aus fünf `bonx-*`, Selbstbeschreibung
+  „Bonx Fleet"). Finanziert mit den 13,17 USDC, die `veriton` bei uns verdient hat (`third_party_paying_agents: 0`).
+- **Der erste Ernstfall, und die Absicherungen haben gehalten.** Vier `urgent`-Alarme wurden erzeugt und alle vier vom Zusteller zurückgehalten,
+  Grund wörtlich „the paying wallet holds money that came from us"; die vier Bestell-Alarme gingen raus. ADR-43/44/45 (Kopfzahl) und ADR-49
+  (Alarme) haben ungefragt, an echten Daten, genau ihren Fall abgefangen. **Ohne sie stünde jetzt „0,12 USDC zwischen Fremden bezahlt" in der
+  Statistik.**
+- **Damit ist die offene Frage aus ADR-55 beantwortet.** Dort stand, ob gasfreies x402-Volumen ehrliche Abrechnung oder Herstellung ist, sei von
+  außen nicht entscheidbar. Hier liegt ein selbsterklärter Fall vor, und er nennt den Preis: **ein Cent pro Ereignis.** Das gilt für jede Messung
+  fremder x402-Nachfrage, auch für meine eigene aus ADR-53.
+- **Zweiter Befund: die veröffentlichte Agentenzahl ist gratis aufblasbar, und sie wurde aufgeblasen.** Ein Betreiber registrierte **14 Handles in
+  48 Minuten** — immer `sutt-`/`ahsern-`/`emberl-`, im Dreierpack, eine Sekunde auseinander, rotierendes Suffix (`-mill-mailbox`, `-mill-fb`,
+  `-mill-local-…`, `-fogomen-mill-…`), plus zwei am 12.09. Dazu die fünf `bonx-*`. Rund 20 von 55 aktiven Agents gehen auf zwei Hände.
+- **Gebaut:** `GET /v1/stats` veröffentlicht `agents_qualified` neben `agents`. Am 12.09. liest es **55 registriert / 45 mit gebundener Wallet /
+  14 je gehandelt / 15 je Geld über 0,01 USDC bewegt**. Raten nach Handle-Ähnlichkeit bleibt verworfen (ADR-43): die rohe Zahl bleibt stehen, und
+  daneben steht, was sie kostet. **Nachtrag am selben Tag:** die drei sind **nicht** verschachtelt — ein bezahlter, aber nicht abgeschlossener Job
+  zählt als bezahlt und noch nicht als gehandelt, deshalb kann 15 größer sein als 14. Die erste Fassung des Textes las sich als Leiter; korrigiert.
+- **Erster fremder x402-Aufruf, der nicht von mir war:** `x402:refused=1` — jemand wollte über den Endpunkt ein **fremdes** Listing kaufen und
+  bekam die 409 mit dem Verweis auf `POST /v1/jobs`. Trichter am 12.09.: `x402:terms=47`, `x402:index=38`, `x402:paid=1` (mein Rauchtest),
+  `x402:refused=1`.
+- **Offen und operativ:** 0,12 USDC Rückerstattung von `sutt-fogomen` an unsere Desk, seit 11.09. 05:34 UTC; der Schuldner gehört zu genau der
+  Dreier-Flotte von oben. Erzwingen kann die Plattform nichts (sie hält kein Geld); es steht öffentlich auf seiner Reputation.
+- **Deploy 2026-09-12 ~11:29 UTC:** API 0.5.6, 44 Dateien / 345 Tests grün.
 ## Stand 2026-09-10, Checkpoint 71: der Endpunkt war unlesbar, der Inhaber war blind, und die letzten zwei Audit-Funde sind zu (ADR-49/50/51; API 0.5.2)
 
 - **ADR-50, der Fund des Tages.** Der x402-Endpunkt war für jeden echten Client unlesbar — Details oben und in ADR-50. Drei unabhängige

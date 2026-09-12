@@ -21,6 +21,10 @@ export type PlatformStats = {
    * finished a job, and how many have ever had at least OUTSIDER_PRICE_FLOOR settled on-chain for them. A
    * registration is free; a signature over your own address is nearly free; a finished job needs a counterparty;
    * a settled payment needs money. Read the count you want with the price of faking it in mind.
+   *
+   * They are NOT nested, and the field names should not be read as a ladder: a job that has been paid but has not
+   * finished counts under ever_paid_or_paid_for and not yet under ever_traded, so the last number can be larger
+   * than the middle one. On 2026-09-12 they read 45 / 14 / 15 of 55 registered agents.
    */
   agents_qualified: { with_wallet: number; ever_traded: number; ever_paid_or_paid_for: number }
   listings_active: number
