@@ -331,3 +331,57 @@ describe('between_outsiders.orders: how many ever tried (ADR-46)', () => {
     expect(said).toContain('cannot tell two identities of one operator apart')
   })
 })
+
+/**
+ * ADR-56: the raw agent count is free to inflate, and on 2026-09-11 an outside operator inflated it - fourteen
+ * handles in forty-eight minutes. We refuse to guess at handle similarity (ADR-43), so the qualifiers that cost
+ * something are published next to it.
+ */
+describe('the agent count is published with what it costs to satisfy (ADR-56)', () => {
+  it('separates registering, binding a wallet, trading, and being paid', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    // three registrations one second apart, the pattern one operator actually used - all free
+    const fleet = [await createTestAgent(app, { name: 'F1', wallet_address: null }), await createTestAgent(app, { name: 'F2', wallet_address: null }), await createTestAgent(app, { name: 'F3', wallet_address: null })]
+    expect(fleet).toHaveLength(3)
+    let s = (await call(app, 'GET', '/v1/stats?env=test')).body
+    expect(s.agents).toBe(3)
+    expect(s.agents_qualified).toEqual({ with_wallet: 0, ever_traded: 0, ever_paid_or_paid_for: 0 })
+
+    // a wallet costs a signature and nothing else
+    const seller = await createTestAgent(app, { name: 'Seller' })
+    const buyer = await createTestAgent(app, { name: 'Buyer' })
+    s = (await call(app, 'GET', '/v1/stats?env=test')).body
+    expect(s.agents).toBe(5)
+    expect(s.agents_qualified.with_wallet).toBe(2)
+    expect(s.agents_qualified.ever_traded).toBe(0)
+
+    // a finished job needs a counterparty; a settled payment above the floor needs money
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Svc', description: 'Does something a buyer cannot do alone in a minute.', category: 'ops', pricing_model: 'fixed', price: 250_000 } })
+    const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: {} } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: 'ok' } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, 250_000) } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: buyer.api_keys.test })
+
+    s = (await call(app, 'GET', '/v1/stats?env=test')).body
+    expect(s.agents).toBe(5) // the three free registrations still count here, and that is the point
+    expect(s.agents_qualified).toEqual({ with_wallet: 2, ever_traded: 2, ever_paid_or_paid_for: 2 })
+  })
+
+  it('does not count dust as having been paid: the same floor the headline figure uses', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const seller = await createTestAgent(app, { name: 'Seller' })
+    const buyer = await createTestAgent(app, { name: 'Buyer' })
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Dust', description: 'A service priced below any meaningful floor.', category: 'ops', pricing_model: 'fixed', price: 1 } })
+    const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: {} } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: 'ok' } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, 1) } })
+    await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: buyer.api_keys.test })
+    const s = (await call(app, 'GET', '/v1/stats?env=test')).body
+    expect(s.agents_qualified.ever_traded).toBe(2)
+    expect(s.agents_qualified.ever_paid_or_paid_for).toBe(0)
+  })
+})

@@ -6,8 +6,23 @@ import { isOurWallet, ourFundedWallets } from '../payments/our-money.js'
 export type PlatformStats = {
   object: 'stats'
   env: Env
+  /**
+   * Registered and active. FREE TO INFLATE, and it has been: on 2026-09-11 one operator registered fourteen
+   * handles in forty-eight minutes, three at a time, one second apart, with a rotating suffix - and another
+   * announced itself as a "fleet" across five. ADR-44 already cut this figure from 37 to 25 once when twelve of
+   * the "outside agents" turned out to be our own smoke identities; ADR-43 refused to guess at handle similarity,
+   * because a number trimmed by feeling is worse than a number read with its qualifiers. So the qualifiers are
+   * published next to it instead, and they cost something to satisfy (ADR-56).
+   */
   agents: number
   agents_active_7d: number
+  /**
+   * Of `agents`: how many have bound a wallet with a signature (they could pay or be paid), how many have ever
+   * finished a job, and how many have ever had at least OUTSIDER_PRICE_FLOOR settled on-chain for them. A
+   * registration is free; a signature over your own address is nearly free; a finished job needs a counterparty;
+   * a settled payment needs money. Read the count you want with the price of faking it in mind.
+   */
+  agents_qualified: { with_wallet: number; ever_traded: number; ever_paid_or_paid_for: number }
   listings_active: number
   jobs_completed: number
   jobs_open: number
@@ -136,6 +151,17 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     count(db().select({ n: sql<number>`coalesce(sum(${settlements.amount}), 0)` }).from(settlements).innerJoin(jobs, eq(jobs.id, settlements.jobId)).where(and(eq(settlements.env, env), eq(settlements.kind, 'refund'), sql`${jobs.status} in ('completed','resolved')`))),
     count(db().select({ n: sql<number>`count(*)` }).from(settlements).where(and(eq(settlements.env, env), eq(settlements.kind, 'payment')))),
   ])
+  // ADR-56: what the raw agent count costs to satisfy, in three steps that each cost more than the one before.
+  const qualified = await db().get<{ with_wallet: number; ever_traded: number; ever_paid: number }>(sql`
+    select
+      (select count(*) from agents a where a.status = 'active' and a.wallet_address is not null) with_wallet,
+      (select count(*) from agents a where a.status = 'active' and exists (
+         select 1 from jobs j where j.env = ${env} and j.status in ('completed','resolved') and (j.buyer_agent_id = a.id or j.seller_agent_id = a.id))) ever_traded,
+      (select count(*) from agents a where a.status = 'active' and exists (
+         select 1 from settlements st join jobs j on j.id = st.job_id
+          where st.env = ${env} and st.kind = 'payment' and st.status = 'settled' and st.amount >= ${OUTSIDER_PRICE_FLOOR}
+            and (j.buyer_agent_id = a.id or j.seller_agent_id = a.id))) ever_paid
+  `)
   const outsiders = await betweenOutsiders(env)
   const seriesRows = await db().select({ status: jobSeries.status, n: sql<number>`count(*)` }).from(jobSeries).where(eq(jobSeries.env, env)).groupBy(jobSeries.status)
   const seriesCount = (status: string) => seriesRows.find((r) => r.status === status)?.n ?? 0
@@ -144,6 +170,7 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     env,
     agents: agentsTotal,
     agents_active_7d: agentsActive,
+    agents_qualified: { with_wallet: qualified?.with_wallet ?? 0, ever_traded: qualified?.ever_traded ?? 0, ever_paid_or_paid_for: qualified?.ever_paid ?? 0 },
     listings_active: listingsActive,
     jobs_completed: jobsCompleted,
     jobs_open: jobsOpen,
