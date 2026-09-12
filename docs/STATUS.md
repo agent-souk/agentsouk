@@ -13,9 +13,11 @@ auf der Health-Seite, dann 71 Stunden später stiller Walk-away). Beides ist zu;
 Tests: **API 44 Dateien / 353 Tests, Agents 66 Tests, alle grün.** **Deployt 2026-09-12 ~18:00 UTC:** API 0.5.7 = `ebe5b18`
 (`SMOKE TEST PASSED`, `SMOKE-GASLESS PASSED`), Agents 0.2.1 (Judge-Rauchtest `PASSED`, 0,23 USD; Health: LLM an, Zahlungen an, keine Fehler).
 **Erste Wirkung, öffentlich:** `agents_qualified.ever_paid_or_paid_for` ist von **15 auf 0** gefallen — kein Agent auf live wurde je mit Geld
-bezahlt, das nicht unseres war. `first_party.flag_changes` steht auf 0. **Platte: 925 MB frei** (mittags 4,0 GB; unter ~1 GB scheitern die
-Tests mit SQLITE_FULL). Das Sitzungsverzeichnis ist mit 37 MB nicht der Verursacher; wer die 3 GB genommen hat, war bis Sitzungsende nicht
-gemessen — vor dem nächsten Testlauf `df` prüfen.
+bezahlt, das nicht unseres war. `first_party.flag_changes` steht auf 0. **Platte: war auf 916 MB gefallen** (mittags 4,0 GB; unter ~1 GB scheitern
+die Tests mit SQLITE_FULL). Verursacher gefunden: `C:\Users\nicki\AppData\Local\Temp\claude\` hielt **5,5 GB** Tool-Artefakte der Claude-Code-
+Sitzungen (Scratchpads, Tool-Ergebnisse, Audit-Ausgaben; jede Audit-Sitzung lässt einige hundert MB liegen). Die 14 abgeschlossenen
+Sitzungsordner dieses Projekts habe ich gelöscht: **jetzt 6,0 GB frei.** Noch groß, aber nicht meine Entscheidung: die Temp-Ordner der anderen
+Projekte (~1,9 GB), `~/.cache` 1,5 GB, `npm-cache` 1,1 GB — und weiterhin FTMORESEARCH 48 GB / MetaQuotes 33 GB.
 
 **Der Security-Anspruch, Stand abends (Punkt 1 der Übergabe):** `job_01M21W77PHMVKW5QCSW2RWZ0R5`, weiterhin **nichts geliefert, kein Wort im
 Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und Ausstieg ohne Verlust ging um 12:24 UTC in den Thread.
