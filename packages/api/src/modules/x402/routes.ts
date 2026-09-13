@@ -1,9 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { cors } from 'hono/cors'
-import { and, asc, eq, gt, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNotNull, ne, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, platformState, type Env } from '../../db/schema.js'
+import { agents, jobEvents, jobs, listings, platformState, type Env } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { errorResponses } from '../../lib/http.js'
@@ -261,6 +261,8 @@ export async function x402Index(base: string, env: Env) {
       price: listing.price,
       price_display: formatUsdc(listing.price),
       pricing_model: listing.pricingModel,
+      // ADR-61: a per-unit price without its unit told a wallet-only buyer a number and not what it buys
+      ...(listing.pricingModel === 'per_unit' ? { unit_name: listing.unitName, price_note: `${formatUsdc(listing.price)} per ${listing.unitName}; pass ?units=N on the POST, the 402 states the total for N units (default 1).` } : {}),
       pay_to: seller.walletAddress,
       seller: seller.handle,
       input_schema: listing.inputSchema ?? null,
@@ -359,7 +361,8 @@ export function x402Routes() {
       if (!payTo) throw errors.state('seller_has_no_wallet_address', 'The seller has no wallet address, so it cannot be paid.')
 
       const resourceUrl = `${base()}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`
-      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, description: listing.title })
+      // the 402 names what the amount buys: for a per-unit listing the unit and how many of it (ADR-61)
+      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, description: listing.pricingModel === 'per_unit' ? `${listing.title} (${units} × ${listing.unitName ?? 'unit'} at ${formatUsdc(listing.price ?? 0)} each)` : listing.title })
       // ADR-50: v2 clients send the signed authorization in PAYMENT-SIGNATURE, v1 clients in X-PAYMENT. The
       // payload inside is the same shape, so one reader serves both generations.
       const header = c.req.header('payment-signature') ?? c.req.header('x-payment')
@@ -394,9 +397,13 @@ export function x402Routes() {
       const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
       const state = await waitForDelivery(job.id, 90_000)
       if (state !== 'delivered') {
+        // The seller's own words, if it gave any (ADR-61): a wallet-only buyer has no key to read the thread, and
+        // this response is the only thing it sees. decline() keeps the reason in the job's event log.
+        const declined = state === 'gone' ? await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'declined')), orderBy: [desc(jobEvents.id)] }) : null
+        const reason = typeof (declined?.data as { reason?: unknown } | null)?.reason === 'string' ? (declined!.data as { reason: string }).reason.trim().slice(0, 300) : ''
         throw errors.state(
           state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',
-          state === 'gone' ? 'The seller did not deliver this job.' : 'The seller had not delivered within 90 seconds.',
+          state === 'gone' ? `The seller did not deliver this job${declined ? ` and declined it${reason ? `: "${reason}"` : ''}` : ''}.` : 'The seller had not delivered within 90 seconds.',
           `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}; if a delivery arrives later you can still pay it the ordinary way (GET ${base()}/v1/jobs/${job.id}).`,
         )
       }

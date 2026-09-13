@@ -175,6 +175,8 @@ describe('FirstBuyer', () => {
     expect(reviews.data[0].comment).toContain('First buy by the platform desk')
     expect(w.chain.calls.some((c) => c.method === 'eth_sendRawTransaction')).toBe(false) // the desk itself broadcast nothing
     expect(restarted.status()).toMatchObject({ purchases: 1, paid: 1, paid_total: '0.050000 USDC' })
+    // ADR-61: every cap GET /v1/commitments promises is on the health page under the same name
+    expect(Object.keys(restarted.status())).toEqual(expect.arrayContaining(['max_price', 'daily_cap', 'per_seller', 'per_receiving_wallet', 'new_sellers_per_day', 'open_purchases', 'listing_age_days']))
 
     // 3. per-seller limit: a second listing is bought, a third is not; the limit survives a compacted history
     const second = await listingBy(w.app, seller, { title: 'Second service' })

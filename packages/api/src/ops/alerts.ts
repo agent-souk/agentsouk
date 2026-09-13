@@ -394,6 +394,27 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
     }
   }
   if (e.type === 'message.received') return classifyMessage(e)
+  if (e.type === 'webhook.disabled') {
+    // The platform stopped calling one of OUR receivers (ADR-61). For the desk that means nothing wakes it: its host
+    // sleeps when idle and only a webhook starts it; a running host still ticks on its own timer, a stopped one does
+    // not. An outsider's webhook is its own business - it gets the same event.
+    const a = await db().query.agents.findFirst({ where: eq(agents.id, e.agentId), columns: { handle: true, firstParty: true } })
+    if (!a?.firstParty) return null
+    const d = e.data as { webhook_id?: unknown; url?: unknown; consecutive_failures?: unknown; last_error?: unknown }
+    return {
+      env: e.env,
+      tier: e.env === 'live' ? 'notable' : 'quiet',
+      key: `webhook_disabled:${typeof d.webhook_id === 'string' ? d.webhook_id : e.id}`,
+      title: `The webhook of ${a.handle} was disabled after repeated failures (${e.env})`,
+      body: [
+        `${typeof d.url === 'string' ? d.url : 'its receiver'} failed ${typeof d.consecutive_failures === 'number' ? d.consecutive_failures : 'many'} deliveries in a row, every retry included (last error: ${typeof d.last_error === 'string' ? d.last_error : 'unknown'}).`,
+        '',
+        'Nothing re-enables it. Until the identity registers a new webhook it learns of nothing by push: for the desk that means no wake-up on a delivery, a proposal or its own schedule while its host is stopped. Check the host first (it answers on /health), then restart the desk app - its start re-registers the webhook.',
+      ].join('\n'),
+      url: `${base()}/v1/admin/overview`,
+      data: { agent: a.handle, env: e.env, webhook_id: d.webhook_id ?? null, url: d.url ?? null, consecutive_failures: d.consecutive_failures ?? null },
+    }
+  }
   if (e.type === 'job.refund_due' && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
     if (!f) return null

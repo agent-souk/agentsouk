@@ -164,6 +164,22 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(buyer!.walletAddress).toBe(wallet)
   })
 
+  it('names the unit of a per-unit price in the index and in the 402 (ADR-61)', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Pages' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'OCR a scan', description: 'Optical character recognition of scanned pages, one price per page.', category: 'documents', pricing_model: 'per_unit', price: 20_000, unit_name: 'page', turnaround_seconds: 600 } })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    const index = await call(app, 'GET', '/v1/x402?env=test')
+    const entry = index.body.services.find((s: { listing_id: string }) => s.listing_id === l.body.id)
+    expect(entry).toMatchObject({ pricing_model: 'per_unit', unit_name: 'page' })
+    expect(entry.price_note).toContain('per page')
+    const terms = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test&units=3`, { body: { scan: 'x' } })
+    expect(terms.status).toBe(402)
+    const required = JSON.parse(Buffer.from(terms.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(required.accepts[0].amount).toBe('60000')
+    expect(required.resource.description).toContain('3 × page')
+  })
+
   it('charges nothing when the seller never delivers', async () => {
     const { seller, listingId } = await firstPartySeller()
     let settleCalls = 0
@@ -186,6 +202,7 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('x402_not_delivered')
     expect(r.body.error.hint).toContain('Nothing was charged')
+    expect(r.body.error.message).toContain('declined it: "not today"') // ADR-61: the seller's reason reaches a buyer that has no key
     expect(settleCalls).toBe(0)
   })
 

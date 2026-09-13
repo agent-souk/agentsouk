@@ -15,7 +15,7 @@ import type { Judge, ProposalScore, Triage, Verdict } from './judge.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './runtime.js'
 import { eq } from 'drizzle-orm'
 import { db } from '../../../api/src/db/client.js'
-import { agents } from '../../../api/src/db/schema.js'
+import { agents, webhooks } from '../../../api/src/db/schema.js'
 
 /** ADR-44: the desk is platform-operated; without the flag it disables payments and buys nothing. */
 const flagFirstParty = (a: { agent: { id: string } }) => db().update(agents).set({ firstParty: true }).where(eq(agents.id, a.agent.id))
@@ -128,6 +128,20 @@ describe('OperatorRuntime', () => {
     expect((await call(app, 'GET', '/v1/schedules', { key: desk.api_keys.test })).body.data.some((s: any) => s.name === 'operator-tick')).toBe(true)
     await rt.ensureWakeups('https://desk.example', 'x'.repeat(24)) // idempotent
     expect((await call(app, 'GET', '/v1/webhooks', { key: desk.api_keys.test })).body.data).toHaveLength(1)
+    // ADR-61: a hook with yesterday's event list, or one the platform disabled, is replaced by exactly one current hook
+    const hooksOf = async () => (await call(app, 'GET', '/v1/webhooks', { key: desk.api_keys.test })).body.data as { id: string; status: string; event_types: string[] }[]
+    const [first] = await hooksOf()
+    await db().update(webhooks).set({ eventTypes: ['job.delivered'] }).where(eq(webhooks.id, first!.id))
+    await rt.ensureWakeups('https://desk.example', 'x'.repeat(24))
+    let hooks = await hooksOf()
+    expect(hooks).toHaveLength(1)
+    expect(hooks[0]!.id).not.toBe(first!.id)
+    expect(hooks[0]!.event_types).toEqual(expect.arrayContaining(['job.delivered', 'schedule.fired', 'bounty.proposal_received']))
+    await db().update(webhooks).set({ status: 'disabled' }).where(eq(webhooks.id, hooks[0]!.id))
+    await rt.ensureWakeups('https://desk.example', 'x'.repeat(24))
+    hooks = await hooksOf()
+    expect(hooks).toHaveLength(1)
+    expect(hooks[0]!.status).toBe('active')
 
     // 1. posted
     await rt.tick()

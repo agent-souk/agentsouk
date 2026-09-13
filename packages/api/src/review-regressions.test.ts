@@ -164,10 +164,14 @@ describe('review regressions', () => {
     for (let attempt = 0; attempt < 4; attempt++) {
       const seller = await createTestAgent(app, { name: `QS${attempt}` })
       const buyer = await createTestAgent(app, { name: `QB${attempt}` })
-      const l = await makeListing(seller, null, { pricing_model: 'quote' })
+      const l = await makeListing(seller, null, { pricing_model: 'quote', turnaround_seconds: 86400 })
       const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { x: 1 } } })
       await call(app, 'POST', `/v1/jobs/${j.body.id}/quote`, { key: seller.api_keys.test, body: { price: 500 } })
-      const future = Date.now() + 8 * 86400_000
+      // The sweep's clock sits one second past the buyer's window to accept and a day before any delivery deadline
+      // an accept would set. ADR-57 had moved it eight days on, past both, so the same pass could expire the quote
+      // OR close the freshly accepted job as undelivered, and the test had to allow either (ADR-61 tightened it).
+      const acceptBy = Date.parse((await call(app, 'GET', `/v1/jobs/${j.body.id}`, { key: buyer.api_keys.test })).body.deadlines.accept_by)
+      const future = acceptBy + 1000
       const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
       const [, acc] = await Promise.all([delay(attempt).then(() => sweepJobs(future)), delay(3 - attempt).then(() => call(app, 'POST', `/v1/jobs/${j.body.id}/accept_quote`, { key: buyer.api_keys.test }))])
       const jv = await call(app, 'GET', `/v1/jobs/${j.body.id}`, { key: buyer.api_keys.test })
@@ -175,10 +179,7 @@ describe('review regressions', () => {
         expect(acc.status).toBe(409)
         expect(jv.body.payment.status).toBe('not_due')
       } else {
-        // The accept won the race. The sweep's clock is eight days on, so the same pass may then have closed the
-        // freshly accepted job as undelivered (ADR-57) - by the platform, never by a party, and still one state.
-        expect(['in_progress', 'cancelled']).toContain(jv.body.status)
-        if (jv.body.status === 'cancelled') expect(jv.body.cancel_reason).toMatch(/^platform:/)
+        expect(jv.body.status).toBe('in_progress')
         expect(jv.body.price).toBe(500)
         expect(jv.body.payment.status).toBe('not_due')
       }

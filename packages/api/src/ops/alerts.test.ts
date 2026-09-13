@@ -5,7 +5,9 @@ import { installFakeChain } from '../test/chain.js'
 import { _setConfigForTests } from '../config.js'
 import type { App } from '../app.js'
 import { db } from '../db/client.js'
-import { agents, faucetClaims, jobs, operatorAlerts } from '../db/schema.js'
+import { agents, faucetClaims, jobs, operatorAlerts, webhookDeliveries, webhooks } from '../db/schema.js'
+import { emit } from '../events/bus.js'
+import { deliverPending, DISABLE_AFTER_FAILURES, MAX_ATTEMPTS } from '../modules/events/service.js'
 import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, headerSafe, MAX_MESSAGE_CHARS } from './alert-channels.js'
 import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, ALERT_DEFER_MAX_MS, alertsStatus, classify, classifyPayment, deliverAlerts, MESSAGE_ALERT_WINDOW_MS, raise, recentAlerts, SUPPRESSED } from './alerts.js'
 
@@ -479,6 +481,31 @@ describe('what is worth waking the operator (ADR-49)', () => {
       expect(theirs.status).toBe(201)
       expect((await classify(ev('live', { thread_id: theirs.body.thread_id, from: outsider.agent.id, job_id: theirs.body.id, preview: 'q' }, seller.agent.id)))!.tier).toBe('quiet')
     })
+  })
+
+  it('a webhook of ours that the platform disables wakes the operator; an outsider\'s only gets the event (ADR-61)', async () => {
+    const disable = async (who: TestAgent) => {
+      const w = await call(app, 'POST', '/v1/webhooks', { key: who.api_keys.test, body: { url: `https://${who.agent.handle}.example/hook`, event_types: ['webhook.test'] } })
+      expect(w.status).toBe(201)
+      await emit('test', who.agent.id, 'webhook.test', { message: 'ping' })
+      // the last of twenty deliveries, on its last attempt
+      await db().update(webhooks).set({ consecutiveFailures: DISABLE_AFTER_FAILURES - 1 }).where(eq(webhooks.id, w.body.id))
+      await db().update(webhookDeliveries).set({ attempt: MAX_ATTEMPTS - 1 }).where(eq(webhookDeliveries.webhookId, w.body.id))
+      await deliverPending(Date.now(), async () => ({ status: 503 }))
+      expect((await db().query.webhooks.findFirst({ where: eq(webhooks.id, w.body.id) }))!.status).toBe('disabled')
+      return w.body.id as string
+    }
+    const theirs = await disable(seller)
+    expect((await call(app, 'GET', '/v1/events?types=webhook.disabled', { key: seller.api_keys.test })).body.data).toHaveLength(1)
+    expect((await recentAlerts()).some((a) => a.key.startsWith('webhook_disabled:'))).toBe(false)
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, buyer.agent.id))
+    const ours = await disable(buyer)
+    const alert = (await recentAlerts()).find((a) => a.key === `webhook_disabled:${ours}`)!
+    expect(alert).toBeTruthy()
+    expect(alert.tier).toBe('quiet') // sandbox; notable on live
+    expect(alert.title).toContain(buyer.agent.handle)
+    expect((await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, alert.key) }))!.body).toContain('restart the desk app')
+    expect((await recentAlerts()).some((a) => a.key === `webhook_disabled:${theirs}`)).toBe(false)
   })
 
   it('reads the frozen first-party flag, so flipping an agent afterwards cannot invent an alert', async () => {

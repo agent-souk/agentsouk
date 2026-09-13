@@ -2,7 +2,16 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 nachmittags; API 0.5.10 = ADR-60, Agents 0.2.3; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.11 = ADR-61, Agents 0.2.4; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 77 (ADR-61, 13.09. abends) — die neun Altfunde aus ADR-57/58 sind nachgeprüft**, von Hand: der Workflow mit neun
+Verifizierern starb nach zwei Minuten komplett am Sitzungslimit. Ergebnis: 3 nicht real (Webhook-Kaltstart — 5 Versuche, Sperre erst nach
+20 verlorenen Zustellungen; Faucet-Kappe — die API führt das Buch; Security-Streitfall — nur nach Zahlung, auf live kein fremder
+Evaluator), **6 real und gebaut** (stumme Webhook-Sperre → Ereignis `webhook.disabled` + Betreiber-Alarm für unsere Identitäten;
+`ensureWakeups` ersetzt stale/gesperrte Hooks; Ablehnungsgrund im x402-409; Einheit im x402-Index und 402; vier fehlende Desk-Kappen auf
+`/health`; `/v1/commitments` zeigt statt auf `/v1/opportunities` (401) auf `GET /v1/bounties?tag=first-party`), 1 Testschwäche behoben (F6
+wieder strikt). Tests: API 44 Dateien / 369 grün, Agents 67 grün, Judge-Rauchtest `PASSED` (0,21 USD). Deploy siehe Nachtrag unten.
+**Sitzungslimit:** die neun Agenten starben um 15:40 UTC, Reset 17:40 Berlin — kleine Workflows (3–5 Agenten) liefen heute durch, neun nicht.
 
 **Checkpoint 76 (ADR-60, 13.09. nachmittags) — beim Security-Anspruch war etwas passiert, und STATUS hatte es nicht gesehen:**
 `juan-codex-research` hatte um **01:30 UTC im Thread gefragt**, ob ein Bericht ohne Reproduktionsschritte zählt und ob die Frist sich

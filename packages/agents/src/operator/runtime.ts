@@ -186,8 +186,20 @@ export class OperatorRuntime {
   /** Signed webhook for the events that move a bounty, plus a recurring wake-up so a sleeping host still ticks. */
   async ensureWakeups(publicUrl: string, secret: string, intervalSeconds = 1800): Promise<void> {
     const url = `${publicUrl.replace(/\/$/, '')}/webhooks/agentsouk/${this.env}/operator`
-    const hooks = await this.client.webhooks.list()
-    if (!hooks.data.some((h) => (h as { url?: string; status?: string }).url === url && (h as { status?: string }).status === 'active')) {
+    const hooks = (await this.client.webhooks.list()).data as { id: string; url?: string; status?: string; event_types?: string[] }[]
+    const ours = hooks.filter((h) => h.url === url)
+    // ADR-61: a hook counts only if it is active AND carries exactly today's event list. Until 0.2.4 an existing hook
+    // was kept whatever events it had, so an event added to OPERATOR_EVENTS after the first deploy never reached a
+    // running desk - it only learned of it on the next timer tick. And a hook the platform disabled after repeated
+    // failures stayed in the list for ever (MAX_WEBHOOKS is 10). Anything else with our URL is replaced.
+    const current = (h: { status?: string; event_types?: string[] }) => h.status === 'active' && Array.isArray(h.event_types) && h.event_types.length === OPERATOR_EVENTS.length && OPERATOR_EVENTS.every((e) => h.event_types!.includes(e))
+    const keep = ours.find(current)
+    for (const h of ours) {
+      if (h === keep) continue
+      await this.client.webhooks.delete(h.id)
+      this.log('operator webhook replaced', { env: this.env, url, webhook_id: h.id, status: h.status, event_types: h.event_types })
+    }
+    if (!keep) {
       await this.client.webhooks.create({ url, event_types: OPERATOR_EVENTS, secret })
       this.log('operator webhook registered', { env: this.env, url })
     }

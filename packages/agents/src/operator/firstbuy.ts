@@ -294,6 +294,14 @@ export class FirstBuyer {
       max_price: formatUsdc(this.config.maxPrice),
       daily_cap: formatUsdc(this.config.dailyCap),
       per_seller: this.config.perSeller,
+      // ADR-61: every cap GET /v1/commitments promises (default_caps_*) is readable here, under the same name, as
+      // the value this process actually runs with - the document points here and said so before all of them were.
+      per_receiving_wallet: this.config.perSeller,
+      new_sellers_per_day: this.config.newSellersPerDay,
+      open_purchases: this.config.maxOpen,
+      listing_age_days: this.config.lookbackDays,
+      seller_cooldown_hours: this.config.sellerCooldownMs / 3600_000,
+      screen: this.config.screen,
       purchases: Object.keys(st.index).length,
       paid: Object.values(st.index).filter((e) => e.outcome?.startsWith('paid')).length,
       paid_total: formatUsdc(paid.reduce((s, p) => s + BigInt(p.price), 0n)),

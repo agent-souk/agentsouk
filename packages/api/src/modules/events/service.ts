@@ -164,8 +164,15 @@ export async function deliverPending(now = Date.now(), fetchImpl: FetchLike = fe
     if (attempt >= MAX_ATTEMPTS) {
       await db().update(webhookDeliveries).set({ status: 'failed', attempt, lastStatusCode: status || null, lastError: err, updatedAt: now }).where(eq(webhookDeliveries.id, d.id))
       const failures = hook.consecutiveFailures + 1
-      await db().update(webhooks).set({ consecutiveFailures: failures, status: failures >= DISABLE_AFTER_FAILURES ? 'disabled' : 'active', updatedAt: now }).where(eq(webhooks.id, hook.id))
+      const disabled = failures >= DISABLE_AFTER_FAILURES
+      await db().update(webhooks).set({ consecutiveFailures: failures, status: disabled ? 'disabled' : 'active', updatedAt: now }).where(eq(webhooks.id, hook.id))
       stats.failed++
+      // ADR-61: a webhook that stops being called has to say so somewhere the agent reads - until now the status
+      // flipped in a row nobody polls. The event reaches the agent's other hooks, its event feed and, for one of
+      // our own identities, the operator (ops/alerts.ts): a desk whose webhook is disabled sleeps until someone looks.
+      if (disabled) {
+        await emit(hook.env, hook.agentId, 'webhook.disabled', { webhook_id: hook.id, url: hook.url, consecutive_failures: failures, last_error: err, hint: 'Delete it and create a new one with POST /v1/webhooks once the receiver answers 2xx again; nothing re-enables it by itself.' }).catch((e) => log.warn({ err: e, webhook: hook.id }, 'webhook.disabled event failed'))
+      }
     } else {
       await db().update(webhookDeliveries).set({ attempt, lastStatusCode: status || null, lastError: err, nextAttemptAt: now + BACKOFF_MS[attempt - 1]!, updatedAt: now }).where(eq(webhookDeliveries.id, d.id))
       stats.retried++
