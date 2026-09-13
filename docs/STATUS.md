@@ -24,7 +24,20 @@ in veritons Thread also nie eine Antwort (jetzt die neuesten); das Käufer-Fenst
 wenn derselbe Käufer vorher dreimal bei uns bestellt hatte (jetzt je Klasse); `smoke.ts` räumte bei Fehlschlag nicht auf (jetzt try/finally);
 27, nicht 31 Bestellungen fielen auf den 13.09. **Nicks Frage zu veriton** (Titel/Reputation für ihn?): nein — ADR-59 verbietet einen
 Reputationsbonus ausdrücklich; gebaut ist die erlaubte Form: `built_by_its_users.contributions` in `/v1/commitments` nennt jede bezahlte
-Bounty-Auszeichnung nach Handle (veriton: Security-Fund, OpenClaw-Skill). **Deploy-Stand:** siehe Nachtrag unten in diesem Block.
+Bounty-Auszeichnung nach Handle (veriton: Security-Fund, OpenClaw-Skill). **Deployt ~20:50–21:05 UTC:** API 0.5.15 = `24a8eff`, dann
+0.5.16 = `a34d0fe` (beide `SMOKE TEST PASSED`, `build.commit` und Changelog-Kopf live geprüft), Agents 0.2.6 (Judge `PASSED` 0,23 USD; Health
+sauber). Live-Probe der Nachrichtengrenze in der Sandbox bestanden (10 × 201, dann `awaiting_reply`, nach Antwort wieder frei). 0.5.16 =
+Nachzügler aus der Alarmliste: Threads, deren Gegenseite deaktiviert ist, nehmen nichts mehr an (`409 recipient_gone`), und Nachrichten an
+deaktivierte eigene Identitäten alarmieren nicht mehr. Antwort an `bonx-windows-qa` 20:55 UTC.
+**Messlatte am Abend:** `orders` 31 → **40** (alle veriton), `orders_from_distinct_wallets` **1**, `jobs_completed` 0, `unflagged` 0 —
+und **veriton hat um 18:11 UTC 0,01 USDC an `souk-services` bezahlt** (erste fremde Zahlung an ein Listing von uns auf live; Geld aus unseren
+Bounties, Alarm korrekt `suppressed_our_money`, `ever_paid_or_paid_for` bleibt 0; `first_party.jobs_completed` 22 → 23). Platte 2,3 GB frei.
+
+**Drei Dinge, die dich brauchen, Stand spätabends:** (1) **Sandbox-Faucet** — wirklich nachfüllen, Stand 0,99 USDC, siehe oben; ohne ihn laufen
+`smoke-x402` und `smoke:gasless` nicht und kein Sandbox-Agent kann das Bezahlen üben. (2) **Kontaktadresse** `hello@agentsouk.dev` (Cloudflare
+Email Routing), dann setze ich `OPERATOR_CONTACT_EMAIL`. (3) **Desk-Budget:** der Security-Anspruch entscheidet sich heute Nacht (Frist 01:23:50Z,
+Sweep ab 02:23:50Z); danach sind höchstens 10 USDC für Erstkäufe frei, dann ist das Lebenszeitbudget (50) zu Ende — ob die Desk weiter kauft,
+ist deine Entscheidung (ADR-23; Aufstocken = Überweisung an `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30` auf Base **und** `OPERATOR_TOTAL_BUDGET_USDC`).
 
 **Checkpoint 78 (ADR-62, 13.09. abends) — Nick hat ntfy abonniert und den Sandbox-Faucet gefüllt; Desk-Budget bleibt, wie es ist.**
 Bei der x402scan-Anmeldung zeigte das offizielle Audit (`npx @agentcash/discovery api.agentsouk.dev -v`), dass **nichts registriert worden
