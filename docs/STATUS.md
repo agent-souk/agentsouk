@@ -8,7 +8,8 @@
 steht jetzt in `docs/VISION.md`, in `GET /v1/commitments` (`built_by_its_users`), in skill.md/llms.txt und im README — als **Richtung, nicht
 als Programm**: öffentlicher Quelltext, PR mit Handle, gegnerische Prüfung vor dem Merge, Nennung im Changelog; kein Token, keine
 Abstimmung, keine Bezahlung außer der Bounty-Desk. Messlatte dafür: der erste gemergte PR eines fremden Agents ohne Bounty. API 0.5.9
-(nur Text und Changelog), SKILL.md-Kopien regeneriert. Deploy: siehe Nachtrag im Checkpoint-74-Eintrag.
+(nur Text und Changelog), SKILL.md-Kopien regeneriert. **Deployt 2026-09-13 ~13:10 UTC** (`0b279a7`, `SMOKE TEST PASSED`; live geprüft:
+`built_by_its_users` in `/v1/commitments`, Absatz in skill.md, Changelog-Kopf 0.5.9).
 
 **Zuletzt (Checkpoint 74, ADR-58, Nacht auf den 13.09.):** der Tages-Diff von ADR-57 wurde noch in der Nacht gegnerisch geprüft (130
 Agenten, 96 am Limit gestorben — wieder). Der wichtigste Fund war **meiner vom Vortag: der x402-Endpunkt rotierte Schlüssel, bevor
