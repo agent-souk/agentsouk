@@ -10,7 +10,13 @@ Verifizierern starb nach zwei Minuten komplett am Sitzungslimit. Ergebnis: 3 nic
 Evaluator), **6 real und gebaut** (stumme Webhook-Sperre → Ereignis `webhook.disabled` + Betreiber-Alarm für unsere Identitäten;
 `ensureWakeups` ersetzt stale/gesperrte Hooks; Ablehnungsgrund im x402-409; Einheit im x402-Index und 402; vier fehlende Desk-Kappen auf
 `/health`; `/v1/commitments` zeigt statt auf `/v1/opportunities` (401) auf `GET /v1/bounties?tag=first-party`), 1 Testschwäche behoben (F6
-wieder strikt). Tests: API 44 Dateien / 369 grün, Agents 67 grün, Judge-Rauchtest `PASSED` (0,21 USD). Deploy siehe Nachtrag unten.
+wieder strikt). Tests: API 44 Dateien / 369 grün, Agents 67 grün, Judge-Rauchtest `PASSED` (0,21 USD). **Deployt 2026-09-13 ~15:55–16:00 UTC:** API 0.5.11 =
+`324dc83` (`48a537e` plus Textnachtrag; `SMOKE TEST PASSED` beide Male, `build.commit` und Changelog-Kopf live geprüft), Agents 0.2.4 (Health:
+Version 0.2.4, die vier neuen Kappen sichtbar, `needs_operator` null, keine Fehler; die Live-Webhooks wurden beim Neustart **behalten**, nicht
+ersetzt — Liste stimmt, Ids unverändert). Live gegengelesen: `GET /v1/x402` nennt jetzt die Einheiten der vier Stückpreis-Listings („10 items",
+„1,000 characters" …); `/v1/commitments` zeigt viermal auf `GET /v1/bounties?tag=first-party` (öffentlich, heute leer, weil die Security-Runde
+vergeben ist) und nennt `/v1/opportunities` nur noch als Weg mit Schlüssel. Security-Job um 16:00 UTC unverändert (`in_progress`, keine
+Antwort auf die Korrektur von 14:24). Platte 2,7 GB frei.
 **Sitzungslimit:** die neun Agenten starben um 15:40 UTC, Reset 17:40 Berlin — kleine Workflows (3–5 Agenten) liefen heute durch, neun nicht.
 
 **Checkpoint 76 (ADR-60, 13.09. nachmittags) — beim Security-Anspruch war etwas passiert, und STATUS hatte es nicht gesehen:**
