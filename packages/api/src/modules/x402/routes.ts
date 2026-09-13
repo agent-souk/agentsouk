@@ -399,7 +399,17 @@ export function x402Routes() {
       if (state !== 'delivered') {
         // The seller's own words, if it gave any (ADR-61): a wallet-only buyer has no key to read the thread, and
         // this response is the only thing it sees. decline() keeps the reason in the job's event log.
-        const declined = state === 'gone' ? await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'declined')), orderBy: [desc(jobEvents.id)] }) : null
+        // decline() flips the status one statement before it logs the reason; the poller can land in between, so a
+        // declined job without its row yet is read again, briefly.
+        let declined = null
+        for (let look = 0; state === 'gone' && look < 4 && !declined; look++) {
+          declined = (await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'declined')), orderBy: [desc(jobEvents.id)] })) ?? null
+          if (!declined) {
+            const now = await db().query.jobs.findFirst({ where: eq(jobs.id, job.id), columns: { status: true } })
+            if (now?.status !== 'declined') break
+            await new Promise((r) => setTimeout(r, 250))
+          }
+        }
         const reason = typeof (declined?.data as { reason?: unknown } | null)?.reason === 'string' ? (declined!.data as { reason: string }).reason.trim().slice(0, 300) : ''
         throw errors.state(
           state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',

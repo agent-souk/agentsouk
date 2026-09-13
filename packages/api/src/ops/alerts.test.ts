@@ -484,27 +484,43 @@ describe('what is worth waking the operator (ADR-49)', () => {
   })
 
   it('a webhook of ours that the platform disables wakes the operator; an outsider\'s only gets the event (ADR-61)', async () => {
-    const disable = async (who: TestAgent) => {
-      const w = await call(app, 'POST', '/v1/webhooks', { key: who.api_keys.test, body: { url: `https://${who.agent.handle}.example/hook`, event_types: ['webhook.test'] } })
-      expect(w.status).toBe(201)
+    const eventsOf = async (who: TestAgent) => (await call(app, 'GET', '/v1/events?types=webhook.disabled', { key: who.api_keys.test })).body.data as { data: { webhook_id: string } }[]
+    // a delivery that fails its last attempt, for a hook that has `before` failures on record
+    const finalFailure = async (who: TestAgent, hookId: string, before: number) => {
       await emit('test', who.agent.id, 'webhook.test', { message: 'ping' })
-      // the last of twenty deliveries, on its last attempt
-      await db().update(webhooks).set({ consecutiveFailures: DISABLE_AFTER_FAILURES - 1 }).where(eq(webhooks.id, w.body.id))
-      await db().update(webhookDeliveries).set({ attempt: MAX_ATTEMPTS - 1 }).where(eq(webhookDeliveries.webhookId, w.body.id))
+      await db().update(webhooks).set({ consecutiveFailures: before }).where(eq(webhooks.id, hookId))
+      await db().update(webhookDeliveries).set({ attempt: MAX_ATTEMPTS - 1 }).where(eq(webhookDeliveries.webhookId, hookId))
       await deliverPending(Date.now(), async () => ({ status: 503 }))
-      expect((await db().query.webhooks.findFirst({ where: eq(webhooks.id, w.body.id) }))!.status).toBe('disabled')
+      return (await db().query.webhooks.findFirst({ where: eq(webhooks.id, hookId) }))!.status
+    }
+    const disable = async (who: TestAgent) => {
+      // the hook subscribes to everything, so its own disabling would be delivered to it if the order were wrong
+      const w = await call(app, 'POST', '/v1/webhooks', { key: who.api_keys.test, body: { url: `https://${who.agent.handle}.example/hook`, event_types: ['*'] } })
+      expect(w.status).toBe(201)
+      // a failure short of the threshold is a failure, not an event
+      expect(await finalFailure(who, w.body.id, 3)).toBe('active')
+      expect(await eventsOf(who)).toHaveLength(0)
+      expect(await finalFailure(who, w.body.id, DISABLE_AFTER_FAILURES - 1)).toBe('disabled')
       return w.body.id as string
     }
     const theirs = await disable(seller)
-    expect((await call(app, 'GET', '/v1/events?types=webhook.disabled', { key: seller.api_keys.test })).body.data).toHaveLength(1)
+    expect(await eventsOf(seller)).toHaveLength(1)
     expect((await recentAlerts()).some((a) => a.key.startsWith('webhook_disabled:'))).toBe(false)
     await db().update(agents).set({ firstParty: true }).where(eq(agents.id, buyer.agent.id))
+    // a second, healthy hook of ours that subscribes to everything hears about the first one; the disabled hook does not
+    const other = await call(app, 'POST', '/v1/webhooks', { key: buyer.api_keys.test, body: { url: 'https://other.example/hook', event_types: ['webhook.*'] } })
     const ours = await disable(buyer)
+    const disabledEvent = (await eventsOf(buyer)).find((e) => e.data.webhook_id === ours)!
+    expect(disabledEvent).toBeTruthy()
+    const deliveries = await db().query.webhookDeliveries.findMany({ where: eq(webhookDeliveries.eventId, (disabledEvent as unknown as { id: string }).id) })
+    expect(deliveries.map((d) => d.webhookId)).toEqual([other.body.id])
     const alert = (await recentAlerts()).find((a) => a.key === `webhook_disabled:${ours}`)!
     expect(alert).toBeTruthy()
     expect(alert.tier).toBe('quiet') // sandbox; notable on live
     expect(alert.title).toContain(buyer.agent.handle)
-    expect((await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, alert.key) }))!.body).toContain('restart the desk app')
+    const row = (await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, alert.key) }))!
+    expect(row.body).toContain('Open the desk health page')
+    expect((row.data as { receiver_url?: string }).receiver_url).toBe(`https://${buyer.agent.handle}.example/hook`)
     expect((await recentAlerts()).some((a) => a.key === `webhook_disabled:${theirs}`)).toBe(false)
   })
 

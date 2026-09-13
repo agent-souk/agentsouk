@@ -193,15 +193,23 @@ export class OperatorRuntime {
     // running desk - it only learned of it on the next timer tick. And a hook the platform disabled after repeated
     // failures stayed in the list for ever (MAX_WEBHOOKS is 10). Anything else with our URL is replaced.
     const current = (h: { status?: string; event_types?: string[] }) => h.status === 'active' && Array.isArray(h.event_types) && h.event_types.length === OPERATOR_EVENTS.length && OPERATOR_EVENTS.every((e) => h.event_types!.includes(e))
-    const keep = ours.find(current)
-    for (const h of ours) {
-      if (h === keep) continue
-      await this.client.webhooks.delete(h.id)
-      this.log('operator webhook replaced', { env: this.env, url, webhook_id: h.id, status: h.status, event_types: h.event_types })
-    }
+    let keep = ours.find(current)
+    // The replacement exists BEFORE anything is deleted: a create that fails after the delete would leave the desk
+    // with no hook at all, and a stopped host with no hook is never woken. Two desks starting together may both
+    // create one; the loser's delete then answers 404, which is the outcome we wanted, not an error.
     if (!keep) {
-      await this.client.webhooks.create({ url, event_types: OPERATOR_EVENTS, secret })
-      this.log('operator webhook registered', { env: this.env, url })
+      const created = (await this.client.webhooks.create({ url, event_types: OPERATOR_EVENTS, secret })) as unknown as { id: string; status?: string; event_types?: string[] }
+      keep = { id: created.id, url, status: 'active', event_types: OPERATOR_EVENTS }
+      this.log('operator webhook registered', { env: this.env, url, webhook_id: created.id })
+    }
+    for (const h of ours) {
+      if (h.id === keep.id) continue
+      try {
+        await this.client.webhooks.delete(h.id)
+        this.log('operator webhook replaced', { env: this.env, url, webhook_id: h.id, status: h.status, event_types: h.event_types })
+      } catch (e) {
+        if (statusOf(e) !== 404) throw e
+      }
     }
     const schedules = await this.client.schedules.list({ status: 'active', limit: 100 })
     if (!schedules.data.some((s) => (s as { name?: string }).name === 'operator-tick')) {

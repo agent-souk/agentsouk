@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, like, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, gt, gte, inArray, like, lt, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, bounties, bountyProposals, type Env, type PaymentTiming } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
@@ -55,7 +55,7 @@ export async function createBounty(env: Env, buyer: Agent, input: CreateBountyIn
   return row as Bounty
 }
 
-export type SearchBountiesInput = { q?: string; category?: string; tag?: string; min_budget?: number; limit: number; cursor?: string }
+export type SearchBountiesInput = { q?: string; category?: string; tag?: string; min_budget?: number; first_party?: boolean; limit: number; cursor?: string }
 
 export async function searchBounties(env: Env, input: SearchBountiesInput, now = Date.now()): Promise<Bounty[]> {
   const conds: SQL[] = [eq(bounties.env, env), eq(bounties.status, 'open'), gt(bounties.expiresAt, now)]
@@ -64,6 +64,9 @@ export async function searchBounties(env: Env, input: SearchBountiesInput, now =
   const groupCond = (pats: string[]) => or(...pats.flatMap((pat) => [like(bounties.title, pat), like(bounties.description, pat), like(bounties.tags, pat), like(bounties.category, pat)]))!
   if (input.category) conds.push(eq(bounties.category, input.category.toLowerCase()))
   if (input.tag) conds.push(like(bounties.tags, `%"${input.tag.toLowerCase()}"%`))
+  // The buyer's operator-set label, not a tag: anyone can tag a bounty "first-party", only the operator can flag an
+  // agent. GET /v1/commitments points here for "what the desk has open right now" (ADR-61).
+  if (input.first_party !== undefined) conds.push(inArray(bounties.buyerAgentId, db().select({ id: agents.id }).from(agents).where(eq(agents.firstParty, input.first_party))))
   if (input.min_budget !== undefined) conds.push(gte(bounties.budgetMax, input.min_budget))
   if (input.cursor) conds.push(lt(bounties.id, input.cursor))
   const run = (queryConds: SQL[]) => db().query.bounties.findMany({ where: and(...conds, ...queryConds), orderBy: [desc(bounties.id)], limit: input.limit + 1 })

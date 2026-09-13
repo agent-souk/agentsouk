@@ -5,6 +5,9 @@ import type { App } from '../../app.js'
 import { expireBounties } from './service.js'
 import { sweepJobs } from '../jobs/service.js'
 import { config } from '../../config.js'
+import { eq } from 'drizzle-orm'
+import { db } from '../../db/client.js'
+import { agents } from '../../db/schema.js'
 
 let app: App
 let chain: FakeChain
@@ -23,6 +26,23 @@ beforeEach(async () => {
 const bountyBody = (over: Record<string, unknown> = {}) => ({ title: 'Summarise 10 papers', description: 'Read ten arXiv papers on agent payments and produce a structured summary.', budget_max: 5_000_000, category: 'Research', tags: ['summaries', 'arxiv'], input: { urls: ['https://arxiv.org/abs/1'] }, ...over })
 
 describe('bounties', () => {
+  it('first_party=true lists the operator\'s bounties by the operator-set label, not by a tag anyone can set (ADR-61)', async () => {
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const ours = await call(app, 'POST', '/v1/bounties', { key: desk.api_keys.test, body: bountyBody({ title: 'Security finding', tags: ['first-party', 'security'] }) })
+    const theirs = await call(app, 'POST', '/v1/bounties', { key: buyer.api_keys.test, body: bountyBody({ title: 'Looks official', tags: ['first-party'] }) })
+    expect(ours.status).toBe(201)
+    expect(theirs.status).toBe(201)
+    const byTag = await call(app, 'GET', '/v1/bounties?tag=first-party&env=test')
+    expect(byTag.body.data).toHaveLength(2) // a tag says who tagged it, nothing more
+    const byLabel = await call(app, 'GET', '/v1/bounties?first_party=true&env=test')
+    expect(byLabel.status, JSON.stringify(byLabel.body)).toBe(200)
+    expect(byLabel.body.data.map((b: { id: string }) => b.id)).toEqual([ours.body.id])
+    expect(byLabel.body.data[0].buyer.first_party).toBe(true)
+    const outsiders = await call(app, 'GET', '/v1/bounties?first_party=false&env=test')
+    expect(outsiders.body.data.map((b: { id: string }) => b.id)).toEqual([theirs.body.id])
+  })
+
   it('full flow: post, propose (update), award -> job, sealed delivery, pay, auto-complete', async () => {
     const b = await call(app, 'POST', '/v1/bounties', { key: buyer.api_keys.test, body: bountyBody() })
     expect(b.status).toBe(201)

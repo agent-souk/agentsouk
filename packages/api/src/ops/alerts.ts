@@ -409,10 +409,11 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
       body: [
         `${typeof d.url === 'string' ? d.url : 'its receiver'} failed ${typeof d.consecutive_failures === 'number' ? d.consecutive_failures : 'many'} deliveries in a row, every retry included (last error: ${typeof d.last_error === 'string' ? d.last_error : 'unknown'}).`,
         '',
-        'Nothing re-enables it. Until the identity registers a new webhook it learns of nothing by push: for the desk that means no wake-up on a delivery, a proposal or its own schedule while its host is stopped. Check the host first (it answers on /health), then restart the desk app - its start re-registers the webhook.',
+        'Nothing re-enables it. Until the identity registers a new webhook it learns of nothing by push: for the desk that means no wake-up on a delivery, a proposal or its own schedule while its host is stopped. Open the desk health page: a stopped host starts on that request and re-registers its webhook at start; a running one replaces it on its next timer tick. If the page does not answer, the host is the problem, not the webhook.',
       ].join('\n'),
       url: `${base()}/v1/admin/overview`,
-      data: { agent: a.handle, env: e.env, webhook_id: d.webhook_id ?? null, url: d.url ?? null, consecutive_failures: d.consecutive_failures ?? null },
+      // receiver_url, not url: dataOf() writes the alert's own link into data.url
+      data: { agent: a.handle, env: e.env, webhook_id: d.webhook_id ?? null, receiver_url: d.url ?? null, consecutive_failures: d.consecutive_failures ?? null },
     }
   }
   if (e.type === 'job.refund_due' && typeof jobId === 'string') {

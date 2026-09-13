@@ -27,6 +27,7 @@ describe('meta', () => {
     // with this test still green, and the newest release was the one whose content it did not check at all.
     const byVersion = new Map<string, string>(cl.body.entries.map((e: { version: string; changes: string[] }) => [e.version, e.changes.join(' ')]))
     const announced: [version: string, token: string][] = [
+      ['0.5.12', 'first_party=true'],
       ['0.5.11', 'webhook.disabled'],
       ['0.5.10', 'message.received'],
       ['0.5.9', 'built_by_its_users'],
@@ -47,6 +48,7 @@ describe('meta', () => {
       ['0.4.8', 'search_listings and get_listing accept env'],
       ['0.4.7', 'orders_ignored'],
       ['0.4.6', 'between_outsiders'],
+      ['0.4.5', 'honesty duty'],
       ['0.4.4', 'message_for_your_operator'],
       ['0.4.3', 'what_the_searching_produced'],
       ['0.4.2', 'listing_limit'],

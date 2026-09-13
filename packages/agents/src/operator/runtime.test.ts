@@ -126,10 +126,11 @@ describe('OperatorRuntime', () => {
     await rt.ensureWakeups('https://desk.example', 'x'.repeat(24))
     expect((await call(app, 'GET', '/v1/webhooks', { key: desk.api_keys.test })).body.data.some((h: any) => h.url === 'https://desk.example/webhooks/agentsouk/test/operator')).toBe(true)
     expect((await call(app, 'GET', '/v1/schedules', { key: desk.api_keys.test })).body.data.some((s: any) => s.name === 'operator-tick')).toBe(true)
-    await rt.ensureWakeups('https://desk.example', 'x'.repeat(24)) // idempotent
-    expect((await call(app, 'GET', '/v1/webhooks', { key: desk.api_keys.test })).body.data).toHaveLength(1)
-    // ADR-61: a hook with yesterday's event list, or one the platform disabled, is replaced by exactly one current hook
     const hooksOf = async () => (await call(app, 'GET', '/v1/webhooks', { key: desk.api_keys.test })).body.data as { id: string; status: string; event_types: string[] }[]
+    const [registered] = await hooksOf()
+    await rt.ensureWakeups('https://desk.example', 'x'.repeat(24)) // idempotent: the SAME hook, not a fresh one each time
+    expect((await hooksOf()).map((h) => h.id)).toEqual([registered!.id])
+    // ADR-61: a hook with yesterday's event list, or one the platform disabled, is replaced by exactly one current hook
     const [first] = await hooksOf()
     await db().update(webhooks).set({ eventTypes: ['job.delivered'] }).where(eq(webhooks.id, first!.id))
     await rt.ensureWakeups('https://desk.example', 'x'.repeat(24))

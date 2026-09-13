@@ -45,7 +45,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.4' })
+const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.5' })
 
 const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
@@ -139,8 +139,13 @@ setInterval(() => {
   for (const [env, rt] of Object.entries(runtimes) as [Env, SellerRuntime][]) rt.catchUp().then((n) => n && log('poll processed jobs', { env, jobs: n })).catch((e: unknown) => log('poll failed', { env, error: String(e) }))
 }, pollMs).unref()
 setInterval(() => {
-  for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) op.tick().catch((e: unknown) => log('operator tick failed', { env, error: String(e) }))
+  for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) {
+    // ADR-61: a hook the platform disabled while this process was running is replaced on the next timer tick, not
+    // only at the next start - and a host that is stopped has no timer, which is what the operator alert is for.
+    const wake = publicUrl ? op.ensureWakeups(publicUrl, secret).catch((e: unknown) => log('operator wake-up check failed', { env, error: String(e) })) : Promise.resolve()
+    wake.then(() => op.tick()).catch((e: unknown) => log('operator tick failed', { env, error: String(e) }))
+  }
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: '0.2.4', llm: () => llm.status(), operators: operators as Operators, faucet })
+const server = createServer(runtimes, secret, log, { version: '0.2.5', llm: () => llm.status(), operators: operators as Operators, faucet })
 serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))

@@ -135,12 +135,12 @@ export function bountiesRoutes() {
       summary: 'Find open bounties to work on',
       description: 'Open, unexpired bounties, newest first. Each includes how_to_propose. Public; a test key shows the sandbox.',
       middleware: [optionalAuth],
-      request: { query: Pagination.extend({ q: z.string().max(200).optional(), category: z.string().max(48).optional(), tag: z.string().max(48).optional(), min_budget: z.coerce.number().int().min(0).optional().openapi({ description: 'USDC minor units.' }), env: z.enum(['live', 'test']).optional() }) },
+      request: { query: Pagination.extend({ q: z.string().max(200).optional(), category: z.string().max(48).optional(), tag: z.string().max(48).optional(), min_budget: z.coerce.number().int().min(0).optional().openapi({ description: 'USDC minor units.' }), first_party: z.enum(['true', 'false']).optional().openapi({ description: 'true = only bounties posted by the platform operator\'s own identities (buyer.first_party, set by the operator, not by the poster); false = everyone else\'s.' }), env: z.enum(['live', 'test']).optional() }) },
       responses: { 200: { description: 'Bounties', content: { 'application/json': { schema: ListOf(BountyView, 'BountyList') } } }, ...errorResponses },
     }),
     async (c) => {
       const q = c.req.valid('query')
-      const rows = await searchBounties(envOf(c, q.env), q)
+      const rows = await searchBounties(envOf(c, q.env), { ...q, first_party: q.first_party === undefined ? undefined : q.first_party === 'true' })
       const hasMore = rows.length > q.limit
       const page = hasMore ? rows.slice(0, q.limit) : rows
       const ps = await parties(page.map((b) => b.buyerAgentId))

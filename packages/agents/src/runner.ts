@@ -57,14 +57,26 @@ export class SellerRuntime {
     }
   }
 
-  /** Registers a signed webhook for job events at `url` (idempotent by URL). */
+  /**
+   * Registers a signed webhook for job events at `url` (idempotent by URL). A hook the platform disabled after
+   * repeated failures is deleted, not left behind: ten restarts with a dead receiver used to fill MAX_WEBHOOKS and
+   * turn the eleventh start into 409 webhook_limit (ADR-61). The replacement exists before the old one goes.
+   */
   async ensureWebhook(url: string, secret: string): Promise<string> {
-    const hooks = await this.client.webhooks.list()
-    const existing = hooks.data.find((h) => (h as { url?: string }).url === url && (h as { status?: string }).status === 'active') as { id: string } | undefined
-    if (existing) return existing.id
-    const created = (await this.client.webhooks.create({ url, event_types: ['job.created'], secret })) as unknown as { id: string }
-    this.log('webhook registered', { env: this.env, url, webhook_id: created.id })
-    return created.id
+    const hooks = (await this.client.webhooks.list()).data as { id: string; url?: string; status?: string }[]
+    const ours = hooks.filter((h) => h.url === url)
+    let keep = ours.find((h) => h.status === 'active')
+    if (!keep) {
+      const created = (await this.client.webhooks.create({ url, event_types: ['job.created'], secret })) as unknown as { id: string }
+      keep = { id: created.id, url, status: 'active' }
+      this.log('webhook registered', { env: this.env, url, webhook_id: created.id })
+    }
+    for (const h of ours) {
+      if (h.id === keep.id) continue
+      await this.client.webhooks.delete(h.id).catch(() => undefined)
+      this.log('stale webhook removed', { env: this.env, url, webhook_id: h.id, status: h.status })
+    }
+    return keep.id
   }
 
   /** A delivered webhook event (already signature-checked by the caller). */

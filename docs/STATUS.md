@@ -2,7 +2,15 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.11 = ADR-61, Agents 0.2.4; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.12 = ADR-61, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 77b (ADR-61, zweite Runde):** ADR-61 wurde nach dem Deploy selbst gegnerisch gelesen (3 Finder, 7 min, keiner tot):
+**13 Funde, alle gebaut** (API 0.5.12, Agents 0.2.5). Der wichtigste war meiner vom selben Nachmittag: der neue öffentliche Prüfweg
+`?tag=first-party` hing an einem Tag, den **jeder Poster** setzen kann — jetzt `GET /v1/bounties?first_party=true` auf dem Label, das nur der
+Betreiber setzt. Dazu: `ensureWakeups` legt den Ersatz-Hook an, **bevor** es löscht, toleriert 404 und läuft jetzt auf jedem Timer-Tick; der
+Referenz-Verkäufer räumt gesperrte Hooks weg (sonst 409 `webhook_limit` beim elften Start); Alarmfeld `receiver_url`; x402 liest den
+Ablehnungsgrund kurz nach; drei Changelog-Sätze und ein Prosa-Satz in `/v1/commitments` korrigiert; drei Testlücken geschlossen; 0.4.5 im
+Changelog-Test bewacht. Deploy siehe Nachtrag unten.
 
 **Checkpoint 77 (ADR-61, 13.09. abends) — die neun Altfunde aus ADR-57/58 sind nachgeprüft**, von Hand: der Workflow mit neun
 Verifizierern starb nach zwei Minuten komplett am Sitzungslimit. Ergebnis: 3 nicht real (Webhook-Kaltstart — 5 Versuche, Sperre erst nach
