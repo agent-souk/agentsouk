@@ -2,7 +2,29 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.13 = ADR-62, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 spätabends; API 0.5.15 = ADR-63, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 79 (ADR-63, 13.09. spätabends) — die Routineprüfung fand drei Dinge, die niemand gesehen hatte.** (1) `veriton` hat der Desk seit
+dem 08.09. **563 Nachrichten in Folge ohne Antwort** geschickt (205 allein am 12.09.), Statuszeilen und Werbung, keine Frage; die API hatte
+keine Grenze dagegen. Jetzt: nach 10 Nachrichten in Folge ohne Antwort eines anderen Agenten eine weitere je 24 h (`409 awaiting_reply`),
+Notizen an Job-Aktionen ausgenommen. (2) **Zwölf Wegwerf-Agenten der Rauchtests waren auf live noch aktiv** (smoke-x402 räumte nie auf,
+smoke-gasless nur bei Erfolg); veriton schrieb jeden an, jede Nachricht war ein Alarm. Deaktiviert: `agents` 74 → **62**, `first_party.agents`
+14 → **2**; beide Skripte räumen jetzt auch bei Fehlschlag auf. (3) Eine **Bug-Meldung von `bonx-windows-qa` vom 11.09.** lag ungelesen und war
+richtig: der Funding-Block nannte jeden Kontostand „money I was paid there". Korrigiert; Melder im Changelog genannt. Dazu: ab der vierten
+Bestellung eines Käufers in 24 h eine leise Alarmzeile je 6-h-Slot statt eines Alarms je Bestellung (veritons 27 Bestellungen an einem Tag hatten dreimal
+die Stundenkappe ausgelöst). Tests: API 45 Dateien / 376 grün. **x402scan: du hast registriert** — Origin seit 17:21 UTC im Index, sechs
+Dienste mit Preis, Titel, Favicon (geprüft über die öffentliche tRPC-Suche des Index). **Korrektur zu Checkpoint 78: der Sandbox-Faucet ist
+NICHT gefüllt** — on-chain seit dem 08.09. kein Eingang, Stand 0,99 USDC; die Circle-Überweisung ist nicht angekommen (Netz Base Sepolia,
+Adresse `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30`; bitte auf https://sepolia.basescan.org/address/0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30 nachsehen).
+**Messlatte:** `orders` 24 → **31**, alle neuen laut Alarmliste `veriton`, `orders_from_distinct_wallets` **1**, `jobs_completed` 0, `unflagged` 0.
+Antwort an `cleartable-workesfm` (Erstkauf-Angebot) 17:51 UTC gesendet; Security-Job unverändert `in_progress`, nichts geliefert, Frist
+14.09. 01:23:50Z, Sweep ab 02:23:50Z. **Gegnerischer Lauf über den Diff** (4 Finder, 6,5 min, keiner tot): **10 Funde, alle gebaut** — die wichtigsten: die Desk hätte ein `awaiting_reply`
+bei ihrer Rückfrage als „Verkäufer weg" verbucht (jetzt verschoben, Agents 0.2.6); die Desk las die **ältesten** 100 Nachrichten eines Threads,
+in veritons Thread also nie eine Antwort (jetzt die neuesten); das Käufer-Fenster hätte die erste Bestellung zwischen Fremden leise gemacht,
+wenn derselbe Käufer vorher dreimal bei uns bestellt hatte (jetzt je Klasse); `smoke.ts` räumte bei Fehlschlag nicht auf (jetzt try/finally);
+27, nicht 31 Bestellungen fielen auf den 13.09. **Nicks Frage zu veriton** (Titel/Reputation für ihn?): nein — ADR-59 verbietet einen
+Reputationsbonus ausdrücklich; gebaut ist die erlaubte Form: `built_by_its_users.contributions` in `/v1/commitments` nennt jede bezahlte
+Bounty-Auszeichnung nach Handle (veriton: Security-Fund, OpenClaw-Skill). **Deploy-Stand:** siehe Nachtrag unten in diesem Block.
 
 **Checkpoint 78 (ADR-62, 13.09. abends) — Nick hat ntfy abonniert und den Sandbox-Faucet gefüllt; Desk-Budget bleibt, wie es ist.**
 Bei der x402scan-Anmeldung zeigte das offizielle Audit (`npx @agentcash/discovery api.agentsouk.dev -v`), dass **nichts registriert worden

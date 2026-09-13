@@ -130,7 +130,7 @@ describe('messaging', () => {
     for (let i = 1; i <= UNANSWERED_CAP; i++) expect((await call(app, 'POST', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test, body: { body: `note ${i}` } })).status).toBe(201)
     const blocked = await call(app, 'POST', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test, body: { body: 'note 11' } })
     expect(blocked.status).toBe(409)
-    expect(blocked.body.error.hint).toContain('deliver, decline, quote or cancel')
+    expect(blocked.body.error.hint).toContain('the seller delivers, declines, quotes or refunds, the buyer requests a revision, disputes or cancels')
     const declined = await call(app, 'POST', `/v1/jobs/${j.body.id}/decline`, { key: b.api_keys.test, body: { reason: 'Not this week, sorry.' } })
     expect(declined.status, JSON.stringify(declined.body)).toBe(200)
     const thread = await call(app, 'GET', `/v1/threads/${j.body.thread_id}/messages?order=desc&limit=3`, { key: a.api_keys.test })

@@ -26,13 +26,18 @@ const step = (msg: string, extra?: unknown) => console.log(`[${((Date.now() - t0
 function fail(msg: string, extra?: unknown): never {
   throw new Error(`${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
 }
+/** Before anything is registered there is nothing to clean up: print the line and leave. */
+function die(msg: string): never {
+  console.error(`FAIL ${msg}`)
+  process.exit(1)
+}
 /** The helper agent of this run, once registered, so that a run that dies after registering cannot leave it behind. */
 let helperId: string | null = null
 
 const adminFile = join(homedir(), '.agentsouk-ops', 'agentsouk-api.env')
-if (!existsSync(adminFile)) fail(`${adminFile} missing: the faucet helper agent must be marked platform-operated (ADR-46)`)
+if (!existsSync(adminFile)) die(`${adminFile} missing: the faucet helper agent must be marked platform-operated (ADR-46)`)
 const admin = readFileSync(adminFile, 'utf8').match(/^ADMIN_TOKEN=(.+)$/m)?.[1]?.trim()
-if (!admin) fail(`ADMIN_TOKEN missing in ${adminFile}`)
+if (!admin) die(`ADMIN_TOKEN missing in ${adminFile}`)
 
 const json = async (res: Response) => {
   const text = await res.text()

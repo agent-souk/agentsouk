@@ -561,8 +561,15 @@ export class OperatorRuntime {
       } catch (e) {
         const status = statusOf(e)
         if (status == null || status >= 500) throw e
-        rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: null } // e.g. the seller is gone; do not retry every tick
-        this.log('proposal clarification could not be sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, error: msg(e) })
+        if (errorCode(e) === 'awaiting_reply') {
+          // ADR-63: the API takes no more from the desk in this thread until the seller writes or a day passes. The seller is
+          // there, it just has not answered the desk's earlier messages - so nothing is remembered as asked, and the question
+          // goes out on a later tick, once the thread takes it, instead of being dropped as if the seller were gone.
+          this.log('proposal clarification deferred: the seller has not answered the desk\'s earlier messages in this thread', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle })
+        } else {
+          rec = { ...rec, asked_at: new Date(this.now()).toISOString(), thread_id: null } // e.g. the seller is gone; do not retry every tick
+          this.log('proposal clarification could not be sent', { env: this.env, key: spec.key, proposal_id: p.id, seller: p.seller.handle, error: msg(e) })
+        }
       }
       await remember(rec)
     } else if (!rec.informed_at && !rec.asked_at) {
@@ -585,10 +592,16 @@ export class OperatorRuntime {
     return rec
   }
 
-  /** What the seller wrote in the direct thread after the desk's question (bodies joined, bounded), or null. */
+  /**
+   * What the seller wrote in the direct thread after the desk's question (bodies joined, bounded), or null. Read from the
+   * newest end: until 0.2.6 this took the OLDEST hundred messages, and in a thread a seller had flooded with five hundred
+   * status lines its answer to the desk's question sat past that page and was never read (ADR-63 audit).
+   */
   private async sellerReplySince(threadId: string, sellerId: string, since: string): Promise<string | null> {
-    const res = await this.client.threads.messages(threadId, { order: 'asc', limit: 100 }).catch(() => null)
-    const items = ((res as { data?: { sender?: { id?: string }; body?: string; created_at?: string }[] } | null)?.data ?? []).filter((m) => m.sender?.id === sellerId && typeof m.created_at === 'string' && m.created_at > since && typeof m.body === 'string' && m.body.trim())
+    const res = await this.client.threads.messages(threadId, { order: 'desc', limit: 100 }).catch(() => null)
+    const items = ((res as { data?: { sender?: { id?: string }; body?: string; created_at?: string }[] } | null)?.data ?? [])
+      .filter((m) => m.sender?.id === sellerId && typeof m.created_at === 'string' && m.created_at > since && typeof m.body === 'string' && m.body.trim())
+      .reverse()
     if (!items.length) return null
     return items
       .map((m) => m.body!.trim())
@@ -1106,11 +1119,11 @@ export class OperatorRuntime {
     return payBy - this.now() < margin
   }
 
-  /** What the seller wrote in the job thread (oldest first); platform notices and our own messages are skipped. */
+  /** What the seller wrote in the job thread (the newest hundred messages, oldest first); platform notices and our own messages are skipped. */
   private async sellerNotes(job: Job): Promise<{ count: number; text: string | null }> {
     if (!job.thread_id) return { count: 0, text: null }
-    const res = await this.client.threads.messages(job.thread_id, { order: 'asc', limit: 100 }).catch(() => null)
-    const theirs = (res?.data ?? []).filter((m) => (m as { sender?: { id?: string } }).sender?.id === job.seller.id && typeof (m as { body?: unknown }).body === 'string') as { body: string; created_at: string }[]
+    const res = await this.client.threads.messages(job.thread_id, { order: 'desc', limit: 100 }).catch(() => null)
+    const theirs = ((res?.data ?? []).filter((m) => (m as { sender?: { id?: string } }).sender?.id === job.seller.id && typeof (m as { body?: unknown }).body === 'string') as { body: string; created_at: string }[]).reverse()
     if (!theirs.length) return { count: 0, text: null }
     return { count: theirs.length, text: theirs.map((m) => `[${m.created_at}] ${m.body}`).join('\n').slice(-6000) }
   }

@@ -334,11 +334,34 @@ describe('what is worth waking the operator (ADR-49)', () => {
     // the fourth and fifth share one quiet line for the slot, which names the count at the time it was written
     expect(again).toHaveLength(1)
     expect(again[0]!.tier).toBe('quiet')
-    expect(again[0]!.title).toBe(`${buyer.agent.handle} keeps ordering: 4 orders in 24 h, 0 paid (test)`)
+    expect(again[0]!.title).toBe(`${buyer.agent.handle} keeps ordering between outsiders: 4 orders in 24 h, 0 paid (test)`)
     const row = (await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, again[0]!.key) }))!
     expect((row.data as { orders_24h: number; paid_24h: number }).orders_24h).toBe(4)
     expect((row.data as { orders_24h: number; paid_24h: number }).paid_24h).toBe(0)
     expect(row.body).toContain('a payment still alerts on its own')
+  })
+
+  it('three orders at our own desk do not demote a buyer\'s first order between outsiders (ADR-63 audit)', async () => {
+    const ours = await createTestAgent(app, { name: 'Our Desk Seller' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, ours.agent.id))
+    const list = async (who: TestAgent) => {
+      const l = await call(app, 'POST', '/v1/listings', { key: who.api_keys.test, body: { title: 'A real service', description: 'Does something a buyer cannot do alone in a minute.', category: 'ops', pricing_model: 'fixed', price: 250_000 } })
+      expect(l.status).toBe(201)
+      return l.body.id as string
+    }
+    const atOurs = await list(ours)
+    const atOutsider = await list(seller)
+    for (let i = 0; i < 3; i++) expect((await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: atOurs, input: { i } } })).status).toBe(201)
+    const first = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: atOutsider, input: { x: 1 } } })
+    expect(first.status).toBe(201)
+    const rows = await recentAlerts()
+    // the three orders at our desk were quiet 'ordered from us' rows; the first between outsiders is the notable one
+    expect(rows.filter((a) => a.key.startsWith('ordered:') && a.title === 'An outside agent ordered from us (test)')).toHaveLength(3)
+    const mine = rows.find((a) => a.key === `ordered:${first.body.id}`)!
+    expect(mine).toBeDefined()
+    expect(mine.tier).toBe('notable')
+    expect(mine.title).toBe('An outsider ordered from an outsider (test)')
+    expect(rows.some((a) => a.key.startsWith('ordered-again:'))).toBe(false)
   })
 
   it('reserves urgent for real money: the same payment on live', () => {

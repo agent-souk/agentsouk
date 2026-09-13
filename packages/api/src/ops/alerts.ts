@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, ne, notLike, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, lt, lte, notLike, or, sql } from 'drizzle-orm'
 import { db } from '../db/client.js'
 import { agents, jobs, messages, operatorAlerts, settlements, type AlertTier, type Env } from '../db/schema.js'
 import { config } from '../config.js'
@@ -271,8 +271,9 @@ export const ORDER_ALERT_SLOT_MS = 6 * 3_600_000
 /**
  * An order placed with us on neither side: no money yet, and still the widest mouth of the funnel (ADR-46).
  *
- * ADR-63: one buyer ordering all day is one fact, not one alert per order. On 2026-09-13 a single agent placed 31
- * orders on live (18 in one morning, at eleven different sellers), cancelled most of them itself, and the hourly cap
+ * ADR-63: one buyer ordering all day is one fact, not one alert per order. On 2026-09-13 a single agent placed 27
+ * orders on live in one day (31 in all; 18 of them in one morning, at eleven different sellers), cancelled most of
+ * them itself, and the hourly cap
  * held back the alerts that mattered behind them - three times that day the operator was told "the rest are queued".
  * The first orders of a buyer in a day alert one by one; from the fourth on, one quiet line per six-hour slot says how
  * many and how many were paid. Ordering is free; a payment still alerts on its own, whatever this says.
@@ -280,10 +281,21 @@ export const ORDER_ALERT_SLOT_MS = 6 * 3_600_000
 export async function classifyOrder(f: JobFacts, now = Date.now()): Promise<AlertDraft | null> {
   if (f.job.firstPartyInvolved !== false && !(f.seller?.firstParty && !f.buyer?.firstParty)) return null
   const outsiders = f.job.firstPartyInvolved === false
+  // Only orders of the same kind as this one: three orders at OUR desk must not demote a buyer's first order between
+  // outsiders - that one is the figure, and at the default minimum tier a quiet row is not even written. Orders in the
+  // same millisecond are ordered by id, so no two of them count each other (both from the audit of this change).
   const [earlier] = await db()
     .select({ n: sql<number>`count(*)`, paid: sql<number>`coalesce(sum(case when ${jobs.paidAt} is not null then 1 else 0 end), 0)` })
     .from(jobs)
-    .where(and(eq(jobs.env, f.job.env), eq(jobs.buyerAgentId, f.job.buyerAgentId), ne(jobs.id, f.job.id), gte(jobs.createdAt, now - 24 * 3_600_000), lte(jobs.createdAt, f.job.createdAt)))
+    .where(
+      and(
+        eq(jobs.env, f.job.env),
+        eq(jobs.buyerAgentId, f.job.buyerAgentId),
+        eq(jobs.firstPartyInvolved, f.job.firstPartyInvolved),
+        gte(jobs.createdAt, now - 24 * 3_600_000),
+        or(lt(jobs.createdAt, f.job.createdAt), and(eq(jobs.createdAt, f.job.createdAt), lt(jobs.id, f.job.id))),
+      ),
+    )
   const nth = (earlier?.n ?? 0) + 1
   const paid = earlier?.paid ?? 0
   const common = {
@@ -295,8 +307,8 @@ export async function classifyOrder(f: JobFacts, now = Date.now()): Promise<Aler
     return {
       ...common,
       tier: 'quiet',
-      key: `ordered-again:${f.job.env}:${f.job.buyerAgentId}:${Math.floor(now / ORDER_ALERT_SLOT_MS)}`,
-      title: `${f.buyer?.handle ?? f.job.buyerAgentId} keeps ordering: ${nth} orders in 24 h, ${paid} paid (${f.job.env})`,
+      key: `ordered-again:${f.job.env}:${f.job.buyerAgentId}:${outsiders ? 'outsiders' : 'desk'}:${Math.floor(now / ORDER_ALERT_SLOT_MS)}`,
+      title: `${f.buyer?.handle ?? f.job.buyerAgentId} keeps ordering ${outsiders ? 'between outsiders' : 'from us'}: ${nth} orders in 24 h, ${paid} paid (${f.job.env})`,
       body: [
         jobLine(f),
         '',

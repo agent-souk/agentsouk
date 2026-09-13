@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { APP_VERSION } from '../../version.js'
-import { freshApp, call, createTestAgent } from '../../test/setup.js'
+import { eq } from 'drizzle-orm'
+import { freshApp, call, createTestAgent, type TestAgent } from '../../test/setup.js'
+import { installFakeChain } from '../../test/chain.js'
+import { db } from '../../db/client.js'
+import { agents } from '../../db/schema.js'
 import { _setConfigForTests } from '../../config.js'
 import { generateKeyPair, canonicalJson, sign } from '../../lib/crypto.js'
 import { jwkThumbprint } from '../../lib/server-keys.js'
@@ -92,6 +96,37 @@ describe('meta', () => {
     const unknownRef = await createTestAgent(app, { name: 'Lost', referred_by: 'nobody-here' })
     expect((await call(app, 'GET', '/v1/agents/me', { key: unknownRef.api_keys.test })).body.referred_by).toBeNull()
   })
+  it('names who built what: the bounty awards the desk has paid, by handle, from the jobs themselves - never a score (ADR-63)', async () => {
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const finder = await createTestAgent(app, { name: 'Finder' })
+    const other = await createTestAgent(app, { name: 'Other Buyer' })
+    const award = async (buyer: TestAgent, seller: TestAgent, title: string) => {
+      const b = await call(app, 'POST', '/v1/bounties', { key: buyer.api_keys.test, body: { title, description: 'Find a reproducible flaw in the API and hand over the exact steps.', budget_max: 5_000_000, category: 'ops' } })
+      expect(b.status, JSON.stringify(b.body)).toBe(201)
+      const p = await call(app, 'POST', `/v1/bounties/${b.body.id}/proposals`, { key: seller.api_keys.test, body: { price: 3_500_000, message: 'On it.' } })
+      expect(p.status, JSON.stringify(p.body)).toBe(201)
+      const a = await call(app, 'POST', `/v1/bounties/${b.body.id}/award`, { key: buyer.api_keys.test, body: { proposal_id: p.body.id, turnaround_seconds: 600 } })
+      expect(a.status, JSON.stringify(a.body)).toBe(200)
+      const jobId = a.body.job.id as string
+      expect((await call(app, 'POST', `/v1/jobs/${jobId}/deliver`, { key: seller.api_keys.test, body: { output: { steps: ['a'] } } })).status).toBe(200)
+      return { bountyId: b.body.id as string, jobId, title: a.body.job.title as string }
+    }
+    const paidOne = await award(desk, finder, 'Security finding')
+    const paid = await call(app, 'POST', `/v1/jobs/${paidOne.jobId}/pay`, { key: desk.api_keys.test, body: { transaction: chain.pay(desk.wallet_address!, finder.wallet_address!, 3_500_000) } })
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200)
+    await award(desk, finder, 'Delivered, never paid') // an unpaid award is not a contribution yet
+    const outsiders = await award(other, finder, 'Between outsiders') // an outsider's bounty is that outsider's business
+    expect((await call(app, 'POST', `/v1/jobs/${outsiders.jobId}/pay`, { key: other.api_keys.test, body: { transaction: chain.pay(other.wallet_address!, finder.wallet_address!, 3_500_000) } })).status).toBe(200)
+    const d = (await call(app, 'GET', '/v1/commitments?env=test')).body
+    const c = d.built_by_its_users.contributions
+    expect(c.meaning).toContain('not a score')
+    expect(c.paid_bounty_awards).toEqual([{ handle: finder.agent.handle, agent_id: finder.agent.id, awards: [{ title: paidOne.title, bounty_id: paidOne.bountyId, job_id: paidOne.jobId, paid_at: expect.any(String), amount_usdc: '3.500000 USDC' }] }])
+    expect(d.built_by_its_users.today).toContain('contributions')
+    expect((await call(app, 'GET', '/v1/commitments?env=live')).body.built_by_its_users.contributions.paid_bounty_awards).toEqual([])
+  })
+
   it('publishes the commitments document: verifiable claims, the operator agents with wallets, the stats, no licence (ADR-32)', async () => {
     _setConfigForTests({ ADMIN_TOKEN: 'adm-token-1234567890' })
     try {

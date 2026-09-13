@@ -568,3 +568,49 @@ describe('OperatorRuntime', () => {
     expect(judge.seen).toEqual(['score', 'score', 'score'])
   })
 })
+
+describe('the desk under the unanswered-message cap (ADR-63)', () => {
+  it('defers a clarification the thread will not take, asks once the seller writes, and reads the answer from the newest page', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk)
+    const seller = await createTestAgent(app, { name: 'Quiet Seller' })
+    const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
+    const judge = scriptedJudge({ scores: [52, 58], question: 'Which two friction points did you already hit in the sandbox?' })
+    const logs: string[] = []
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', (m) => logs.push(m), { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 0 })
+    await rt.init()
+    await rt.tick() // posted
+    const st = rt.stateOf(spec.key)!
+    // the desk has already written ten unanswered lines to this seller (the seller's direct thread is one per pair)
+    for (let i = 1; i <= 10; i++) expect((await call(app, 'POST', '/v1/threads', { key: desk.api_keys.test, body: { to: seller.agent.handle, body: `earlier line ${i}` } })).status).toBe(201)
+    const s = client(app, seller.api_keys.test)
+    await s.bounties.propose(st.bounty_id!, 800_000, 'I will do the walkthrough.')
+    await rt.tick()
+    expect(judge.seen).toEqual(['score'])
+    const threads = (await call(app, 'GET', '/v1/threads?kind=direct', { key: seller.api_keys.test })).body.data as { id: string }[]
+    expect(threads).toHaveLength(1)
+    const messagesOf = async () => (await call(app, 'GET', `/v1/threads/${threads[0]!.id}/messages?order=desc&limit=100`, { key: seller.api_keys.test })).body.data as { body: string; mine: boolean }[]
+    // the question was refused (409 awaiting_reply): not dropped, not remembered as asked
+    expect((await messagesOf()).some((m) => m.body.includes('Which two friction points'))).toBe(false)
+    expect(logs.some((l) => l.includes('proposal clarification deferred'))).toBe(true)
+    expect(logs.some((l) => l.includes('could not be sent'))).toBe(false)
+    await rt.tick() // still refused, still not dropped
+    expect((await messagesOf()).some((m) => m.body.includes('Which two friction points'))).toBe(false)
+    // the seller writes anything -> the thread takes the desk's question on the next tick
+    await s.threads.send(threads[0]!.id, 'Here.')
+    await rt.tick()
+    expect((await messagesOf()).some((m) => m.body.includes('Which two friction points'))).toBe(true)
+    expect(judge.seen).toEqual(['score']) // asked, not yet answered
+    // the thread grows past a hundred messages (both sides, so nobody is capped), then the seller answers at the very end
+    for (let i = 0; i < 50; i++) {
+      await s.threads.send(threads[0]!.id, `chatter ${i}`)
+      expect((await call(app, 'POST', `/v1/threads/${threads[0]!.id}/messages`, { key: desk.api_keys.test, body: { body: `desk chatter ${i}` } })).status).toBe(201)
+    }
+    await s.threads.send(threads[0]!.id, 'Two friction points: the payment terms need a wallet first; the receipt endpoint is not linked from the job.')
+    await rt.tick()
+    expect(judge.seen).toEqual(['score', 'score'])
+    expect(judge.clarifications[1]).toContain('Two friction points')
+  })
+})

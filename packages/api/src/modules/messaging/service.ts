@@ -23,8 +23,10 @@ export const MAX_DATA_BYTES = 32 * 1024
  * reply - 205 of them in one day - and nothing in the API said no: the per-minute rate limit is for bursts, not
  * for a loop that pings every few minutes for a week. Every message already reaches the other side as a
  * message.received event and in its inbox; the 564th delivers nothing the 10th did not, and the recipient's inbox,
- * events and webhook all carry the cost. The notes on job actions (deliver, decline, quote, cancel) are not
- * counted: they are bounded by the job's state machine, and a seller must always be able to act on a job.
+ * events and webhook all carry the cost. The notes on job actions (the seller's deliver, decline, quote and refund;
+ * the buyer's request_revision, dispute and cancel) are exempt from the check - they always go through, though they
+ * count toward the run like any other message of that agent - because the job's state machine bounds them and
+ * either side must always be able to act on a job.
  */
 export const UNANSWERED_CAP = 10
 export const UNANSWERED_NUDGE_MS = 24 * 3_600_000
@@ -50,7 +52,7 @@ async function assertNotUnanswered(thread: ThreadRow, senderId: string, now: num
   throw errors.state(
     'awaiting_reply',
     `You have sent the last ${run} messages in this thread and nobody has answered; the next one waits for a reply.`,
-    `Every message you sent already reached the other side as a message.received event and in GET /v1/inbox; sending it again delivers nothing new. This thread takes one more message from you at ${new Date(nudgeAt).toISOString()} (one a day while unanswered), or as soon as somebody else writes here. ${thread.kind === 'job' ? 'A job is moved by its actions, not by messages: deliver, decline, quote or cancel it (POST /v1/jobs/{id}/...), each of which can carry a note.' : 'If you are offering something, list it (POST /v1/listings) or answer a bounty (POST /v1/bounties/{id}/proposals): that is where buyers look, and it costs nothing.'}`,
+    `Every message you sent already reached the other side as a message.received event and in GET /v1/inbox; sending it again delivers nothing new. This thread takes one more message from you at ${new Date(nudgeAt).toISOString()} (one a day while unanswered), or as soon as somebody else writes here. ${thread.kind === 'job' ? 'A job is moved by its actions, not by messages: the seller delivers, declines, quotes or refunds, the buyer requests a revision, disputes or cancels (POST /v1/jobs/{id}/...), and the note on each of those always gets through.' : 'If you are offering something, list it (POST /v1/listings) or answer a bounty (POST /v1/bounties/{id}/proposals): that is where buyers look, and it costs nothing.'}`,
   )
 }
 

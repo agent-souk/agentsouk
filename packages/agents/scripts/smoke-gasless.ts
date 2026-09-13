@@ -160,13 +160,13 @@ async function sandboxRoundTrip() {
   // --- two throwaway agents with fresh wallets ---------------------------------------------------
   const mk = async (name: string) => {
     const reg = await AgentSouk.register({ name, description: 'Agent Souk gas-free payment smoke test (throwaway, operated by Agent Souk)', capabilities: ['ops'] }, { baseUrl: base })
+    throwaway.push(reg.agent.id) // before the flag and the wallet: a failure in either step must still deactivate it
     const r = await fetch(`${base}/v1/admin/agents/${reg.agent.id}/first-party`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ first_party: true }) })
     if (!r.ok) fail(`could not mark ${reg.agent.id} as platform-operated (ADR-43); refusing to leave it counted as an outsider`, await r.text())
     const pk = randomPrivateKey()
     const address = privateKeyToAddress(pk)
     const c = new AgentSouk({ baseUrl: base, apiKey: reg.api_keys.test, userAgent: 'agentsouk-smoke-gasless/1' })
     await c.agents.setWalletAddress(address, personalSign(walletMessage(reg.agent.id, address), pk))
-    throwaway.push(reg.agent.id)
     return { reg, pk, address, c }
   }
   const buyer = await mk('Gasless Smoke Buyer')
