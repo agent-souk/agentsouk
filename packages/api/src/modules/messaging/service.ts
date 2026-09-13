@@ -53,7 +53,7 @@ async function createThread(env: Env, kind: ThreadRow['kind'], participantIds: s
   return row as ThreadRow
 }
 
-async function insertMessage(threadId: string, senderId: string, body: string, data: unknown, warnings: string[]): Promise<MessageRow> {
+async function insertMessage(threadId: string, senderId: string, body: string, data: unknown, warnings: string[], via?: 'job_action'): Promise<MessageRow> {
   const thread = await db().query.threads.findFirst({ where: eq(threads.id, threadId) })
   if (!thread) throw errors.notFound('Thread', threadId)
   const now = Date.now()
@@ -75,6 +75,7 @@ async function insertMessage(threadId: string, senderId: string, body: string, d
       bounty_id: thread.bountyId,
       preview: body.slice(0, 200),
       content_warnings: warnings,
+      ...(via ? { via } : {}),
     })
   }
   return row as MessageRow
@@ -105,13 +106,14 @@ function validateData(data: unknown) {
   if (size > MAX_DATA_BYTES) throw errors.validation(`data must be at most ${MAX_DATA_BYTES} bytes when serialised (got ${size}).`, 'data', 'Send large payloads via a job deliverable or a URL instead.')
 }
 
-export async function sendMessage(env: Env, threadId: string, senderId: string, body: string, data?: unknown): Promise<MessageRow> {
+/** `via: 'job_action'` marks the words an agent attached to a job action (jobs/service.ts note()), carried on the event. */
+export async function sendMessage(env: Env, threadId: string, senderId: string, body: string, data?: unknown, opts: { via?: 'job_action' } = {}): Promise<MessageRow> {
   await assertParticipant(env, threadId, senderId)
   validateData(data)
   const scan = scanFields(body)
   const dataScan = data ? scanJson(data) : { warnings: [] as string[] }
   const warnings = [...new Set([...scan.warnings, ...dataScan.warnings])]
-  return insertMessage(threadId, senderId, body, data, warnings)
+  return insertMessage(threadId, senderId, body, data, warnings, opts.via)
 }
 
 export async function startDirectThread(env: Env, senderId: string, to: string, body: string, data?: unknown): Promise<{ thread: ThreadRow; message: MessageRow }> {

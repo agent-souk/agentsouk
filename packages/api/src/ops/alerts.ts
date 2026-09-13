@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lte, notLike, sql } from 'drizzle-orm'
 import { db } from '../db/client.js'
-import { agents, jobs, operatorAlerts, settlements, type AlertTier, type Env } from '../db/schema.js'
+import { agents, jobs, messages, operatorAlerts, settlements, type AlertTier, type Env } from '../db/schema.js'
 import { config } from '../config.js'
 import { newId } from '../lib/ids.js'
 import { log } from '../lib/log.js'
@@ -63,6 +63,14 @@ export const SUPPRESSED = {
 /** The summary that says alerts are being held back must never itself be held back. */
 const bypassesCap = (row: { tier: AlertTier; key: string }) => row.tier === 'urgent' || row.key.startsWith('flood:')
 
+/**
+ * A quiet row may use only half of the hourly cap (ADR-60). Quiet rows can be produced by anyone for free - an
+ * outsider's message to our desk, an order placed with one of our listings - and rows already delivered fill the
+ * rolling hour whatever their tier, so without headroom a dozen of them would hold back the next notable alert
+ * (the first order between outsiders, an escalated dispute) and, kept up for six hours, give it up.
+ */
+const capFor = (row: { tier: AlertTier }, cap: number) => (row.tier === 'quiet' ? Math.max(1, Math.floor(cap / 2)) : cap)
+
 const TIER_ORDER: Record<AlertTier, number> = { urgent: 3, notable: 2, quiet: 1 }
 
 export type AlertDraft = {
@@ -114,7 +122,7 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
       .select({ n: sql<number>`count(*)` })
       .from(operatorAlerts)
       .where(and(eq(operatorAlerts.env, draft.env), gte(operatorAlerts.sentAt, now - 3600_000), notLike(operatorAlerts.key, 'flood:%')))
-    flooded = (delivered[0]?.n ?? 0) >= cap
+    flooded = (delivered[0]?.n ?? 0) >= capFor(draft, cap)
   }
   // Held back, not dropped: the row stays pending and comes round again when the rolling hour has room.
   const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now)
@@ -274,6 +282,63 @@ export function classifyOrder(f: JobFacts): AlertDraft | null {
   }
 }
 
+/** One alert per thread per window: a seller asking three questions in a row is one thing to read, not three. */
+export const MESSAGE_ALERT_WINDOW_MS = 6 * 3_600_000
+
+/**
+ * An outside agent writing to one of OUR identities (ADR-60). The bounty desk told every awarded seller "questions
+ * are answered in this thread", and nothing answers a question a seller asks on its own initiative: the desks
+ * re-read a seller's messages only where they asked something themselves (a proposal clarification, a preview
+ * that misses something). On 2026-09-13 the seller holding the 10 USDC security award asked, before its deadline,
+ * whether a report without reproduction steps would qualify, and waited twelve hours, because nothing woke anyone.
+ * `message.received` is emitted once per recipient, so the recipient of THIS event has to be ours; the sender must not be.
+ */
+async function classifyMessage(e: EventRecord): Promise<AlertDraft | null> {
+  const d = e.data as { thread_id?: unknown; message_id?: unknown; from?: unknown; job_id?: unknown; preview?: unknown; via?: unknown }
+  if (typeof d.thread_id !== 'string' || typeof d.from !== 'string') return null
+  // The words an agent attaches to a job action (a delivery note, a decline or cancel reason, a quote) are posted as
+  // its message too. They are a status line the desk reads with the action, not a question.
+  if (d.via === 'job_action') return null
+  const people = await db().query.agents.findMany({ where: inArray(agents.id, [e.agentId, d.from]), columns: { id: true, handle: true, firstParty: true } })
+  const to = people.find((a) => a.id === e.agentId)
+  const from = people.find((a) => a.id === d.from) // a system note has no agent behind it and is not a question
+  if (!to?.firstParty || !from || from.firstParty) return null
+  const job = typeof d.job_id === 'string' ? await db().query.jobs.findFirst({ where: eq(jobs.id, d.job_id) }) : null
+  // Set by our own desk when it awards a bounty; no outsider can create a job that carries it on our side.
+  const waitsOnOperator = job?.buyerAgentId === to.id && (job.input as { operator_confirmation_before_payment?: unknown } | null)?.operator_confirmation_before_payment === true
+  // A follow-up after one of ours has answered is a new question: the window restarts at our newest message here.
+  const ours = await db()
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(agents, eq(agents.id, messages.senderAgentId))
+    .where(and(eq(messages.threadId, d.thread_id), eq(agents.firstParty, true)))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .limit(1)
+  const deadline = job?.deadlineAt ? new Date(job.deadlineAt).toISOString() : null
+  return {
+    env: e.env,
+    // Registering and writing to our desk costs nothing, so an ordinary message must not compete under the hourly cap
+    // with the alerts that matter: quiet rows go out after every notable one. Only a job already waiting on the
+    // operator is notable on live - and never urgent, a question is worth reading today, not a phone at night.
+    tier: waitsOnOperator && e.env === 'live' ? 'notable' : 'quiet',
+    key: `message:${d.thread_id}:${ours[0]?.id ?? 'start'}:${Math.floor(e.createdAt / MESSAGE_ALERT_WINDOW_MS)}`,
+    title: `${from.handle} wrote to ${to.handle} (${e.env})`,
+    body: [
+      job ? `${from.handle} on "${job.title}" (${job.status}${deadline ? `, deliver by ${deadline}` : ''})` : `${from.handle} in a direct thread`,
+      '',
+      // Never the words themselves. This text leaves the platform for a push service, and a seller writing to a desk can be
+      // discussing an unfixed security finding in ANY thread - the job thread, the direct thread of a proposal question,
+      // A2A - not only in the job that carries the operator flag (second audit round, ADR-60). It is also untrusted text
+      // in the one channel the operator trusts.
+      'The message text is not copied into alerts. Read it in the thread.',
+      '',
+      `Nothing answers a question a seller asks on its own initiative; the desks re-read replies only where they asked something themselves, so look at the thread before answering: GET ${base()}/v1/threads/${d.thread_id}/messages with the ${to.handle} key, reply with POST to the same path.${waitsOnOperator ? ' This job pays only after the operator confirms it.' : ''} More messages here do not alert again until one of our identities writes in this thread or the next six-hour UTC slot begins.`,
+    ].join('\n'),
+    url: `${base()}/v1/threads/${d.thread_id}/messages`,
+    data: { thread_id: d.thread_id, message_id: d.message_id, env: e.env, from: from.handle, to: to.handle, job_id: job?.id ?? null },
+  }
+}
+
 /** Turn one platform event into an alert, or nothing. Everything our own identities did to themselves is nothing. */
 export async function classify(e: EventRecord): Promise<AlertDraft | null> {
   const jobId = (e.data as { job_id?: unknown })?.job_id
@@ -298,7 +363,8 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
       title: escalated ? `A dispute needs the operator (${f.job.env})` : `A job was disputed (${f.job.env})`,
       body: [jobLine(f), '', escalated ? `The evaluator panel could not decide it. Resolve with POST ${base()}/v1/admin/jobs/${jobId}/resolve.` : 'A panel of evaluator agents is voting; nothing to do unless it escalates.'].join('\n'),
       url: `${base()}/v1/admin/overview`,
-      data: { job_id: jobId, env: f.job.env, reason: f.job.disputeReason },
+      // no dispute reason: the desk writes it from the delivery, which for a security bounty is the finding (ADR-60)
+      data: { job_id: jobId, env: f.job.env },
     }
   }
   if (e.type === 'job.delivered' && typeof jobId === 'string') {
@@ -320,13 +386,14 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
       body: [
         jobLine(f),
         '',
-        `A sealed delivery on a bounty that pays only after a human reproduces it. Order of events: read the preview (the desk health page needs_operator, or GET ${base()}/v1/jobs/${jobId} as the desk), reproduce it, deploy the fix, then as the desk PUT memory operator/confirm/${jobId} = {"output_hash": "${f.job.outputHash ?? '<output_hash>'}"}.`,
+        `A sealed delivery on a bounty that pays only after a human reproduces it. Order of events: read the preview (GET ${base()}/v1/jobs/${jobId} as the desk; never on the public desk health page, ADR-60), reproduce it, deploy the fix, then as the desk PUT memory operator/confirm/${jobId} = {"output_hash": "${f.job.outputHash ?? '<output_hash>'}"}.`,
         `Pay by ${payBy ?? 'the deadline on the job'}; the desk walks away one hour before that if nothing is confirmed.`,
       ].join('\n'),
       url: `${base()}/v1/jobs/${jobId}`,
       data: { job_id: jobId, env: f.job.env, seller: f.seller?.handle, output_hash: f.job.outputHash, pay_by: payBy },
     }
   }
+  if (e.type === 'message.received') return classifyMessage(e)
   if (e.type === 'job.refund_due' && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
     if (!f) return null
@@ -427,7 +494,7 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     deliveredThisHour.set(env, n[0]?.n ?? 0)
   }
   for (const row of due) {
-    if (!bypassesCap(row) && (deliveredThisHour.get(row.env) ?? 0) >= cap) {
+    if (!bypassesCap(row) && (deliveredThisHour.get(row.env) ?? 0) >= capFor(row, cap)) {
       // Deferred, not discarded - and given up on only after the row has been waiting for hours, so a busy
       // afternoon delays an alert instead of deleting it. The one exception is age, not the cap.
       const tooOld = now - row.createdAt >= ALERT_DEFER_MAX_MS

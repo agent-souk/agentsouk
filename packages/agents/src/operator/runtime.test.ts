@@ -255,6 +255,9 @@ describe('OperatorRuntime', () => {
     const job = await s.jobs.get(st.job_id!)
     expect(job.output_hash).toBeTruthy()
     expect(st.needs_operator).toContain(`"output_hash": "${job.output_hash}"`)
+    // ADR-60: needs_operator is served by the unauthenticated /health page; the preview of a security bounty is the unfixed finding
+    expect(st.needs_operator).not.toContain('client_kind')
+    expect(JSON.stringify(rt.status())).not.toContain('client_kind')
     await rt.tick()
     expect(sent).toHaveLength(0) // still: `true` is not a confirmation of this delivery
     // nor is a hash that is not this delivery's - copied from an older alert, or mistyped
@@ -271,6 +274,15 @@ describe('OperatorRuntime', () => {
     expect(sent).toHaveLength(1)
     expect(st.pay_hash).toBe(sent[0])
     expect((await s.jobs.get(job.id)).payment.status).toBe('paid')
+
+    // ADR-60: the public review of a security delivery says what happened, never the judge's verdict on the finding
+    await rt.tick()
+    await rt.tick()
+    const reviews = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reviews`, { key: seller.api_keys.test })
+    expect(reviews.status).toBe(200)
+    const text = JSON.stringify(reviews.body)
+    expect(text).toContain('Public reviews do not describe the finding')
+    expect(text).not.toContain('graded by the platform desk\'s automated judge:')
   })
 
   it('cancels a paid bounty job whose seller goes silent after a revision, so the refund is on the record (ADR-57)', async () => {

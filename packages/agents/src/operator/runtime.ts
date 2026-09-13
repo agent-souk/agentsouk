@@ -464,7 +464,7 @@ export class OperatorRuntime {
     this.resetJobFields(state)
     await this.save(spec.key, state)
     this.log('bounty awarded', { env: this.env, key: spec.key, job_id: job.id, seller: best.p.seller.handle, price: formatUsdc(best.p.price), score: best.s.score })
-    await this.message(job, `Awarded. Deliver the JSON described in the bounty as the job output. The delivery preview must carry: ${spec.preview_requirements}. A sealed delivery cannot be re-delivered, so get the preview right; the desk checks it mechanically, then reviews it${spec.needs_operator_confirmation ? ', then a human operator confirms' : ''}, then pays, then grades the full output against the rubric and rates you. Questions are answered in this thread.`)
+    await this.message(job, `Awarded. Deliver the JSON described in the bounty as the job output. The delivery preview must carry: ${spec.preview_requirements}. A sealed delivery cannot be re-delivered, so get the preview right; the desk checks it mechanically, then reviews it${spec.needs_operator_confirmation ? ', then a human operator confirms' : ''}, then pays, then grades the full output against the rubric and rates you. Ask questions in this thread. Before you deliver, the desk does not answer them itself: a human operator is alerted, so allow hours, not minutes. After a sealed delivery the desk's automated reviewer also re-reads your messages.`)
   }
 
   /**
@@ -674,7 +674,9 @@ export class OperatorRuntime {
       if (!state.asked_at) {
         await this.message(job, 'Preview accepted by the desk; a human operator reproduces security findings and deploys the fix before payment, usually within a day. The payment deadline is the one on the job.')
         state.asked_at = this.iso()
-        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}, AFTER reproducing the finding and deploying the fix: PUT memory operator/confirm/${job.id} = {"output_hash": "${job.output_hash}"}. Preview: ${JSON.stringify(job.output_preview).slice(0, 2500)}`
+        state.needs_operator = `confirm job ${job.id} before ${job.payment.pay_by ?? 'the payment deadline'}, AFTER reproducing the finding and deploying the fix: PUT memory operator/confirm/${job.id} = {"output_hash": "${job.output_hash}"}. Read the preview with GET /v1/jobs/${job.id} as the desk.`
+        // ADR-60: never the preview itself. This field is served by GET /health without authentication, and the preview
+        // of a security bounty is the unfixed finding; until 0.2.3 up to 2500 characters of it stood here.
         await this.save(spec.key, state)
         this.log('ATTENTION: operator confirmation needed', { env: this.env, key: spec.key, job_id: job.id, pay_by: job.payment.pay_by, output_hash: job.output_hash })
       } else if (deadlineClose) await this.walkAway(spec, state, job, 'No operator confirmation arrived before the payment deadline; walking away. That was our delay, not your work: the platform lists an unpaid sealed delivery on your record (deliveries_unpaid), which does not lower your score, and the desk will reach out if the finding is confirmed later.')
@@ -892,7 +894,12 @@ export class OperatorRuntime {
     const rating = upheld ? (state.verdict?.rating ?? 4) : 1
     if (!state.reviewed) {
       // ADR-32 / AI Act Art. 50: the desk's verdict text comes from the automated judge; the review carries the public label
-      await this.client.jobs.review(job.id, rating, upheld ? `Bounty delivery graded by the platform desk's automated judge: ${state.verdict?.message?.slice(0, 900) || 'delivered as asked.'}` : 'Bounty delivery (automated judge): the dispute panel found the delivery did not do what the bounty asked.', { machine_generated: true }).catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: msg(e) }))
+      // ADR-60: a review is public and permanent, and the judge writes its verdict from the full output. For a bounty that
+      // waits on the operator (a security finding) that verdict can restate the finding, so the review says only what happened.
+      const upheldText = spec.needs_operator_confirmation
+        ? 'Security bounty delivery: reproduced and confirmed by the operator, paid, and graded by the platform desk\'s automated judge. Public reviews do not describe the finding.'
+        : `Bounty delivery graded by the platform desk's automated judge: ${state.verdict?.message?.slice(0, 900) || 'delivered as asked.'}`
+      await this.client.jobs.review(job.id, rating, upheld ? upheldText : 'Bounty delivery (automated judge): the dispute panel found the delivery did not do what the bounty asked.', { machine_generated: true }).catch((e: unknown) => this.log('review failed', { env: this.env, job_id: job.id, error: msg(e) }))
       state.reviewed = true
     }
     if (paid && upheld) await this.countAward(spec, state, job, state.revealed?.distinct ?? null, state.revealed?.summary ?? '')

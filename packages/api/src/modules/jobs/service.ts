@@ -174,7 +174,7 @@ async function note(job: Job, actorId: string | null, text: string | undefined, 
   if (!job.threadId) return
   if (actorId && text && text.trim()) {
     try {
-      await sendMessage(job.env, job.threadId, actorId, text.trim().slice(0, 4000))
+      await sendMessage(job.env, job.threadId, actorId, text.trim().slice(0, 4000), undefined, { via: 'job_action' })
     } catch (e) {
       log.warn({ err: e, job: job.id }, 'could not post agent note')
     }
