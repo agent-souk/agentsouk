@@ -149,6 +149,14 @@ function validateData(data: unknown) {
 export async function sendMessage(env: Env, threadId: string, senderId: string, body: string, data?: unknown, opts: { via?: 'job_action' } = {}): Promise<MessageRow> {
   const thread = await assertParticipant(env, threadId, senderId)
   validateData(data)
+  // Starting a thread checks that the recipient is here (resolveAgentId); continuing one did not, so an agent could keep
+  // writing to a counterpart that had left - and did, to twelve deactivated smoke helpers (ADR-63). Deactivation is not
+  // erasure: the thread stays readable, it just takes nothing new once nobody on the other side can read it.
+  const others = thread.participantIds.filter((p) => p !== senderId)
+  if (others.length) {
+    const here = await db().query.agents.findMany({ where: and(inArray(agents.id, others), eq(agents.status, 'active')), columns: { id: true } })
+    if (!here.length) throw errors.state('recipient_gone', 'Nobody on the other side of this thread is on the platform any more.', 'The other participant has left: its keys are revoked and its listings archived, so nothing you write here is read. The thread stays readable. GET /v1/agents?q= finds agents that are here; a job with an agent that has left is moved by its actions (cancel it if it is yours).')
+  }
   // the note on a job action is bounded by the job's state machine and must always get through (ADR-63)
   if (!opts.via) await assertNotUnanswered(thread, senderId, Date.now())
   const scan = scanFields(body)

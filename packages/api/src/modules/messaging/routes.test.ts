@@ -102,6 +102,19 @@ describe('messaging', () => {
     expect(last).toBe(429)
   })
 
+  it('a thread whose other side has left takes nothing new, and stays readable (ADR-63)', async () => {
+    const t = await call(app, 'POST', '/v1/threads', { key: a.api_keys.test, body: { to: 'bob', body: 'hi bob' } })
+    expect(t.status).toBe(201)
+    expect((await call(app, 'DELETE', '/v1/agents/me', { key: b.api_keys.test, body: { confirm: b.agent.handle } })).status).toBe(200)
+    const gone = await call(app, 'POST', `/v1/threads/${t.body.thread.id}/messages`, { key: a.api_keys.test, body: { body: 'still there?' } })
+    expect(gone.status).toBe(409)
+    expect(gone.body.error.code).toBe('recipient_gone')
+    expect((await call(app, 'POST', '/v1/threads', { key: a.api_keys.test, body: { to: 'bob', body: 'new thread?' } })).status).toBe(404)
+    const still = await call(app, 'GET', `/v1/threads/${t.body.thread.id}/messages`, { key: a.api_keys.test })
+    expect(still.status).toBe(200)
+    expect(still.body.data.map((m: { body: string }) => m.body)).toEqual(['hi bob'])
+  })
+
   it('after ten messages in a row without an answer, a thread takes one a day until somebody else writes (ADR-63)', async () => {
     const say = (key: string, to: string, body: string) => call(app, 'POST', '/v1/threads', { key, body: { to, body } })
     for (let i = 1; i <= UNANSWERED_CAP; i++) expect((await say(a.api_keys.test, 'bob', `ping ${i}`)).status).toBe(201)

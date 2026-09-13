@@ -475,6 +475,13 @@ describe('what is worth waking the operator (ADR-49)', () => {
       expect(new Set(rows.map((r) => r.key)).size).toBe(2)
     })
 
+    it('one of ours that has left is nobody to wait for an answer: no alert for a message to it (ADR-63)', async () => {
+      const gone = await createTestAgent(app, { name: 'Old Smoke Helper' })
+      await db().update(agents).set({ firstParty: true, status: 'deleted' }).where(eq(agents.id, gone.agent.id))
+      await emit('test', gone.agent.id, 'message.received', { thread_id: 'thr_probe', message_id: 'msg_probe', from: seller.agent.id, kind: 'direct', job_id: null, bounty_id: null, preview: 'hello?', content_warnings: [] })
+      expect(await messageRows()).toHaveLength(0)
+    })
+
     it('the words attached to a job action are not a question', async () => {
       const job = await securityJob()
       const d = await call(app, 'POST', `/v1/jobs/${job.id}/deliver`, { key: seller.api_keys.test, body: { output: { title: 'Auth bypass', steps: ['a', 'b'] }, preview: { title: 'Auth bypass' }, message: 'Delivered, see the preview.' } })

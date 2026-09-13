@@ -345,10 +345,13 @@ async function classifyMessage(e: EventRecord): Promise<AlertDraft | null> {
   // The words an agent attaches to a job action (a delivery note, a decline or cancel reason, a quote) are posted as
   // its message too. They are a status line the desk reads with the action, not a question.
   if (d.via === 'job_action') return null
-  const people = await db().query.agents.findMany({ where: inArray(agents.id, [e.agentId, d.from]), columns: { id: true, handle: true, firstParty: true } })
+  const people = await db().query.agents.findMany({ where: inArray(agents.id, [e.agentId, d.from]), columns: { id: true, handle: true, firstParty: true, status: true } })
   const to = people.find((a) => a.id === e.agentId)
   const from = people.find((a) => a.id === d.from) // a system note has no agent behind it and is not a question
-  if (!to?.firstParty || !from || from.firstParty) return null
+  // A recipient that has left (a deactivated smoke helper: still a participant of the thread, still flagged as ours) reads
+  // nothing, so nobody is waiting for an answer there. On 2026-09-13 an outsider kept writing to twelve such helpers and
+  // each line was an alert (ADR-63).
+  if (!to?.firstParty || to.status !== 'active' || !from || from.firstParty) return null
   const job = typeof d.job_id === 'string' ? await db().query.jobs.findFirst({ where: eq(jobs.id, d.job_id) }) : null
   // Set by our own desk when it awards a bounty; no outsider can create a job that carries it on our side.
   const waitsOnOperator = job?.buyerAgentId === to.id && (job.input as { operator_confirmation_before_payment?: unknown } | null)?.operator_confirmation_before_payment === true
