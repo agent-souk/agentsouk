@@ -11,8 +11,30 @@ war seit ADR-48 offen. Jetzt prüft der Endpunkt die EIP-712-Signatur selbst, vo
 eigenen Rauchtests (stand auf 4, nicht 0 — jetzt nach Richtung getrennt, **`unflagged` ist die Zahl**), zwei Geldregeln in `stats.ts`
 vereinheitlicht, Phantom-Erstattungspflicht nach freiwilliger Rückzahlung, Pünktlichkeit zählt verpasste Fristen als zu spät und alle
 Reputationszeilen werden beim Start neu gerechnet, `agents_qualified`/`flag_changes` stehen jetzt auch im OpenAPI-Schema. Tests: **API 44
-Dateien / 362, Agents 67, grün.** Deploy: siehe Checkpoint-74-Eintrag. Die Sandbox-Probe des Lieferungs-Alarms lief durch:
-Lieferung → `confirm:<job>` → Zusteller → `webhook:ntfy` HTTP 200.
+Dateien / 362, Agents 67, grün.** **Deployt 2026-09-13 ~12:00 UTC:** API 0.5.8 = `97f0950` (`SMOKE TEST PASSED`; Signatur-Sperre live
+negativ geprüft: gefälschter Payload → 400 `invalid_request`, kein Konto, kein Job), Agents 0.2.2 (Judge `PASSED`, Health sauber). Die
+Sandbox-Probe des Lieferungs-Alarms lief durch: Lieferung → `confirm:<job>` → Zusteller → `webhook:ntfy` HTTP 200.
+
+**Drei Dinge, die dich brauchen, in dieser Reihenfolge:**
+1. **Die Desk steht am Boden.** Live-Wallet **10,000630 USDC**, Lebenszeitbudget **39,99 von 50** ausgegeben (ADR-23). Die Reservierung aus
+   ADR-57 hat bis auf den letzten Cent gehalten: der letzte Erstkauf (0,20 USDC, heute früh) war genau noch erlaubt, seither sind Erstkäufe
+   blockiert, bis der Security-Anspruch entschieden ist. Liefert `juan-codex-research` und wird bezahlt, ist die Wallet leer und das Budget
+   zu Ende; liefert er nicht, gibt die Stornierung am 14.09. 02:23 UTC die 10 USDC frei — für höchstens zehn weitere Erstkäufe, dann ist das
+   Budget ebenfalls zu Ende. **Ob die Desk danach weiter kauft, ist deine Entscheidung** (Aufstocken heißt Überweisung an
+   `0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30` auf Base **und** `OPERATOR_TOTAL_BUDGET_USDC` als Fly-Secret; ich stelle nichts davon ohne dich ein).
+2. **Der Sandkasten-Faucet ist trocken.** Die Test-Wallet auf Base Sepolia hält 0,99 Test-USDC, der Faucet gibt 1,00 je Anfrage: `faucet_dry`.
+   Damit kann kein Sandbox-Agent das Bezahlen üben — das war der Schritt, an dem der erste fremde Agent hängen blieb — und `smoke-x402` und
+   `smoke:gasless` konnten nach dem Deploy nicht laufen. **Testnetz-USDC von https://faucet.circle.com an dieselbe Adresse** (Netz Base
+   Sepolia; Browser mit Captcha, deshalb du), wie in LAUNCH-CHECKLIST Punkt 8.
+3. **ntfy abonnieren** — unverändert der wichtigste Handgriff; neun Alarme liegen dort ungelesen.
+
+**Live über Nacht (Messlatte):** `between_outsiders.orders` **4 → 6**, weiterhin `orders_from_distinct_wallets` **1**, `jobs_completed` 0,
+`excluded.funded_by_us` **5** (eine Bestellung noch offen). Dieselbe Wallet, dasselbe Muster wie ADR-56: `veriton` hat eine **neue** Bounty
+ausgeschrieben („x402 paid-call test — POST /v1/html2json @0.001 → 0.01 USDC", 0 Vorschläge) und um 11:10 UTC selbst bei unserem
+html2json-Listing bestellt und storniert — der Alarm „an outside agent ordered from us" war er. `ever_paid_or_paid_for` 0,
+`flag_changes.unflagged` 0. Neu registriert u. a. zwei `zghost-probe-*` („security probe, self-generated test identity") — jemand testet die
+API auf Lücken, während die Security-Bounty offen ist; die Bounty von `moneyagent-souk-73bz` (0,01 USDC Echo) hat inzwischen **13**
+Vorschläge. `agents` 56 → 61 → 63.
 
 **Erledigt in der Sitzung davor (Checkpoint 73, ADR-57):** die vier offenen Stränge der Mittags-Übergabe wurden nicht abgearbeitet, sondern zuerst
 gegnerisch geprüft (144 Agenten, 98 fertig, **46 am Sitzungslimit gestorben** — 15 Funde blieben dadurch ungeprüft, drei davon habe ich von
@@ -87,7 +109,11 @@ Prüfweg, der ohne Schlüssel 401 gibt. **Ungeprüft** (Widerleger gestorben): W
 - **Gebaut, Agents (0.2.2):** Balance-Cache nach `recordSpend()` geleert; Erstkäufe in der Bounty-Reservierung; Erstkauf-Walk-away-Text.
 - **Operativ:** Sandbox-Probe des `confirm:`-Alarms bis ntfy bestanden; Security-Anspruch unverändert nichts geliefert; fünf neue
   Registrierungen über Nacht, darunter zwei `zghost-probe-*` („security probe, self-generated test identity").
-- **Deploy:** siehe Nachtrag.
+- **Deploy 2026-09-13 ~12:00 UTC:** API 0.5.8 = `97f0950`, `smoke.ts` PASSED, gefälschte Signatur live → 400 ohne Konto/Job; Agents 0.2.2 nach
+  Judge PASSED (0,22 USD). `smoke-x402` und `smoke:gasless` NICHT gelaufen: Faucet trocken (Test-Wallet 0,99 USDC). Live danach:
+  `agents_qualified` 53/18/0, `flag_changes` {count 4, unflagged 0, flagged 0 — die Altzeilen tragen keine Richtung}, `between_outsiders`
+  6/1/0 mit `funded_by_us` 5, Alarm-Übersicht `sent 9 / suppressed_our_money 6`, `sutt-fogomen` `on_time_rate` 0 und `computed_rules` 2
+  (die Neuberechnung beim Start hat gegriffen), Desk-Wallet 10,000630 USDC, Security-Bounty unverändert.
 
 ## Stand 2026-09-12, Checkpoint 73: die Desk hätte ihr eigenes Versprechen wegkaufen können (ADR-57; API 0.5.7, Agents 0.2.1)
 
