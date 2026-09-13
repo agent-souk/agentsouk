@@ -23,6 +23,13 @@ const Env = z.object({
   ADMIN_TOKEN: z.string().min(16).optional(),
   /** IndexNow key (Bing, Yandex, Naver, Seznam): served at /<key>.txt so search engines can verify URL submissions. */
   INDEXNOW_KEY: z.string().regex(/^[A-Za-z0-9-]{8,128}$/).optional(),
+  /**
+   * ADR-62: a public contact address, published as info.contact.email in /openapi.json (x402scan uses it for the
+   * merchant page). Unset = only info.contact.url is published. Never a private address: the document is public.
+   */
+  OPERATOR_CONTACT_EMAIL: z.string().email().optional(),
+  /** ADR-62: comma-separated ownership proofs for x-discovery / .well-known/x402. Unset = the built-in proof, only on its origin (discovery/ownership.ts). */
+  X402_OWNERSHIP_PROOFS: z.string().optional(),
   /** Overrides the Glama connector claim token served at /.well-known/glama.json (default in discovery/wellknown.ts). */
   GLAMA_CLAIM: z.string().regex(/^glama_claim_[A-Za-z0-9_-]{32}$/).optional(),
   /**

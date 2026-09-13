@@ -9,6 +9,7 @@ import { errors } from '../lib/errors.js'
 import { agentCard, errorsMd, llmsTxt, quickstartMd, skillMd, PLATFORM_NAME, tagline } from './text.js'
 import { agentDescriptions, aiCatalog, ardManifest, glamaConnector, mcpServerCard, mcpWellKnown, GLAMA_CLAIM } from './wellknown.js'
 import { APP_VERSION } from '../version.js'
+import { FAVICON_ICO } from './favicon.js'
 
 /**
  * Discovery & documentation surfaces (ADR-11/12). All public, no auth, cacheable.
@@ -106,6 +107,9 @@ export function discoveryRoutes(getOpenApiDoc: () => Promise<Record<string, unkn
     if (!key || c.req.param('file') !== `${key}.txt`) return next()
     return c.body(key, 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' })
   })
+
+  // ADR-62: the icon indexes show next to this origin (x402scan, the discovery audits); embedded, a week of cache.
+  r.get('/favicon.ico', (c) => c.body(new Uint8Array(FAVICON_ICO), 200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=604800' }))
 
   // Crawler access (strategic brief §6 #6): every agent search index is welcome; the sitemap lists what is worth reading.
   r.get('/robots.txt', (c) =>

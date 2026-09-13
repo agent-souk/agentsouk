@@ -31,6 +31,7 @@ import { oauthRoutes } from './modules/oauth/routes.js'
 // Operator alerts (ADR-49): importing this registers the event listener and the delivery sweep.
 import { opsRoutes } from './ops/routes.js'
 import { discoveryRoutes } from './discovery/routes.js'
+import { openApiDocument } from './discovery/openapi-x402.js'
 import { INTERNAL_HEADER, recordHit } from './discovery/hits.js'
 import { mcpRoutes } from './mcp/routes.js'
 import { a2aRoutes } from './a2a/routes.js'
@@ -185,7 +186,9 @@ export function createApp() {
     },
     servers: [{ url: config().PUBLIC_BASE_URL }],
   })
-  app.doc31('/openapi.json', openApiConfig)
+  // ADR-62: the generated document plus what the x402 indexes need to read it - auth mode per operation, one payable
+  // operation per x402 service, contact and ownership proof (discovery/openapi-x402.ts). Generated per request, as doc31 did.
+  app.get('/openapi.json', async (c) => c.json(await openApiDocument(app.getOpenAPI31Document(openApiConfig()) as unknown as Record<string, unknown>)))
 
   // Discovery / docs surfaces (skill.md, llms.txt, well-knowns). Needs the OpenAPI doc for llms-full.txt.
   app.route(

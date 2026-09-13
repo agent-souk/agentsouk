@@ -2,7 +2,16 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.12 = ADR-61, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 abends; API 0.5.13 = ADR-62, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 78 (ADR-62, 13.09. abends) — Nick hat ntfy abonniert und den Sandbox-Faucet gefüllt; Desk-Budget bleibt, wie es ist.**
+Bei der x402scan-Anmeldung zeigte das offizielle Audit (`npx @agentcash/discovery api.agentsouk.dev -v`), dass **nichts registriert worden
+wäre**: die Indexe lesen `/openapi.json` vor `/.well-known/x402`, und unsere OpenAPI hatte keine bezahlte Operation, 105 Routen ohne Auth-Modus
+und nur die unprobbare Vorlage `/v1/x402/{listing_id}`. Gebaut: konkrete Bezahl-Operationen mit `x-payment-info` je x402-Dienst, `security`
+je Operation, `apiKey`-Schema, `info.contact.url`, Eigentümer-Signatur des Origins durch die payTo-Wallet von `souk-services`, `/favicon.ico`,
+Kompatibilitätsfelder in `/.well-known/x402`. **Nächster Handgriff für Nick:** x402scan-Anmeldung wiederholen („Add Server"), sobald das Audit
+live sauber ist (Nachtrag unten). **Offen, Nick:** öffentliche Kontaktadresse (`hello@agentsouk.dev` über Cloudflare Email Routing), dann setze
+ich `OPERATOR_CONTACT_EMAIL`.
 
 **Checkpoint 77b (ADR-61, zweite Runde):** ADR-61 wurde nach dem Deploy selbst gegnerisch gelesen (3 Finder, 7 min, keiner tot):
 **13 Funde, alle gebaut** (API 0.5.12, Agents 0.2.5). Der wichtigste war meiner vom selben Nachmittag: der neue öffentliche Prüfweg

@@ -11,6 +11,7 @@ import { log } from '../../lib/log.js'
 import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
 import { bazaarExtension } from './bazaar.js'
+import { ownershipProofs } from '../../discovery/ownership.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent, recoverKeys } from '../agents/service.js'
 import { normalizeEvmAddress } from '../payments/address.js'
@@ -242,8 +243,15 @@ export async function sellableListings(env: Env) {
 export async function x402Index(base: string, env: Env) {
   const rows = await sellableListings(env)
   const chain = CHAINS[networkFor(env)]
+  const url = (id: string) => `${base}/v1/x402/${id}${env === 'test' ? '?env=test' : ''}`
+  const proofs = env === 'live' ? ownershipProofs() : []
   return {
     object: 'x402_index' as const,
+    // ADR-62: the compatibility shape x402scan reads from /.well-known/x402 when an origin has no usable OpenAPI:
+    // `version`, `resources` (one URL per payable endpoint) and the ownership proof; the rest is ours.
+    version: 1 as const,
+    resources: rows.map(({ listing }) => url(listing.id)),
+    ...(proofs.length ? { ownershipProofs: proofs } : {}),
     env,
     protocol: { x402_version: 2, transport: 'HTTP: the PaymentRequired object arrives base64 in the PAYMENT-REQUIRED response header; send the signed authorization back in PAYMENT-SIGNATURE (X-PAYMENT is accepted too).', scheme: 'exact', network: chain.v1, network_caip2: networkFor(env), asset: chain.usdc, asset_name: chain.name },
     what_this_is: 'Services operated by Agent Souk itself, each buyable with a single x402 payment and no account. Paying binds an agent record to your wallet, so you keep the receipt and the public record of the purchase.',

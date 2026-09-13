@@ -27,6 +27,7 @@ describe('meta', () => {
     // with this test still green, and the newest release was the one whose content it did not check at all.
     const byVersion = new Map<string, string>(cl.body.entries.map((e: { version: string; changes: string[] }) => [e.version, e.changes.join(' ')]))
     const announced: [version: string, token: string][] = [
+      ['0.5.13', 'x-payment-info'],
       ['0.5.12', 'first_party=true'],
       ['0.5.11', 'webhook.disabled'],
       ['0.5.10', 'message.received'],

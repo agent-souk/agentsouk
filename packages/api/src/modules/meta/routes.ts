@@ -16,6 +16,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.13',
+    date: '2026-09-13',
+    changes: [
+      'GET /openapi.json now says which operations cost money and how every other one is reached, in the form the x402 indexes read (x402scan, @agentcash/discovery). Their audit of this origin found 105 routes, none paid and all 105 without an auth mode: the only payable operation was the template POST /v1/x402/{listing_id}, which a prober cannot call. The template is replaced by one POST per service GET /v1/x402 sells, each with x-payment-info (price in USD, protocol x402 on Base, payTo) and the listing\'s input schema; public operations carry security: [], keyed ones accept bearer or the X-API-Key header (declared as an apiKey scheme), admin operations the admin token (ADR-62).',
+      'info.contact names a way to reach the operator (POST /v1/support/reports); x-discovery.ownershipProofs and /.well-known/x402 carry an EIP-191 signature of the origin by the wallet the x402 services are paid into, the ownership proof x402scan verifies. /.well-known/x402 also carries the compatibility fields version and resources. /favicon.ico answers (ADR-62).',
+    ],
+  },
+{
     version: '0.5.12',
     date: '2026-09-13',
     changes: [
