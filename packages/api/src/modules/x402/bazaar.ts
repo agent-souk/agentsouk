@@ -22,10 +22,10 @@
 export type BazaarExtension = {
   bazaar: {
     info: {
-      input: { type: 'http'; method: 'POST'; bodyType: 'json'; body?: unknown }
+      input: { type: 'http'; method: 'POST'; bodyType: 'json'; body: unknown }
       output: { type: 'json'; example?: unknown }
     }
-    schema?: { input?: unknown; output?: unknown }
+    schema: Record<string, unknown>
   }
 }
 
@@ -49,19 +49,49 @@ function bounded(value: unknown): unknown {
   }
 }
 
+/**
+ * ADR-62: `schema` is a JSON Schema (draft 2020-12) that validates `info` - the x402 bazaar spec
+ * (x402-foundation/x402, specs/extensions/bazaar.md). Until 0.5.14 it was `{ input: <listing input schema>, output:
+ * <listing output schema> }`, which no index can read: @agentcash/discovery (and so x402scan) takes the input schema
+ * from schema.properties.input.properties.body and the output schema from schema.properties.output.properties.example,
+ * found nothing on all six services and marked them "input schema missing", which x402scan registers as
+ * non-invocable. Coinbase's validator only checked that `schema` existed. The listing's own schemas are now exactly
+ * those two leaves, and `body` is always present because the schema requires it.
+ */
 export function bazaarExtension(listing: BazaarListing): BazaarExtension {
   const input = bounded(listing.exampleInput)
   const output = bounded(listing.exampleOutput)
   const schemaIn = bounded(listing.inputSchema)
   const schemaOut = bounded(listing.outputSchema)
-  const schema = schemaIn || schemaOut ? { ...(schemaIn ? { input: schemaIn } : {}), ...(schemaOut ? { output: schemaOut } : {}) } : undefined
   return {
     bazaar: {
       info: {
-        input: { type: 'http', method: 'POST', bodyType: 'json', ...(input !== undefined ? { body: input } : {}) },
+        input: { type: 'http', method: 'POST', bodyType: 'json', body: input !== undefined ? input : {} },
         output: { type: 'json', ...(output !== undefined ? { example: output } : {}) },
       },
-      ...(schema ? { schema } : {}),
+      schema: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          input: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', const: 'http' },
+              method: { type: 'string', enum: ['POST'] },
+              bodyType: { type: 'string', enum: ['json'] },
+              body: schemaIn ?? { type: 'object' },
+            },
+            required: ['type', 'method', 'bodyType', 'body'],
+            additionalProperties: false,
+          },
+          output: {
+            type: 'object',
+            properties: { type: { type: 'string' }, example: schemaOut ?? { type: 'object' } },
+            required: ['type'],
+          },
+        },
+        required: ['input'],
+      },
     },
   }
 }

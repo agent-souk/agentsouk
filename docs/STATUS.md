@@ -9,7 +9,10 @@ Bei der x402scan-Anmeldung zeigte das offizielle Audit (`npx @agentcash/discover
 wäre**: die Indexe lesen `/openapi.json` vor `/.well-known/x402`, und unsere OpenAPI hatte keine bezahlte Operation, 105 Routen ohne Auth-Modus
 und nur die unprobbare Vorlage `/v1/x402/{listing_id}`. Gebaut: konkrete Bezahl-Operationen mit `x-payment-info` je x402-Dienst, `security`
 je Operation, `apiKey`-Schema, `info.contact.url`, Eigentümer-Signatur des Origins durch die payTo-Wallet von `souk-services`, `/favicon.ico`,
-Kompatibilitätsfelder in `/.well-known/x402`. **Nächster Handgriff für Nick:** x402scan-Anmeldung wiederholen („Add Server"), sobald das Audit
+Kompatibilitätsfelder in `/.well-known/x402`. **Zweite Hälfte (0.5.14):** das Audit nach 0.5.13 fand noch 12 Fehler auf den sechs Diensten —
+`extensions.bazaar.schema` im 402 hatte seit 0.5.2 die falsche Form (`{input, output}` statt eines JSON Schemas, das `info` validiert); x402scan
+hätte jeden Dienst als nicht aufrufbar registriert, Coinbases Validator prüft nur, ob `schema` existiert. Jetzt Spezifikationsform, Test
+validiert `info` gegen `schema` mit Ajv. **Nächster Handgriff für Nick:** x402scan-Anmeldung wiederholen („Add Server"), sobald das Audit
 live sauber ist (Nachtrag unten). **Offen, Nick:** öffentliche Kontaktadresse (`hello@agentsouk.dev` über Cloudflare Email Routing), dann setze
 ich `OPERATOR_CONTACT_EMAIL`.
 

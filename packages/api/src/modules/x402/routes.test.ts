@@ -12,6 +12,7 @@ import { transferAuthorizationDigest } from '../payments/x402.js'
 import { _setSettleFetchForTests } from './routes.js'
 import { _setAlertFetchForTests } from '../../ops/alerts.js'
 import { _setConfigForTests } from '../../config.js'
+import { Ajv2020 } from 'ajv/dist/2020.js'
 import type { App } from '../../app.js'
 
 let app: App
@@ -521,8 +522,17 @@ describe('the index of what one x402 payment buys (ADR-50)', () => {
     // exactly the paths Coinbase's public validator checks
     expect(v2.extensions.bazaar.info.input).toMatchObject({ type: 'http', method: 'POST', bodyType: 'json', body: { text: 'Hello world', target_language: 'de' } })
     expect(v2.extensions.bazaar.info.output).toMatchObject({ type: 'json', example: { text: 'Hallo Welt' } })
-    expect(v2.extensions.bazaar.schema.input).toMatchObject({ required: ['text'] })
-    expect(v2.extensions.bazaar.schema.output).toMatchObject({ type: 'object' })
+    // ADR-62: schema is the JSON Schema of `info` (bazaar spec); the listing's schemas are the leaves the indexes read
+    const schema = v2.extensions.bazaar.schema
+    expect(schema).toMatchObject({ $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', required: ['input'] })
+    expect(schema.properties.input.properties.body).toMatchObject({ required: ['text'] })
+    expect(schema.properties.input.properties.type).toEqual({ type: 'string', const: 'http' })
+    expect(schema.properties.output.properties.example).toMatchObject({ type: 'object', properties: { text: { type: 'string' } } })
+    expect(schema.properties.input.required).toEqual(['type', 'method', 'bodyType', 'body'])
+    expect(v2.extensions.bazaar.schema.input).toBeUndefined() // the pre-0.5.14 shape nobody could read
+    // the spec: facilitators MUST validate info against schema before cataloging - so it has to pass, here, with a real validator
+    const validate = new Ajv2020({ strict: false }).compile(schema)
+    expect(validate(v2.extensions.bazaar.info), JSON.stringify(validate.errors)).toBe(true)
   })
 })
 

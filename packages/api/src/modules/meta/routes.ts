@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.14',
+    date: '2026-09-13',
+    changes: [
+      'POST /v1/x402/{listing_id}: extensions.bazaar.schema in the 402 is now what the x402 bazaar spec says it is - a JSON Schema (draft 2020-12) that validates extensions.bazaar.info, with the listing\'s input schema at properties.input.properties.body and its output schema at properties.output.properties.example. Since 0.5.2 it was { input, output } with the two schemas side by side, a shape no index reads: the discovery audit x402scan runs reported "input schema missing" and "output schema missing" on all six services, and x402scan registers a paid endpoint without an input schema as non-invocable. info.input.body is always present now, because the schema requires it (ADR-62).',
+    ],
+  },
+{
     version: '0.5.13',
     date: '2026-09-13',
     changes: [
