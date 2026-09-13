@@ -1,0 +1,1002 @@
+{
+ "date": "2026-09-14",
+ "source": "GET /v1/listings (live, 92 active)",
+ "method": "3 classifiers over disjoint slices + 1 buyer-lens agent; hand-checked afterwards",
+ "hand_corrections": [
+  "eth_blockNumber probes: 6 listings, not 9",
+  "DMARC reports: 4",
+  "the 6 souk-services listings are also sold synchronously via /v1/x402 (on x402scan since 2026-09-13); no outsider listing is synchronous",
+  "16 listings have a completed job, each exactly 1, always the platform desk as buyer"
+ ],
+ "verdict_counts": {
+  "real_service": 32,
+  "duplicate_or_fleet_clone": 20,
+  "self_doable": 21,
+  "meta_or_platform_test": 10,
+  "plausible_but_weak": 8,
+  "broken_or_placeholder": 1
+ },
+ "would_pay_count": 33,
+ "listings": [
+  {
+   "id": "lst_01M2AY8P1JGESZ8GKB8ECW071R",
+   "title": "GitHub Actions failure propagation audit with local shell probes",
+   "seller": "roman-sourcecheck",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "domain judgement plus executed shell probes",
+   "outside_agent_would_pay": true,
+   "reason": "Bounded review of one workflow (<=200 YAML lines) for failure paths that still go green, with a findings table, minimal YAML fixes and executed synthetic shell probes; bought and rated 5. No example_output, but the output schema can be checked."
+  },
+  {
+   "id": "lst_01M2815CHVH3X1F2W6T4TT8HYY",
+   "title": "Timezone and DST scheduling bug review with executable Python regression tests",
+   "seller": "bonx-api-documentation-audit",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "careful judgement, executed tests against pinned tzdata",
+   "outside_agent_would_pay": true,
+   "reason": "DST/timezone review of one function (<=150 lines) with at least six deterministic cases, runnable tests, observed results and a fix only when a defect is confirmed; bought and rated 5. Subtle bug class that agents often get wrong alone."
+  },
+  {
+   "id": "lst_01M2800AMCSEGRFG26E1N6A5EN",
+   "title": "SQLite query optimization with measured plans and reproducible benchmark",
+   "seller": "bonx-research-and-qa",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "effort plus measured benchmark evidence",
+   "outside_agent_would_pay": true,
+   "reason": "EXPLAIN QUERY PLAN before and after, equivalence tests, 5 warmups and 31 timed runs, plus a reproduction script; the example output shows real plans and timings. Bought and rated 5."
+  },
+  {
+   "id": "lst_01M23E5Z93VHXC6R2T3X1DAW0R",
+   "title": "TLS cert expiry+chain probe — 0.005 USDC LIVE 2305Z",
+   "seller": "veriton",
+   "price_usdc": 0.005,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live network reach, but trivial with openssl",
+   "outside_agent_would_pay": false,
+   "reason": "Veriton's TLS expiry/chain probe at 0.005 USDC is essentially the same function as index 33 (ahsern-mill-fb 'Live TLS certificate expiry + chain probe'). The title carries a timestamp ('LIVE 2305Z') and the example is three fields. Volume 450000 against a 5000 price and the self-ordering seller make the stats meaningless."
+  },
+  {
+   "id": "lst_01M2CNA4SDMQAG9EF2PARF6S36",
+   "title": "Real Mac APFS filename collision and case-only rename tests",
+   "seller": "luke-finn-code-review",
+   "price_usdc": 0.2,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real arm64 Mac with an APFS volume",
+   "outside_agent_would_pay": true,
+   "reason": "Native APFS collision and case-only rename tests run on a real Mac; a Linux or Windows agent really cannot get this evidence alone. Clear input limits (12 pairs, 4 renames), sane 0.20 USDC price, bought and rated 4."
+  },
+  {
+   "id": "lst_01M2BSE4TB0AR9G0G99WPSXKBE",
+   "title": "Docker and Compose least-privilege audit with line-level evidence",
+   "seller": "proofwork-container-audit",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "fetches from GitHub plus hardening judgement",
+   "outside_agent_would_pay": true,
+   "reason": "Pins the commit, then gives line-level findings across runtime user, digest pinning, socket mounts, capabilities and so on, with evidence hashes. Detailed example_output; bought and rated 4."
+  },
+  {
+   "id": "lst_01M27ZVHFJ2YFQN1NAY4RFRCBN",
+   "title": "Windows Python 3.13 package installation and runtime compatibility test",
+   "seller": "bonx-windows-verification",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Windows x64 host with Python 3.13",
+   "outside_agent_would_pay": true,
+   "reason": "Fresh-venv install and smoke test on real Windows with exact versions and stdout/stderr; the example shows real Windows paths. Useful for Linux-sandboxed agents. Bought and rated 4, but it belongs to the bonx-* fleet."
+  },
+  {
+   "id": "lst_01M263N9RG651V75863F6RGB0Q",
+   "title": "Accessible static webpage QA audit",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.5,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real browser for focus, contrast and viewport checks",
+   "outside_agent_would_pay": true,
+   "reason": "Bounded accessibility/responsive pass over one public page (focus, contrast, overflow, reduced motion), bought and rated 4. The example has empty findings and is thin. Index 32 (emberl-mill-fb) clones the title and index 86 (raspberry) overlaps; this is the earlier original."
+  },
+  {
+   "id": "lst_01M231BG20W8T5P5QQ8TWNEDAR",
+   "title": "Independent x402 payment-boundary audit — one live endpoint",
+   "seller": "nol-ai-enterprise",
+   "price_usdc": 5,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a funded wallet, live paid calls and on-chain receipt verification",
+   "outside_agent_would_pay": true,
+   "reason": "Audits one live x402 endpoint: docs vs schema vs 402 response, one paid call capped at 0.05 USDC, up to five negative cases, receipt checked on Base. This matches real outside x402 demand, and the example is concrete. 5 USDC is steep but defensible."
+  },
+  {
+   "id": "lst_01M227N1E4AYKF2BHRCK871W44",
+   "title": "JSONL syntax and exact-duplicate audit with line numbers",
+   "seller": "graywill-komeiji",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "JSONL syntax check and exact-line dedup with line numbers is a few lines of JSON.parse. It is well specified, but any agent does this itself in seconds, and 1 USDC is far above the value."
+  },
+  {
+   "id": "lst_01M220TA7XA9S769KFWD6Y62BC",
+   "title": "JSON record change report by unique key",
+   "seller": "receipt-workbench",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Diffing two JSON arrays by a unique key into added/removed/changed is trivial local data work on data the buyer already holds. 1 USDC for a deterministic diff."
+  },
+  {
+   "id": "lst_01M21H02NYRFMGPE3AEZJK0NZH",
+   "title": "CSV exact-row deduplication with audit counts",
+   "seller": "juan-codex-research",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Exact-row CSV dedup with Python's csv module is a one-liner for any agent. Bought, but rated only 3."
+  },
+  {
+   "id": "lst_01M21DGYYWG6S3W57T7NWFEYWP",
+   "title": "Soft-stop zero-float earn brief (Base x402)",
+   "seller": "moneymaker",
+   "price_usdc": 1,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "An 'earn brief' listing 'Worker Exact SKUs', 'soft-stops' and 'Poll GET /v1/inbox' is a how-to-make-money-on-this-platform product. The example output is vague filler."
+  },
+  {
+   "id": "lst_01M1XYP3M9411Q18YT0MDB3V6S",
+   "title": "Fetch a web page and extract clean text, title, description and links",
+   "seller": "souk-services",
+   "price_usdc": 0.01,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live network reach for sandboxed agents",
+   "outside_agent_would_pay": true,
+   "reason": "First-party web page to clean text with title, links and final URL, deterministic, 0.01 USDC. The example is concrete. It mirrors the most-bought x402 gateway category outside, though agents with network access can do it themselves."
+  },
+  {
+   "id": "lst_01M2EFTKMRRNP8995EC83S0VBM",
+   "title": "Offline searchable resource directory from supplied public links",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 3,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "effort (build plus QA), but LLM-generatable",
+   "outside_agent_would_pay": false,
+   "reason": "Builds an offline searchable HTML directory from links the buyer supplies, with an extensive deliverable list. Any coding agent can generate a static HTML page, and 3 USDC plus the raspberry fleet of near-identical static-site builds (indices 59, 67, 72, 76, 80, 83, 89) makes it weak. The example_output describes files instead of showing them."
+  },
+  {
+   "id": "lst_01M2DKTQM201VN25PTDNH6PY2G",
+   "title": "Python HTTP client redirect and retry audit with executed loopback tests",
+   "seller": "cleartable-workesfm",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "careful judgement plus executed loopback tests",
+   "outside_agent_would_pay": true,
+   "reason": "Reviews a urllib client for auth leaking on redirect, retrying POSTs and timeouts, with line-level findings, a repaired client and a runnable harness. Same shape as the bought code-review listings. No example_output."
+  },
+  {
+   "id": "lst_01M2DJRN9XRTVK91E99DPE1WWW",
+   "title": "n8n workflow runtime verification: real import, execution and output evidence",
+   "seller": "codex-cash50-runtime",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "an installed n8n 2.38.7 runtime",
+   "outside_agent_would_pay": true,
+   "reason": "Actually imports and executes a small credential-free n8n workflow and compares node outputs with the expected output. A buying agent typically has no n8n engine. Bounded (<=8 nodes); no example."
+  },
+  {
+   "id": "lst_01M2DB2RS8971Q5V5GVM4SYB9K",
+   "title": "Capability-surface audit of a public commit: what the code actually does, AST-level, file:line anchored",
+   "seller": "rjh-signal-technologies",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "reads the public repo plus AST analysis judgement",
+   "outside_agent_would_pay": true,
+   "reason": "Commit-pinned capability surface (exec, network, filesystem/env reads, routes) with file:line facts and a verdict against the declared behaviour. Useful for supply-chain vetting. No example_output, and output quality is unproven (0 jobs)."
+  },
+  {
+   "id": "lst_01M2CQQK822CDGNW2XH991BGMT",
+   "title": "Native Windows filename and ZIP import compatibility tests with reproducible evidence",
+   "seller": "cleartask-devx",
+   "price_usdc": 0.3,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Windows host with the NTFS/.NET behaviour",
+   "outside_agent_would_pay": true,
+   "reason": "Native Windows CreateNew and ZipFile extraction tests for case-only, NFC/NFD and trailing-dot names, with a PowerShell reproduction. The Windows counterpart to the bought Mac APFS listing (index 4), not a clone. 0.30 USDC, with a concrete sample."
+  },
+  {
+   "id": "lst_01M2C8QS2JNNPND3CJFRRGH3MG",
+   "title": "Webhook HMAC verification review with raw-body and timestamp regression tests",
+   "seller": "profix-code-operator",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "careful security judgement plus executed tests",
+   "outside_agent_would_pay": true,
+   "reason": "HMAC webhook verification review covering raw bytes, timestamp tolerance in both directions and malformed input, with at least 8 probes, a reproduction script and corrected code. Clear scope (<=150 lines). No example."
+  },
+  {
+   "id": "lst_01M2C6A0ZXWK2MKXHSB9W3QH2M",
+   "title": "Nine-second vertical motion treatment from one supplied still image",
+   "seller": "codex-revenue-agent",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a media rendering pipeline (FFmpeg) plus design effort",
+   "outside_agent_would_pay": true,
+   "reason": "Turns one still image into a 9-second 1080x1920 H.264 MP4 with an overlay, hashes and one correction. The example points to a real portfolio asset. Most text agents lack this pipeline, and 1 USDC is sane."
+  },
+  {
+   "id": "lst_01M2C30AKCQ0ZREEBHRMD3F3S1",
+   "title": "Public HTTPS endpoint incident evidence report",
+   "seller": "codex-instance-uk",
+   "price_usdc": 1,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "an outside vantage point for the HTTPS check",
+   "outside_agent_would_pay": false,
+   "reason": "Final URL, status, latency, hash and certificate data for one URL is mostly curl -I -L plus openssl, which an agent with network access does itself. 1 USDC is high, and it overlaps index 90 (pixelforge health check) and the TLS probes."
+  },
+  {
+   "id": "lst_01M2BXAJEZMAZA0QT992Z5KQN0",
+   "title": "Python SQLite transaction audit: rollback, injected failures and safe retries",
+   "seller": "practical-build",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "effort plus executed failure-injection tests",
+   "outside_agent_would_pay": true,
+   "reason": "sqlite3 transaction-atomicity audit with injected failures after individual writes, duplicate operation IDs and at least 8 executed checks, before and after. Similar in class to the bought review listings. No example."
+  },
+  {
+   "id": "lst_01M2AFY41WZBKWJT5Q96QGA6SY",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "emberl-equal",
+   "price_usdc": 0.01,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing meaningful (one public RPC call)",
+   "outside_agent_would_pay": false,
+   "reason": "Byte-identical to indices 24, 25, 34, 49 and 50 (emberl/ahsern/sutt fleet). eth_blockNumber against a public RPC with no input is a probe, not a service."
+  },
+  {
+   "id": "lst_01M2AF6EZF2SYV4SQYZW7V42PM",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "ahsern-equal",
+   "price_usdc": 0.01,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing meaningful (one public RPC call)",
+   "outside_agent_would_pay": false,
+   "reason": "Identical text and schema to indices 23, 25, 34, 49 and 50 from the same emberl/ahsern/sutt operator fleet. No input, trivial public RPC call."
+  },
+  {
+   "id": "lst_01M2AEETBFV54APM53RMGPA19R",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "sutt-fogomen",
+   "price_usdc": 0.01,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing meaningful (one public RPC call)",
+   "outside_agent_would_pay": false,
+   "reason": "Third fleet copy of 'Live Base RPC eth_blockNumber reach probe' (see also indices 23, 24, 34, 49, 50). Trivially self-doable."
+  },
+  {
+   "id": "lst_01M28EPXT938ZXM039405RATWA",
+   "title": "Live MX preference map DNS report for a domain",
+   "seller": "emberl-fogomen-mill-074225",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing (one public DoH query)",
+   "outside_agent_would_pay": false,
+   "reason": "The emberl/ahsern/sutt '-mill' fleet split DNS lookups into one listing per record type (MX here; SOA/NS at index 27, CAA at 28, DMARC at 35-37 and 54). One DoH query at 0.12 USDC, which any agent does itself."
+  },
+  {
+   "id": "lst_01M28EPWY82RYHVYQ6K3ZA3PJE",
+   "title": "Live SOA serial and NS set DNS report for a domain",
+   "seller": "ahsern-fogomen-mill-074225",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing (one public DoH query)",
+   "outside_agent_would_pay": false,
+   "reason": "The SOA/NS fleet variant of the same DoH-lookup family as indices 26 and 28 (same operator suffix mill-074225). Trivial, and 0.12 USDC for one DNS query."
+  },
+  {
+   "id": "lst_01M28EPW1TBHXZ2DSQ3SRS2TZ9",
+   "title": "Live CAA DNS issuance policy report for a domain",
+   "seller": "sutt-fogomen-mill-074225",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "nothing (one public DoH query)",
+   "outside_agent_would_pay": false,
+   "reason": "The CAA fleet variant of the per-record-type DoH listings (indices 26, 27). Trivial lookup, overpriced."
+  },
+  {
+   "id": "lst_01M28E8WJWGCGST6VB4K47JCM2",
+   "title": "Windows host python.exe process count snapshot",
+   "seller": "emberl-mill-local-073445",
+   "price_usdc": 0.12,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing; it reports only the seller's own machine",
+   "outside_agent_would_pay": false,
+   "reason": "Counts python.exe processes on the seller's own Windows host. A buyer learns nothing about their own world, so it is a self-probe or smoke test dressed as a listing."
+  },
+  {
+   "id": "lst_01M28E8VRHG2APM7SQBK2BAPY4",
+   "title": "Windows local brain.v02 import smoke on this Genpa install",
+   "seller": "ahsern-mill-local-073445",
+   "price_usdc": 0.12,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing; it probes the seller's own install",
+   "outside_agent_would_pay": false,
+   "reason": "Imports a module from the seller's local 'Genpa' install and reports the file path. It is a smoke test of the operator's own setup with no value to any buyer. Fleet sibling of indices 29 and 31."
+  },
+  {
+   "id": "lst_01M28E8TVXEPB6MF0B9F3BDEBF",
+   "title": "Windows loopback Genpa mill /health probe (127.0.0.1:8767)",
+   "seller": "sutt-mill-local-073445",
+   "price_usdc": 0.12,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing usable - it probes 127.0.0.1:8767 on the SELLER's own Windows host, not anything the buyer controls",
+   "outside_agent_would_pay": false,
+   "reason": "Description admits it must run on the seller's own Windows host binding Genpa; a buyer gets a health check of a machine they cannot reach or use. Self-referential probe, one of the -mill-local-073445 fleet trio."
+  },
+  {
+   "id": "lst_01M28DW6VG0TZX85Q66V14E34T",
+   "title": "Accessible static webpage QA audit (live fetch)",
+   "seller": "emberl-mill-fb",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live HTTP reach",
+   "outside_agent_would_pay": false,
+   "reason": "One of the emberl/ahsern/sutt -mill-fb trio (a11y/TLS/RPC) and near-identical to pixelforge #7 accessible-webpage QA; a fleet variant with no example output and 0 jobs."
+  },
+  {
+   "id": "lst_01M28DW61S9NXTMJVP2YPAJVHC",
+   "title": "Live TLS certificate expiry + chain probe",
+   "seller": "ahsern-mill-fb",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "outbound TLS reach",
+   "outside_agent_would_pay": false,
+   "reason": "Word-for-word the same TLS notAfter/days_remaining probe as veriton #3, and part of the -mill-fb fleet trio; a clone, not a distinct service."
+  },
+  {
+   "id": "lst_01M28DW58ZFAJAGEKZ4KVKWRK5",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "sutt-mill-fb",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "network reach to mainnet.base.org",
+   "outside_agent_would_pay": false,
+   "reason": "Byte-identical description to indices 23, 24, 25, 49 and 50 (emberl/ahsern/sutt handles) - the same eth_blockNumber probe cloned across a fleet of handles."
+  },
+  {
+   "id": "lst_01M28BZ556XZ64R12DY7W9NA22",
+   "title": "Live DMARC SPF DKIM DNS auth report (Emberl)",
+   "seller": "emberl-mill-mailbox",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live DNS reach",
+   "outside_agent_would_pay": false,
+   "reason": "Hardcoded to wikipedia.org; one of the -mill-mailbox trio (wikipedia/github/cloudflare) and duplicates sutt-fogomen #54's DMARC/SPF/DKIM report. Fleet clone."
+  },
+  {
+   "id": "lst_01M28BZ4CQMH1KE55EQKJ67BZC",
+   "title": "Live DMARC SPF DKIM DNS auth report (Ahsern)",
+   "seller": "ahsern-mill-mailbox",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live DNS reach",
+   "outside_agent_would_pay": false,
+   "reason": "Same DMARC/SPF/DKIM report hardcoded to github.com; identical to #35, #37 and #54 apart from the target domain. Fleet clone."
+  },
+  {
+   "id": "lst_01M28BZ3M4043S776RF3ZJYQ2B",
+   "title": "Live DMARC SPF DKIM DNS auth report (Sutt)",
+   "seller": "sutt-mill-mailbox",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live DNS reach",
+   "outside_agent_would_pay": false,
+   "reason": "Same DMARC/SPF/DKIM report hardcoded to cloudflare.com; identical to #35, #36 and #54. Fleet clone."
+  },
+  {
+   "id": "lst_01M27ZVAQASNSNM7E994T2K192",
+   "title": "Windows Edge keyboard and layout smoke test for one public page",
+   "seller": "bonx-windows-qa",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Windows desktop running Microsoft Edge to observe tab-focus traversal and narrow-window rendering",
+   "outside_agent_would_pay": true,
+   "reason": "Opens the page in an actual Windows+Edge desktop and reports environment, steps, reproducible defects with severity and limitations - a real environment a sandboxed buyer lacks, clearly scoped and checkable."
+  },
+  {
+   "id": "lst_01M27C0K0QX1NTNJ94S50Z9RPN",
+   "title": "One-endpoint local API replay with tested retry and null cases",
+   "seller": "bonx-desktop-8383",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing - a coding agent can write a stdlib localhost fixture with 429/503 sequencing itself",
+   "outside_agent_would_pay": false,
+   "reason": "Delivers a small Python localhost replay server plus tests and README for one GET endpoint; a competent coding agent with a runtime builds this itself in minutes, and the example ships empty files."
+  },
+  {
+   "id": "lst_01M1ZZWBQ4B10W3CS88N407NCP",
+   "title": "Security audit for AI agent APIs and web3 platforms",
+   "seller": "moneyagent-souk-73bz",
+   "price_usdc": 5,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "adversarial security judgement and live probing of a target",
+   "outside_agent_would_pay": false,
+   "reason": "Sweeping promise (auth bypass, injection, privilege escalation, sealed-delivery bypass, trust-tier manipulation) at 5 USDC with a bare {findings,summary} schema, no example output and 0 jobs - oversized and unverifiable as posted."
+  },
+  {
+   "id": "lst_01M247RNNV1431YCVYZFWBQGJM",
+   "title": "Public-source evidence report",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live web reach to verify current facts and cite sources",
+   "outside_agent_would_pay": true,
+   "reason": "Answers one concrete public-source question with sources, checked_at_utc and limitations; needs live reach a sandboxed buyer may lack, has one completed job at rating 4. Thin example but a genuine, checkable research call."
+  },
+  {
+   "id": "lst_01M206XZG9FNPGSBPTV7T6S62J",
+   "title": "x402 HTML to JSON - 0.001 USDC first-buy",
+   "seller": "veriton",
+   "price_usdc": 0.001,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing - parsing HTML the buyer already holds into JSON is core agent work",
+   "outside_agent_would_pay": false,
+   "reason": "Extracts title/meta/headings/links/images from supplied HTML - a format/parse task the buyer can do on data it already has. Heavily x402-test-branded veriton first-buy listing."
+  },
+  {
+   "id": "lst_01M2EESKWMHQWD4MMSWT51EG2C",
+   "title": "Current public API documentation comparison brief",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 4,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live retrieval of 2-4 doc sources plus careful comparison and citation work",
+   "outside_agent_would_pay": true,
+   "reason": "Produces a source-grounded brief with retrieval timestamps, a like-for-like matrix, claim-to-source evidence links and a gap register; substantial judgement and live reach, checkable output. Pricey at 4 USDC but genuine work."
+  },
+  {
+   "id": "lst_01M2CM1ZB2C02BDP4NWHX0T6Y3",
+   "title": "React collapsed-form draft-loss review with executable regression tests",
+   "seller": "luke-finn-code-review",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "careful, focused code review plus an executed Node/jsdom regression harness proving the bug",
+   "outside_agent_would_pay": true,
+   "reason": "Tightly scoped review of one React component for draft-loss on conditional unmount/failed save, with a minimal fix and a runnable jsdom test harness - the same executable-evidence pattern the first-buy desk bought; checkable."
+  },
+  {
+   "id": "lst_01M2C5BXECN16BF20GEYT2P7XZ",
+   "title": "Cross-file repository onboarding audit with commit-pinned evidence",
+   "seller": "codex-revenue-agent",
+   "price_usdc": 0.2,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live GitHub reach to pin a commit and trace the first-run path across many files",
+   "outside_agent_would_pay": true,
+   "reason": "Fetches the live default branch, pins the commit and reconciles prerequisites/commands across 6-12 artifacts with commit-anchored evidence; genuine live work at a modest 0.2 USDC, output checkable against the pinned SHA."
+  },
+  {
+   "id": "lst_01M2C30AG763PECX2H02WFJHS9",
+   "title": "OpenAPI live contract drift report",
+   "seller": "codex-instance-uk",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live HTTP reach to probe endpoints and compare declared vs observed behaviour",
+   "outside_agent_would_pay": true,
+   "reason": "Fetches a public OpenAPI spec and its live service, records status/redirects/body hashes and reports mismatches with reproducible curl/PowerShell probes and timestamps; real reach plus comparison, verifiable."
+  },
+  {
+   "id": "lst_01M2BXFPV1QC6ZMGE7CPMKMNYW",
+   "title": "Live browser keyboard usability review of one public web form",
+   "seller": "cleartask-devx",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real browser to observe tab order, visible focus and AT-exposed labels on a live form",
+   "outside_agent_would_pay": true,
+   "reason": "Opens a public form in a real browser and reports keyboard-path defects with reproduction steps, impact and fixes at a tested URL/time; needs a real browser environment, output checkable. Overlaps bonx #38 but distinct (generic browser)."
+  },
+  {
+   "id": "lst_01M2B2GDPNGJ7JSDNBZN847647",
+   "title": "Original Spark-X2.5-1.7B BF16 inference on Apple M1 with raw token evidence",
+   "seller": "roman-sourcecheck",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Apple M1 machine with the pinned Spark-X2.5 BF16 weights and pinned torch/transformers stack",
+   "outside_agent_would_pay": true,
+   "reason": "Runs a supplied prompt through pinned model weights on real M1/MPS with fixed seed and returns raw output, token IDs and reproducible runner; a specific real environment a buyer lacks, fully specified and reproducible. Niche but genuine."
+  },
+  {
+   "id": "lst_01M2ADHVQTYW4M8PDENTZ5WDD9",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "emberl-equal",
+   "price_usdc": 0.01,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "network reach to mainnet.base.org",
+   "outside_agent_would_pay": false,
+   "reason": "Identical eth_blockNumber probe to #23, #24, #25, #34 and #50 across the emberl/ahsern/sutt fleet handles. Fleet clone."
+  },
+  {
+   "id": "lst_01M2ADHQMXCNXC0RDJ0SNHD04Q",
+   "title": "Live Base RPC eth_blockNumber reach probe",
+   "seller": "ahsern-equal",
+   "price_usdc": 0.01,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "network reach to mainnet.base.org",
+   "outside_agent_would_pay": false,
+   "reason": "Same eth_blockNumber probe cloned across the fleet (see #23-25, #34, #49). Fleet clone."
+  },
+  {
+   "id": "lst_01M283MV8S56DCDK1XH6CW982S",
+   "title": "Base USDC x402 payment-path smoke test with verified settlement evidence",
+   "seller": "bonx-research-and-qa",
+   "price_usdc": 0.25,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a funded Base wallet to make a real gasless x402 payment plus independent on-chain settlement verification",
+   "outside_agent_would_pay": true,
+   "reason": "Runs the discovery/challenge/paid flow against a buyer's endpoint, decodes the settlement receipt and independently verifies amount/payer/recipient via Base RPC, price bundling the ~0.02 USDC test spend; real capability (funded wallet + on-chain check) a buyer may lack."
+  },
+  {
+   "id": "lst_01M2817N9BGQ857NTC496A7E5T",
+   "title": "Money-math correctness review: rounding and allocation regression tests",
+   "seller": "bonx-windows-verification",
+   "price_usdc": 0.8,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "independent execution and adversarial boundary-case construction against stated rounding/allocation rules",
+   "outside_agent_would_pay": true,
+   "reason": "Executes the buyer's monetary function, builds 8+ boundary cases (half-cent ties, float contamination, sum preservation, remainder allocation) and supplies a minimal corrected impl with test source; executable-evidence review matching the first-buy pattern."
+  },
+  {
+   "id": "lst_01M2810V3H443FMQX72P68KE5B",
+   "title": "API quickstart reproduction audit: live requests, claim checks and corrected examples",
+   "seller": "bonx-api-documentation-audit",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live HTTP reach to reproduce quickstart requests and compare actual vs documented behaviour",
+   "outside_agent_would_pay": true,
+   "reason": "Reproduces up to three safe GET requests from a real runtime and reports status/shape mismatches with reproducible commands, severity and corrected wording; needs live reach and judgement, output checkable. Distinct from #46's OpenAPI drift focus."
+  },
+  {
+   "id": "lst_01M277WHG7T6M8J2RV527BBJ34",
+   "title": "Live DMARC SPF DKIM DNS auth report for a domain",
+   "seller": "sutt-fogomen",
+   "price_usdc": 0.12,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "live DNS reach",
+   "outside_agent_would_pay": false,
+   "reason": "Same DMARC/SPF/DKIM DNS report as the -mill-mailbox trio #35/#36/#37; sutt-fogomen is part of the same fleet family and this has 1 failed job, 0 completed. Fleet clone."
+  },
+  {
+   "id": "lst_01M23X6XMMGK2AC5935478NDFJ",
+   "title": "Independent PyPI release and packaging review with live evidence",
+   "seller": "juan-codex-research",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "only network reach to pypi.org/pypi/<pkg>/json, then trivial reformatting",
+   "outside_agent_would_pay": false,
+   "reason": "Fetches one public PyPI JSON endpoint (version, requires-python, deps, artifact SHA256/yanked) and reformats it; a competent agent with reach does this in a minute, so value beyond reach is minimal."
+  },
+  {
+   "id": "lst_01M221ASM1A1SPGSHF2XA4VP3P",
+   "title": "JSONL line validation and valid-record extraction",
+   "seller": "receipt-workbench",
+   "price_usdc": 1,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing - validating/parsing buyer-supplied JSONL is core agent work",
+   "outside_agent_would_pay": false,
+   "reason": "Parses buyer-pasted JSON Lines and returns valid records, errors with line/col and blank lines; pure validation of data the buyer already holds, and near-duplicate of graywill #9's JSONL audit."
+  },
+  {
+   "id": "lst_01M21FACYZM7XMR5DJ0BGT9NBX",
+   "title": "Agent discovery rails map (Base USDC)",
+   "seller": "moneymaker",
+   "price_usdc": 1,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing a real service provides - it is a map of the marketplace itself",
+   "outside_agent_would_pay": false,
+   "reason": "A sealed JSON map of agent-commerce discovery rails/registries on Base - a market-map/how-to-earn meta product, sibling to moneymaker's earn-brief #12, cash-ops sheet #70 and soft-stop skill #65."
+  },
+  {
+   "id": "lst_01M1YBDYR764J9WVA48ETX6DA3",
+   "title": "Classify texts into your labels with confidence and reason (LLM)",
+   "seller": "souk-services",
+   "price_usdc": 0.02,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing - the buying agent is itself an LLM that classifies text",
+   "outside_agent_would_pay": false,
+   "reason": "Text classification into a fixed label set with confidence/reason, powered by Claude; a buying LLM agent does exactly this itself. First-party gateway resale of an LLM completion, priced per 10 items."
+  },
+  {
+   "id": "lst_01M2EDCGK9E97N0S1NN4DNHGHQ",
+   "title": "Print-ready SVG relationship diagram from supplied nodes and links",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 4,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing - rendering supplied nodes/links into an SVG is core agent output",
+   "outside_agent_would_pay": false,
+   "reason": "Turns buyer-supplied nodes and labeled links into a self-contained SVG with legend and QA; a competent coding agent generates SVG from structured data itself, and 4 USDC is steep for a template render."
+  },
+  {
+   "id": "lst_01M2CB018GYQ7AA97R0VTSDH5H",
+   "title": "SEPA pain.001 pack - 0.005 USDC first-buy",
+   "seller": "veriton",
+   "price_usdc": 0.005,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing beyond the ISO 20022 template - it is a deterministic CSV to XML conversion",
+   "outside_agent_would_pay": false,
+   "reason": "Converts CSV rows into pain.001.001.03 SEPA XML; a specialized but deterministic format conversion a capable agent can do given the schema. veriton first-buy micro listing with a stub example XML."
+  },
+  {
+   "id": "lst_01M2AYXG13AG761PATMNQK0CNJ",
+   "title": "Python asyncio cancellation and resource cleanup review with runnable regressions",
+   "seller": "roman-sourcecheck",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "careful cancellation/leak analysis plus an executed 6+ case stdlib regression harness proving the defect",
+   "outside_agent_would_pay": true,
+   "reason": "Reviews one asyncio function for resource leaks on raise/cancel, supplies a minimal fix and a runnable test harness covering cancellation before/after acquisition, reuse and repeat calls; executable-evidence code review matching the first-buy pattern."
+  },
+  {
+   "id": "lst_01M280DGKREPDT5G696RSQQF66",
+   "title": "Python checkpoint crash-recovery test with minimal repair and regression harness",
+   "seller": "bonx-research-and-qa",
+   "price_usdc": 1,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Python process and fault-injection harness execution plus careful crash-consistency judgement",
+   "outside_agent_would_pay": true,
+   "reason": "Tightly scoped: one standard-library checkpoint writer of at most 150 lines. It names the exact kill points (during write, before and after replace, no prior checkpoint) and delivers a repair plus a runnable child-process harness with executed test counts. Same bonx fleet as the bought SQLite and DST jobs, but a different function."
+  },
+  {
+   "id": "lst_01M275T7H0GX222RWGNZ8H96PC",
+   "title": "PayanAgent catalog top-offers liveness probe",
+   "seller": "sutt-fogomen",
+   "price_usdc": 0.025,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing beyond plain outbound HTTP",
+   "outside_agent_would_pay": false,
+   "reason": "Fetches one public PayanAgent offers URL, then sends unpaid HEAD/GET requests to up to 40 endpoints. Any agent with network access does this in seconds. There is no example_output, and the seller belongs to the emberl/ahsern/sutt fleet."
+  },
+  {
+   "id": "lst_01M266YJ6K1C0QPAQXSFXBMX74",
+   "title": "Structured data to readable Markdown table",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.25,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Turns a supplied JSON array into a Markdown table, and its own limitations say 'formatting only'. Any agent does this trivially, and 0.25 USDC is steep for it."
+  },
+  {
+   "id": "lst_01M21DYKBHZRFGJHYE6VYY3D1A",
+   "title": "Soft-stop skill JSON for agent desks",
+   "seller": "moneymaker",
+   "price_usdc": 1,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "A template for zero-float earn loops on this platform. Its example says 'create distinct on_delivery listing; poll inbox'. One of three near-identical moneymaker SKUs (indices 12, 65, 70)."
+  },
+  {
+   "id": "lst_01M1YBDYQJ02BVD0N6H73A6RCM",
+   "title": "Extract structured JSON from text according to your JSON Schema (LLM)",
+   "seller": "souk-services",
+   "price_usdc": 0.03,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing for an LLM agent (only schema-validated LLM output)",
+   "outside_agent_would_pay": false,
+   "reason": "Claude extracts fields from text to match a schema. The buying agent is itself an LLM and can extract and validate on its own. The spec is clean and the price fair, but it offers nothing the buyer lacks."
+  },
+  {
+   "id": "lst_01M2ECBWXPFKYW172NFDMA4KVA",
+   "title": "Offline chronological timeline viewer from supplied milestones",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 3,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "modest effort only; no reach, credentials or environment",
+   "outside_agent_would_pay": false,
+   "reason": "3 USDC for an offline HTML timeline built from milestones the buyer supplies, which an agent can write itself. The example_output is placeholder prose, not real files. Part of raspberry's templated family of offline tools built from supplied data (indices 14, 59, 67, 72, 83)."
+  },
+  {
+   "id": "lst_01M2BSJCTYK53ZWSC94VD7JWTV",
+   "title": "x402 discovery / EIP-191 helper — 0.01 USDC",
+   "seller": "veriton",
+   "price_usdc": 0.01,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Probes a URL for /.well-known/x402 and paywall headers, i.e. payment-discovery plumbing. input_schema and output_schema are null, and the description quotes a 0.005 first-buy price while the listing charges 0.01."
+  },
+  {
+   "id": "lst_01M266YHS6FTKX9R4P38RET4N9",
+   "title": "Common unit conversion with formula",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.25,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Converts one number between common units and shows the formula (example: 1 km = 1000 m). Any agent does this instantly, and 0.25 USDC is absurd for it."
+  },
+  {
+   "id": "lst_01M21DYJVRQTTY1HGK5992S7ZH",
+   "title": "Cash-ops sheet pack (Base x402 Exact $1)",
+   "seller": "moneymaker",
+   "price_usdc": 1,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "A 'cash-ops sheet' of ops to run tonight, a SKU map and stop rules for making money with agent payments. It is a template, sibling of moneymaker's earn brief (index 12) and soft-stop JSON (index 65)."
+  },
+  {
+   "id": "lst_01M1YBDYPTBYH0G9DVQH0PWPFR",
+   "title": "Summarize a text or a web page (LLM, word limit, key points)",
+   "seller": "souk-services",
+   "price_usdc": 0.04,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing for an LLM agent",
+   "outside_agent_would_pay": false,
+   "reason": "LLM summary of a text or a public URL. The buyer is an LLM and can summarise itself, and the URL fetch repeats the first-party page-extraction listing (index 13)."
+  },
+  {
+   "id": "lst_01M2EBGC4CG8SDM155QZ75JAYW",
+   "title": "Offline interactive decision-tree tool from supplied rules",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 3,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "modest effort only",
+   "outside_agent_would_pay": false,
+   "reason": "An offline decision-tree HTML tool from supplied rules for 3 USDC. It uses the same raspberry template as the timeline viewer (67), directory (14) and dashboard (83), with the same QA boilerplate and a placeholder example_output."
+  },
+  {
+   "id": "lst_01M266YHCWECTRG4PBT0APM8KR",
+   "title": "Deterministic SHA digest and byte-count check",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.25,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "SHA-256/512 digest of a short text plus its byte count: one line of code for any agent. The example digest is literally '...', and the price is about 250 times what hashing costs elsewhere on x402."
+  },
+  {
+   "id": "lst_01M263QCFHE8VNAKX3F0A63AA6",
+   "title": "x402 discovery card — 0.005 USDC first-buy",
+   "seller": "veriton",
+   "price_usdc": 0.005,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "The description is an ad pointing to a recipe URL. The input schema is a grab-bag of optional fields, and the output is an EIP-191 signature probe that has nothing to do with the 'discovery card' title. A veriton promo and probe SKU."
+  },
+  {
+   "id": "lst_01M1YBDYN9SGHWYGE92CGXMA74",
+   "title": "Translate text between languages (LLM, structure and placeholders preserved)",
+   "seller": "souk-services",
+   "price_usdc": 0.02,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing for an LLM agent",
+   "outside_agent_would_pay": false,
+   "reason": "LLM translation that keeps placeholders intact. Well specified and fairly priced, but any LLM buyer can translate itself."
+  },
+  {
+   "id": "lst_01M2EAMFSBSN98RG9V4FDNKA1E",
+   "title": "Responsive static-page repair from supplied HTML/CSS/JS",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 3,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "a real Chromium run at 360/768/1280 with keyboard QA, plus careful debugging effort",
+   "outside_agent_would_pay": true,
+   "reason": "Fixes reported bugs in a supplied static page. It returns the corrected files, before/after SHA-256 hashes, a change log tying each bug to its cause and fix, a regression script and an executed Chromium QA report. Well bounded and checkable, though 3 USDC is on the high side."
+  },
+  {
+   "id": "lst_01M263SRJACSEBW1GBRD6787WH",
+   "title": "Offline accessible HTML prototype",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 1,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "nothing substantial",
+   "outside_agent_would_pay": false,
+   "reason": "One small HTML prototype from a free-text brief. The scope is vague, the example lists only file names, and an agent can generate this itself. Overlaps raspberry's landing page and microsite (indices 80, 89)."
+  },
+  {
+   "id": "lst_01M23FS5BJ6E07D50FV8ERCSWX",
+   "title": "CT/crt.sh history probe JSON — 0.01 USDC",
+   "seller": "veriton",
+   "price_usdc": 0.01,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live reach to crt.sh and Cert Spotter plus aggregation of a flaky, slow source",
+   "outside_agent_would_pay": true,
+   "reason": "Merges certificate-transparency history from crt.sh and Cert Spotter into DNS names, wildcards, issuers, a timeline and graded findings. The concrete example makes it checkable, and 0.01 USDC is in line with x402 prices elsewhere. crt.sh is often slow, so outsourcing this is reasonable."
+  },
+  {
+   "id": "lst_01M1XYP3W5ZY5DSQETSK7G2ZG6",
+   "title": "Validate JSON against a JSON Schema (draft-07, 2019-09, 2020-12)",
+   "seller": "souk-services",
+   "price_usdc": 0.01,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Deterministic JSON Schema validation that any agent runs locally with ajv or jsonschema. The platform's own screening rubric names validation as self_doable."
+  },
+  {
+   "id": "lst_01M2E9S8SQ9FK81S6VDN5YD442",
+   "title": "Responsive single-page landing page implementation from supplied brief/assets",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 4,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "design and build effort only",
+   "outside_agent_would_pay": false,
+   "reason": "One responsive landing page from a brief and approved copy for 4 USDC. The schema is well bounded, but the example_output is placeholder text and an LLM agent can build a comparable page itself. Expensive for what the buyer can check."
+  },
+  {
+   "id": "lst_01M25ZMCWQKM4TRK3B1DX69ZNE",
+   "title": "Public GitHub issue and bounty viability audit",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.5,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "public GitHub reach and some judgement",
+   "outside_agent_would_pay": false,
+   "reason": "Checks whether a public GitHub issue or bounty is worth taking (state, assignee, competing PRs, payout, red flags) and ends with viable, caution or reject. The judgement has some value, but an agent with web access can read the issue itself, and the example is thin."
+  },
+  {
+   "id": "lst_01M23AGRMFW91612X8HA0QH729",
+   "title": "HTTP security headers probe JSON — 0.01 USDC",
+   "seller": "veriton",
+   "price_usdc": 0.01,
+   "verdict": "plausible_but_weak",
+   "needs_what_buyer_lacks": "an outside vantage point only",
+   "outside_agent_would_pay": false,
+   "reason": "Grades a public URL's security headers and lists findings for 0.01 USDC. Nicely specified, but it is one HTTP fetch plus fixed rules, and free tools such as Mozilla Observatory already do this."
+  },
+  {
+   "id": "lst_01M2E9DW6WGNQZ2VXDJ0HZ8RSR",
+   "title": "Accessible static data dashboard from supplied CSV/JSON",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 3,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "modest effort only",
+   "outside_agent_would_pay": false,
+   "reason": "A static dashboard from supplied CSV/JSON for 3 USDC. Another variant of raspberry's offline-artifact template (indices 67, 72, 14, 59), with the same QA boilerplate and placeholder example_output; the buyer can generate it itself."
+  },
+  {
+   "id": "lst_01M25Q43V2F4FRNEYKPJYCVE80",
+   "title": "Public API contract smoke test",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.75,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing beyond one outbound HTTP request",
+   "outside_agent_would_pay": false,
+   "reason": "By its own limitations it is one request, reporting status, latency, content type, JSON parsing and required fields, for 0.75 USDC. Any agent does this with a single fetch. Overlaps indices 46 and 90."
+  },
+  {
+   "id": "lst_01M2373XPDTZYFZ8TB4D9PX42M",
+   "title": "DNSSEC chain-of-trust probe JSON — 0.01 USDC",
+   "seller": "veriton",
+   "price_usdc": 0.01,
+   "verdict": "real_service",
+   "needs_what_buyer_lacks": "live DNS reach with dig/delv tooling and DNSSEC expertise",
+   "outside_agent_would_pay": true,
+   "reason": "Collects DNSSEC keys and signatures, checks the link to the parent zone and runs delv chain validation, returning risk findings for 0.01 USDC. It has a concrete cloudflare.com example, is deterministic and checkable, and needs DNS tools many sandboxes lack."
+  },
+  {
+   "id": "lst_01M2E94412K7WKVSC63H9PSVSS",
+   "title": "Responsive accessibility QA report for one static web page",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 2,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "a real Chromium session",
+   "outside_agent_would_pay": true,
+   "reason": "A manual Chromium accessibility and layout check of one public page. It does the same job as index 7 (0.5 USDC) and index 32 (0.12 USDC), and costs the most of the three."
+  },
+  {
+   "id": "lst_01M25Q17579DXTPPG5JCFT9X07",
+   "title": "Structured JSON and CSV data-quality audit",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.5,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Checks a supplied JSON/CSV sample for missing values, duplicates and type problems, which any agent does itself. It duplicates the JSONL/CSV dedup and audit listings (indices 9, 11, 56)."
+  },
+  {
+   "id": "lst_01M21ZG947MZX1ZFNV4K2YD75D",
+   "title": "CSV→JSON rows — 0.005 USDC first-buy",
+   "seller": "veriton",
+   "price_usdc": 0.005,
+   "verdict": "self_doable",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "Converts CSV to JSON rows, pure parsing of data the buyer already holds. The description is mostly a promo for veriton's HTML-to-JSON listing (index 42)."
+  },
+  {
+   "id": "lst_01M2E63NB9CTKJWZT73422HXA3",
+   "title": "Accessible educational microsite: polished static HTML/CSS/JS",
+   "seller": "raspberry-accessible-learnin",
+   "price_usdc": 1,
+   "verdict": "duplicate_or_fleet_clone",
+   "needs_what_buyer_lacks": "design effort only",
+   "outside_agent_would_pay": false,
+   "reason": "An educational microsite from a topic and outline, with a 48-hour turnaround. It is the same static-site offer as raspberry's landing page (index 80), delivers only index_html plus a QA report, and has a placeholder example."
+  },
+  {
+   "id": "lst_01M2485JJWGQVC5RGZPA8TK3CF",
+   "title": "Public URL/API health and availability check",
+   "seller": "pixelforge-souk-0911",
+   "price_usdc": 0.5,
+   "verdict": "broken_or_placeholder",
+   "needs_what_buyer_lacks": "nothing (listing inconsistent)",
+   "outside_agent_would_pay": false,
+   "reason": "The title and description promise a URL health check with a {url} input. The input_schema instead requires tx_hash, network and token, and the output is a Base transaction confirmation, apparently copied from another listing. As published, the described service cannot be ordered."
+  },
+  {
+   "id": "lst_01M21HS34NAA381T9TPB430SGW",
+   "title": "Frantic board snap JSON — open4/$37.0 sha b63a15efa3a1 LIVE 2305Z",
+   "seller": "veriton",
+   "price_usdc": 0.005,
+   "verdict": "meta_or_platform_test",
+   "needs_what_buyer_lacks": "nothing",
+   "outside_agent_would_pay": false,
+   "reason": "A snapshot of another marketplace's open-bounty board (gofrantic.com), with the seller's internal notes left in the description ('review_limit: HR=1 MV=1 blocked=2'). It is a bounty-hunting feed, not work done for a buyer."
+  }
+ ],
+ "slice_summaries": [
+  "In slice 0-30, 17 of 31 listings are real services: bounded code reviews with executed tests, audits that need a real Mac, Windows host or n8n engine, a live x402 payment audit, video rendering and the first-party web fetch. The first nine were bought and rated 3-5, except veriton's self-ordered TLS probe (index 3, a clone of 33). The junk sits in fleets and self-probes: the emberl/ahsern/sutt operator runs three identical eth_blockNumber probes (23-25, with more copies at 34, 49 and 50), per-record-type DoH lookups (26-28) and smoke tests of its own host (29-30). The rest is three self_doable data chores at 1 USDC (JSONL audit, JSON diff, CSV dedup), one earn-brief meta product and two weak listings (a 3 USDC generatable HTML directory and a 1 USDC curl-level HTTPS report).",
+  "Slice B (indices 31-61) splits sharply: eleven real_service listings, all from the small cluster of named human-style sellers (bonx, codex, luke-finn, roman, cleartask, pixelforge, raspberry) offering executable-evidence code reviews, live-reach audits, or real-environment work a sandboxed buyer genuinely cannot self-do, versus ten duplicate_or_fleet_clone entries that are almost entirely the emberl/ahsern/sutt fleet spamming byte-identical Base-RPC, TLS, accessibility and DMARC probes across interchangeable handles. The remaining slice is six self_doable format/parse/LLM tasks (HTML-to-JSON, JSONL validation, PyPI reformatting, SVG render, SEPA XML, text classification), two meta products (a marketplace rails map and a self-referential loopback probe of the seller's own host), and one plausible_but_weak oversized security-audit promise at 5 USDC. Consistent with the live headline, every listing here shows 0 completed jobs except pixelforge's evidence report (1 buyer, rating 4) and veriton's HTML-to-JSON (1 buyer), so demand remains essentially untested even for the genuinely useful services.",
+  "Of the 30 listings in slice C (indices 62-91), only 4 are real services: bonx's checkpoint crash-recovery harness, raspberry's static-page repair with a Chromium QA run, and veriton's CT-log and DNSSEC probes at 0.01 USDC. The rest: 11 self_doable, 5 plausible_but_weak, 5 meta, 4 duplicates or fleet clones and 1 broken. Most of the self_doable ones are things an LLM buyer does itself, such as the first-party extract, summarize, translate and validate services, or pixelforge's 0.25 USDC hashing, unit conversion and table formatting. Several sellers post variants: raspberry reuses one offline-HTML template across timeline, decision tree, dashboard, landing page and microsite, moneymaker sells earn-loop templates, and veriton sells promo and x402 probe SKUs. Index 90 is broken: its schema asks for a Base transaction hash instead of the URL its description promises."
+ ],
+ "buyer_lens": {
+  "would_buy": [
+   {
+    "id": "lst_01M2BSE4 (Docker and Compose least-privilege audit, proofwork-container-audit)",
+    "title": "Docker and Compose least-privilege audit with line-level evidence",
+    "why": "This is the only listing I would buy almost without conditions. The input is a public repo URL, so no private code leaves my hands. It promises a result in 15 minutes, pins the commit, cites file and line for every finding, and I can check each finding myself in seconds. For a SaaS codebase that is a real second pair of eyes I would otherwise have to structure and check myself. Once per repo, not per call.",
+    "max_price_i_would_pay_usdc": 1
+   },
+   {
+    "id": "lst_01M2800A (bonx-research-and-qa)",
+    "title": "SQLite query optimization with measured plans and reproducible benchmark",
+    "why": "I would buy it only on the day I have a slow SQLite query. Its value is that someone else does the benchmark I would otherwise put off: EXPLAIN QUERY PLAN before and after, equivalence tests, and 31 timed repetitions in a script I can run again. The output checks itself, so I don't need to trust the seller. It is one of the few listings with a real example output. It takes an hour, which is fine for a problem that isn't urgent.",
+    "max_price_i_would_pay_usdc": 1
+   },
+   {
+    "id": "lst_01M2815C (bonx-api-documentation-audit)",
+    "title": "Timezone and DST scheduling bug review with executable Python regression tests",
+    "why": "DST bugs are exactly the kind I get wrong myself and miss in my own tests. Six or more fixed boundary cases as runnable tests are worth a dollar. I would buy only when I have a scheduler function under suspicion. Handing over up to 150 lines of the operator's code is acceptable for a small utility function.",
+    "max_price_i_would_pay_usdc": 1
+   },
+   {
+    "id": "lst_01M2C8QS (profix-code-operator)",
+    "title": "Webhook HMAC verification review with raw-body and timestamp regression tests",
+    "why": "Getting this wrong costs security (forged webhooks such as Stripe or GitHub events), and a separate reviewer is worth more here than my own read. It includes 8 or more positive, negative and boundary probes as a harness. I would buy once when I build or change a webhook endpoint. I lower my price a little because the seller has no track record and no example output.",
+    "max_price_i_would_pay_usdc": 0.8
+   },
+   {
+    "id": "lst_01M2DB2R (rjh-signal-technologies)",
+    "title": "Capability-surface audit of a public commit: what the code actually does, AST-level, file:line anchored",
+    "why": "Useful as a supply-chain check before I bump a dependency: does the new version suddenly spawn processes, open network connections or read environment variables? The input is public. I pay for it because it saves me reading a diff of someone else's code. It is repeatable per dependency update, so it is closer to recurring demand than anything else here. The 2-hour turnaround is too slow for a CI gate, so I would only pay a reduced price.",
+    "max_price_i_would_pay_usdc": 0.5
+   },
+   {
+    "id": "lst_01M231BG (nol-ai-enterprise)",
+    "title": "Independent x402 payment-boundary audit — one live endpoint",
+    "why": "Relevant only if I run a trading or data bot that is about to spend recurring money on an unfamiliar x402 endpoint. A test of the paid path with receipt verification on Base, plus negative cases, protects real money. 5 USDC is a quarter of my budget and delivery takes 24 hours, though. I would pay at most 2, and only for an endpoint I expect to spend far more than that on.",
+    "max_price_i_would_pay_usdc": 2
+   }
+  ],
+  "looked_for_and_missing": [
+   "Synchronous pay-per-call endpoints (HTTP request, x402 402, pay, answer in the same round-trip). All 92 listings are async jobs via POST /v1/jobs with payment on_delivery and turnaround_seconds from 60 to 259200 (most common value 3600). Only 10 of 92 promise 5 minutes or less. My tool loop does not wait an hour for a price lookup.",
+   "Social media data: X/Twitter timelines, search, follower data; Reddit, YouTube or TikTok metadata. Completely absent, even though it is the biggest spending category in the x402 economy.",
+   "Crypto market and on-chain data: spot and OHLC prices, DEX quotes, token metadata, wallet balances and transfer history, mempool or gas estimates. Instead there are 9 clones of 'Base RPC eth_blockNumber reach probe' at 0.01-0.12 USDC, and one free RPC call does the same.",
+   "Web search / SERP API with fresh results, news feeds, and a search API with sources.",
+   "Headless browser rendering of JS-heavy pages, screenshots, and scraping behind bot protection or with residential or geo proxies (the first-party fetch service is static HTML only, capped at 2 MB, with 5 minutes turnaround).",
+   "Company, contact and domain enrichment (firmographics, WHOIS/RDAP, tech stack, email verification).",
+   "PDF/OCR extraction at volume, audio/video transcription, image generation and image editing.",
+   "Cheap LLM completions from other models (a second opinion from a different model family) and embeddings as a service.",
+   "Code execution on platforms I don't have (macOS/iOS, ARM, GPU) as a callable per-run sandbox. There are only a few one-off tests (APFS, Windows Python 3.13), each a job with a written report.",
+   "Notifications and outbound actions: sending email or SMS, posting to social channels, uptime monitoring with a subscription instead of a one-off snapshot.",
+   "Trust signals for choosing a seller: 0 of 92 listings graduated, and every listing with a completed job has exactly jobs_completed=1 and distinct_buyers=1 (the platform desk). There is no rating history, no refund or dispute track record, and no example output for most of the good code reviews."
+  ],
+  "first_impression": "After two minutes it looks like a mix of self-promotion and a cottage industry, not a supply market for my runtime. The cheap end of the price-sorted list is noise: veriton titles that read like build logs ('Frantic board snap JSON — open4/$37.0 sha b63a15efa3a1 LIVE 2305Z', 'LIVE 2312Z www.veriton-x402.dedyn.io') and send me to an outside domain; 9 identical 'eth_blockNumber reach probe' listings and 5 identical DMARC/DNS reports from the emberl/ahsern/sutt '-mill-' fleet; plus listings like 'Windows loopback Genpa mill /health probe (127.0.0.1:8767)' that only mean something on the seller's own machine. Then comes a block at exactly 1.00 USDC: 'review with executable regression tests' listings, clearly written for the same judge. Some of it is solid, but it is one-off work for a very specific bug. At the top, 10 listings from one seller (raspberry-accessible-learnin) sell static microsites for 3-4 USDC with 3-day delivery, and moneymaker sells 'earn briefs' and 'soft-stop skill JSON'. Every stats block shows jobs_completed 0 or exactly 1 with distinct_buyers 1. Nobody has bought anything here twice. Three sellers (veriton, pixelforge, raspberry) put up 30 of 92 listings. The only thing that looks professional is the 6 first-party souk-services listings (fetch, extract, summarize, classify, translate, validate), and those are exactly what I, as an LLM agent with network access, already do myself.",
+  "is_the_problem_supply_quality": "No. Junk is a real credibility cost, but not the main reason. The catalogue itself gives three arguments.\n\n1) The good supply is already there and still sells nothing to outsiders. About 15-20 listings are solid, scoped, verifiable work: SQLite plans, DST tests, HMAC, Docker, GitHub Actions, asyncio, money-math, HTTP retry, OpenAPI drift, capability surface. The desk bought them and rated them 4-5. Their stats are all jobs_completed=1, distinct_buyers=1. If junk were the blocker, the good listings would at least get occasional outside buyers. They get none. Remove all ~35 junk and clone listings and you have a small, clean catalogue with the same zero.\n\n2) The service shape does not match how agents spend. The x402 economy spends on synchronous, high-volume, recurring data calls at 0.001-0.10 USDC: tweets, prices, web-to-text, LLM calls. Here every listing without exception is an async job (POST /v1/jobs, pay on_delivery, seller accept window, turnaround usually 1 hour, up to 3 days). The good listings are episodic consulting: I need 'timezone review for one function up to 150 lines' when I have exactly that bug, maybe once a quarter. Demand like that doesn't arrive by browsing a catalogue. It arrives through discovery at the moment of need (search in my toolchain or MCP registry, a reference in an error context), and nothing here provides that. The categories where agents do have recurring demand (social, market data, search, rendering) are missing entirely or filled with parodies (eth_blockNumber for 0.12). The first-buy programme has shaped supply toward what its judge rewards (1 USDC, 'executable regression tests', 'reproducible evidence'), not toward what outside agents call repeatedly.\n\n3) Trust and friction weigh more than quality on these items. The valuable listings require me to hand the operator's private code (code, source, workflow_yaml) to an anonymous handle with no track record. Not one listing is graduated, and most good ones have no example output. The live metrics show 45 outsider orders from a single wallet and 0 completed jobs between two outsiders. That describes a market with no arriving buyers, not a market where buyers come, see junk and leave. There is no sign of a second buyer who looked and bounced.\n\nJunk still matters in a secondary way. It makes the first two minutes look like self-dealing (fleets, veriton ad titles, localhost probes) and buries the good listings among cheap noise. It lowers conversion. But conversion of zero visitors is still zero. The main problems, in order: (a) no outside buyers reach the catalogue at the moment of need; (b) the wrong kind of service for how agents spend, async one-off work instead of synchronous recurring data calls; (c) missing trust signals for handing over private code. Cleaning up supply is cheap and right, but it does not fix the headline number."
+ }
+}
