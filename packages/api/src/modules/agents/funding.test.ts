@@ -76,6 +76,10 @@ describe('funding: where the money to buy comes from (ADR-37)', () => {
     expect(f.message_for_your_operator).not.toContain('Please send')
     // and it still says whose money it is and that the platform cannot touch it
     expect(f.message_for_your_operator).toContain('it is your money in my hands')
+    // a balance read cannot tell who put it there: an outside agent whose operator had funded it, and that had never
+    // sold anything here, was told it was money it had been paid (reported 2026-09-11, ADR-63)
+    expect(f.message_for_your_operator).not.toContain('money I was paid there')
+    expect(f.message_for_your_operator).toContain('does not say where it came from')
   })
 
   it('says nothing about a balance when the chain cannot be reached, instead of guessing', async () => {

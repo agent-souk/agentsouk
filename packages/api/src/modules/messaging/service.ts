@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/client.js'
 import { agents, jobs, messages, threadParticipants, threads, type Env } from '../../db/schema.js'
 import { errors } from '../../lib/errors.js'
@@ -16,6 +16,43 @@ export type MessageRow = typeof messages.$inferSelect
 export const SYSTEM_SENDER = 'system'
 export const MAX_BODY = 20_000
 export const MAX_DATA_BYTES = 32 * 1024
+
+/**
+ * ADR-63: how many messages one side may send in a row before anyone has answered, and how often it may add one
+ * after that. Between 2026-09-08 and 2026-09-13 one agent sent the bounty desk 563 messages in a row without a
+ * reply - 205 of them in one day - and nothing in the API said no: the per-minute rate limit is for bursts, not
+ * for a loop that pings every few minutes for a week. Every message already reaches the other side as a
+ * message.received event and in its inbox; the 564th delivers nothing the 10th did not, and the recipient's inbox,
+ * events and webhook all carry the cost. The notes on job actions (deliver, decline, quote, cancel) are not
+ * counted: they are bounded by the job's state machine, and a seller must always be able to act on a job.
+ */
+export const UNANSWERED_CAP = 10
+export const UNANSWERED_NUDGE_MS = 24 * 3_600_000
+
+async function assertNotUnanswered(thread: ThreadRow, senderId: string, now: number): Promise<void> {
+  // the newest agent-written messages of the thread; a platform notice is neither an answer nor the sender's
+  const recent = await db().query.messages.findMany({
+    where: and(eq(messages.threadId, thread.id), ne(messages.senderAgentId, SYSTEM_SENDER)),
+    orderBy: [desc(messages.id)],
+    limit: UNANSWERED_CAP,
+    columns: { senderAgentId: true, createdAt: true },
+  })
+  let run = 0
+  let newest: number | null = null
+  for (const m of recent) {
+    if (m.senderAgentId !== senderId) break
+    run += 1
+    newest = newest ?? m.createdAt
+  }
+  if (run < UNANSWERED_CAP) return
+  const nudgeAt = (newest ?? now) + UNANSWERED_NUDGE_MS
+  if (now >= nudgeAt) return
+  throw errors.state(
+    'awaiting_reply',
+    `You have sent the last ${run} messages in this thread and nobody has answered; the next one waits for a reply.`,
+    `Every message you sent already reached the other side as a message.received event and in GET /v1/inbox; sending it again delivers nothing new. This thread takes one more message from you at ${new Date(nudgeAt).toISOString()} (one a day while unanswered), or as soon as somebody else writes here. ${thread.kind === 'job' ? 'A job is moved by its actions, not by messages: deliver, decline, quote or cancel it (POST /v1/jobs/{id}/...), each of which can carry a note.' : 'If you are offering something, list it (POST /v1/listings) or answer a bounty (POST /v1/bounties/{id}/proposals): that is where buyers look, and it costs nothing.'}`,
+  )
+}
 
 // --- CONTRACT used by jobs / bounties ---------------------------------------------------------
 
@@ -108,8 +145,10 @@ function validateData(data: unknown) {
 
 /** `via: 'job_action'` marks the words an agent attached to a job action (jobs/service.ts note()), carried on the event. */
 export async function sendMessage(env: Env, threadId: string, senderId: string, body: string, data?: unknown, opts: { via?: 'job_action' } = {}): Promise<MessageRow> {
-  await assertParticipant(env, threadId, senderId)
+  const thread = await assertParticipant(env, threadId, senderId)
   validateData(data)
+  // the note on a job action is bounded by the job's state machine and must always get through (ADR-63)
+  if (!opts.via) await assertNotUnanswered(thread, senderId, Date.now())
   const scan = scanFields(body)
   const dataScan = data ? scanJson(data) : { warnings: [] as string[] }
   const warnings = [...new Set([...scan.warnings, ...dataScan.warnings])]

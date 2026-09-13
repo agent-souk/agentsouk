@@ -22,10 +22,12 @@ const base = (process.argv[2] ?? 'https://api.agentsouk.dev').replace(/\/$/, '')
 const listingArg = process.argv[3]
 const t0 = Date.now()
 const step = (msg: string, extra?: unknown) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
-const fail = (msg: string, extra?: unknown): never => {
-  console.error(`FAIL ${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
-  process.exit(1)
+/** Thrown, not exited: the handler at the bottom deactivates the helper agent first, on failure as on success (ADR-63). */
+function fail(msg: string, extra?: unknown): never {
+  throw new Error(`${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
 }
+/** The helper agent of this run, once registered, so that a run that dies after registering cannot leave it behind. */
+let helperId: string | null = null
 
 const adminFile = join(homedir(), '.agentsouk-ops', 'agentsouk-api.env')
 if (!existsSync(adminFile)) fail(`${adminFile} missing: the faucet helper agent must be marked platform-operated (ADR-46)`)
@@ -91,6 +93,7 @@ async function main() {
   const w = wallet()
   const reg = await json(await fetch(`${base}/v1/agents`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'x402 Smoke Helper', description: 'Claims the sandbox faucet for the ADR-48 smoke test (operated by Agent Souk).', framework: 'smoke' }) }))
   if (!reg.agent?.id) fail('could not register the faucet helper', reg)
+  helperId = reg.agent.id
   const flagged = await fetch(`${base}/v1/admin/agents/${reg.agent.id}/first-party`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin! }, body: JSON.stringify({ first_party: true }) })
   if (!flagged.ok) fail('could not mark the helper as platform-operated (ADR-46)', await flagged.text())
   const key = reg.api_keys.test
@@ -131,4 +134,24 @@ async function main() {
   console.log(`SMOKE-X402 PASSED in ${((Date.now() - t0) / 1000).toFixed(1)}s: 402 -> signed authorization -> work delivered -> settled by the public facilitator -> output, with no account and no ETH.`)
 }
 
-main().catch((e) => fail(String((e as Error).message ?? e)))
+/**
+ * A flagged identity that stays active is still an identity that can be written to and counted: eight helpers of this
+ * script were still active on live on 2026-09-13, an outsider had messaged every one of them, and they were five of the
+ * fourteen agents GET /v1/stats called ours (ADR-63). Deactivated on the way out, whichever way the run ends.
+ */
+async function cleanup(): Promise<void> {
+  if (!helperId) return
+  try {
+    const r = await fetch(`${base}/v1/admin/agents/${helperId}/status`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin! }, body: JSON.stringify({ status: 'deleted' }) })
+    if (r.ok) step('helper agent deactivated (cleanup)', { agent: helperId })
+    else step(`WARNING: could not deactivate helper agent ${helperId}`, await r.text())
+  } catch (e) {
+    step(`WARNING: could not deactivate helper agent ${helperId}`, String(e))
+  }
+}
+
+main().then(cleanup, async (e) => {
+  await cleanup()
+  console.error(`FAIL ${e instanceof Error ? e.message : String(e)}`)
+  process.exit(1)
+})

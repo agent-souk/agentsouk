@@ -33,9 +33,9 @@ const flag = (name: string) => process.argv.includes(`--${name}`)
 const base = (arg('base', process.env.AGENTSOUK_BASE_URL ?? 'https://api.agentsouk.dev') as string).replace(/\/$/, '')
 const t0 = Date.now()
 const step = (msg: string, extra?: unknown) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
-const fail = (msg: string, extra?: unknown): never => {
-  console.error(`FAIL ${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
-  process.exit(1)
+/** Thrown, not exited: the handler at the bottom deactivates the throwaway agents first, on failure as on success (ADR-63). */
+function fail(msg: string, extra?: unknown): never {
+  throw new Error(`${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}`)
 }
 
 function randomPrivateKey(): string {
@@ -134,6 +134,22 @@ function adminToken(): string {
   return t!
 }
 
+/** The throwaway agents of this run, once registered, so that a run that dies at the faucet cannot leave them behind. */
+const throwaway: string[] = []
+
+/**
+ * Leave nothing behind that looks like a participant (ADR-43) - on success AND on failure. A run that died at the dry
+ * faucet on 2026-09-13 left two flagged, active identities on live, and an outsider wrote to both within minutes (ADR-63).
+ */
+async function deactivateThrowaways(admin: string): Promise<void> {
+  const ids = throwaway.splice(0)
+  for (const id of ids) {
+    const r = await fetch(`${base}/v1/admin/agents/${id}/status`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ status: 'deleted' }) }).catch(() => null)
+    if (!r?.ok) step(`WARNING: could not deactivate throwaway agent ${id}`, r ? await r.text() : 'fetch failed')
+  }
+  if (ids.length) step('throwaway agents marked platform-operated and deactivated', { agents: ids.length })
+}
+
 async function sandboxRoundTrip() {
   step('base url', base)
   const admin = adminToken()
@@ -142,7 +158,6 @@ async function sandboxRoundTrip() {
   if (!info.network.platform_faucet) fail('no platform faucet for env=test', info.network)
 
   // --- two throwaway agents with fresh wallets ---------------------------------------------------
-  const throwaway: string[] = []
   const mk = async (name: string) => {
     const reg = await AgentSouk.register({ name, description: 'Agent Souk gas-free payment smoke test (throwaway, operated by Agent Souk)', capabilities: ['ops'] }, { baseUrl: base })
     const r = await fetch(`${base}/v1/admin/agents/${reg.agent.id}/first-party`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ first_party: true }) })
@@ -214,11 +229,7 @@ async function sandboxRoundTrip() {
   }
 
   // --- leave nothing behind that looks like a participant (ADR-43) ---------------------------------
-  for (const id of throwaway) {
-    const r = await fetch(`${base}/v1/admin/agents/${id}/status`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': admin }, body: JSON.stringify({ status: 'deleted' }) })
-    if (!r.ok) step(`WARNING: could not deactivate throwaway agent ${id}`, await r.text())
-  }
-  step('throwaway agents marked platform-operated and deactivated', { agents: throwaway.length })
+  await deactivateThrowaways(admin)
   const s = (await (await fetch(`${base}/v1/stats?env=test`)).json()) as { between_outsiders: { jobs_completed: number; distinct_buyers: number; excluded: { funded_by_our_faucet: number } } }
   step('between_outsiders after this run (must not have moved: this job was ours, paid with our faucet USDC)', s.between_outsiders)
   console.log(`SMOKE-GASLESS PASSED in ${((Date.now() - t0) / 1000).toFixed(1)}s: faucet -> sealed delivery -> EIP-3009 signature -> facilitator -> verified on-chain -> revealed, no ETH, no human.`)
@@ -229,5 +240,10 @@ try {
   else if (flag('settle-live')) await settleLive()
   else await sandboxRoundTrip()
 } catch (e) {
-  fail(String((e as Error).message ?? e), (e as { body?: unknown }).body)
+  const body = (e as { body?: unknown }).body
+  console.error(`FAIL ${String((e as Error).message ?? e)}${body !== undefined ? ' ' + JSON.stringify(body) : ''}`)
+  process.exitCode = 1
+} finally {
+  // whichever way it ended: a throwaway that is still registered is deactivated now, not by the next session
+  if (throwaway.length) await deactivateThrowaways(adminToken()).catch((err) => console.error(`WARNING: cleanup failed: ${String(err)}`))
 }

@@ -316,6 +316,31 @@ describe('what is worth waking the operator (ADR-49)', () => {
     expect(paid.tier).toBe('notable')
   })
 
+  it('one buyer ordering all day is one fact: from the fourth order in 24 h, one quiet line per six-hour slot (ADR-63)', async () => {
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'A real service', description: 'Does something a buyer cannot do alone in a minute.', category: 'ops', pricing_model: 'fixed', price: 250_000 } })
+    expect(l.status).toBe(201)
+    const ids: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: { a: i } } })
+      expect(j.status, JSON.stringify(j.body)).toBe(201)
+      ids.push(j.body.id)
+    }
+    const rows = await recentAlerts()
+    const single = rows.filter((a) => a.key.startsWith('ordered:'))
+    const again = rows.filter((a) => a.key.startsWith('ordered-again:'))
+    // the first three alert one by one, as before
+    expect(single.map((a) => a.key).sort()).toEqual(ids.slice(0, 3).map((id) => `ordered:${id}`).sort())
+    expect(single.every((a) => a.tier === 'notable')).toBe(true)
+    // the fourth and fifth share one quiet line for the slot, which names the count at the time it was written
+    expect(again).toHaveLength(1)
+    expect(again[0]!.tier).toBe('quiet')
+    expect(again[0]!.title).toBe(`${buyer.agent.handle} keeps ordering: 4 orders in 24 h, 0 paid (test)`)
+    const row = (await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.key, again[0]!.key) }))!
+    expect((row.data as { orders_24h: number; paid_24h: number }).orders_24h).toBe(4)
+    expect((row.data as { orders_24h: number; paid_24h: number }).paid_24h).toBe(0)
+    expect(row.body).toContain('a payment still alerts on its own')
+  })
+
   it('reserves urgent for real money: the same payment on live', () => {
     const facts = {
       job: { id: 'job_1', env: 'live', firstPartyInvolved: false, title: 'A real service', price: 250_000, buyerAgentId: 'agt_b', sellerAgentId: 'agt_s' },

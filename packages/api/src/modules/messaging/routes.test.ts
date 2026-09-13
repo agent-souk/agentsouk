@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { freshApp, call, createTestAgent } from '../../test/setup.js'
 import type { App } from '../../app.js'
+import { db } from '../../db/client.js'
+import { messages } from '../../db/schema.js'
+import { UNANSWERED_CAP, UNANSWERED_NUDGE_MS } from './service.js'
 
 let app: App
 type Ag = Awaited<ReturnType<typeof createTestAgent>>
@@ -90,9 +94,46 @@ describe('messaging', () => {
   it('rate limits message sending', async () => {
     const t = await call(app, 'POST', '/v1/threads', { key: a.api_keys.test, body: { to: 'bob', body: 'start' } })
     let last = 201
-    for (let i = 0; i < 125 && last !== 429; i++) {
+    for (let i = 0; i < 140 && last !== 429; i++) {
+      // bob answers now and then, so the unanswered cap (ADR-63) never bites here and only the per-minute limit can
+      if (i % 8 === 7) expect((await call(app, 'POST', `/v1/threads/${t.body.thread.id}/messages`, { key: b.api_keys.test, body: { body: 'reply' } })).status).toBe(201)
       last = (await call(app, 'POST', `/v1/threads/${t.body.thread.id}/messages`, { key: a.api_keys.test, body: { body: `m${i}` } })).status
     }
     expect(last).toBe(429)
+  })
+
+  it('after ten messages in a row without an answer, a thread takes one a day until somebody else writes (ADR-63)', async () => {
+    const say = (key: string, to: string, body: string) => call(app, 'POST', '/v1/threads', { key, body: { to, body } })
+    for (let i = 1; i <= UNANSWERED_CAP; i++) expect((await say(a.api_keys.test, 'bob', `ping ${i}`)).status).toBe(201)
+    const over = await say(a.api_keys.test, 'bob', 'ping 11')
+    expect(over.status).toBe(409)
+    expect(over.body.error.code).toBe('awaiting_reply')
+    expect(over.body.error.message).toContain(`last ${UNANSWERED_CAP} messages`)
+    expect(over.body.error.hint).toContain('one a day')
+    // the same on the thread route
+    const threadId = (await call(app, 'GET', '/v1/threads', { key: a.api_keys.test })).body.data[0].id
+    expect((await call(app, 'POST', `/v1/threads/${threadId}/messages`, { key: a.api_keys.test, body: { body: 'ping 11b' } })).status).toBe(409)
+    // bob holds exactly the ten: nothing was lost, nothing was added
+    expect((await call(app, 'GET', '/v1/inbox', { key: b.api_keys.test })).body.unread_total).toBe(UNANSWERED_CAP)
+    // a day later one more goes through, then the wait starts again
+    await db().update(messages).set({ createdAt: Date.now() - UNANSWERED_NUDGE_MS - 1 }).where(eq(messages.threadId, threadId))
+    expect((await say(a.api_keys.test, 'bob', 'ping, a day later')).status).toBe(201)
+    expect((await say(a.api_keys.test, 'bob', 'and again')).status).toBe(409)
+    // an answer resets everything
+    expect((await say(b.api_keys.test, 'alice', 'here I am')).status).toBe(201)
+    expect((await say(a.api_keys.test, 'bob', 'great')).status).toBe(201)
+    // ...and a platform notice is not an answer: on a job thread the seller's notes on job actions still get through
+    const l = await call(app, 'POST', '/v1/listings', { key: b.api_keys.test, body: { title: 'Quiet work', description: 'Something the buyer cannot do alone in a minute.', category: 'ops', pricing_model: 'fixed', price: 100_000 } })
+    expect(l.status).toBe(201)
+    const j = await call(app, 'POST', '/v1/jobs', { key: a.api_keys.test, body: { listing_id: l.body.id, input: { x: 1 } } })
+    expect(j.status).toBe(201)
+    for (let i = 1; i <= UNANSWERED_CAP; i++) expect((await call(app, 'POST', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test, body: { body: `note ${i}` } })).status).toBe(201)
+    const blocked = await call(app, 'POST', `/v1/threads/${j.body.thread_id}/messages`, { key: b.api_keys.test, body: { body: 'note 11' } })
+    expect(blocked.status).toBe(409)
+    expect(blocked.body.error.hint).toContain('deliver, decline, quote or cancel')
+    const declined = await call(app, 'POST', `/v1/jobs/${j.body.id}/decline`, { key: b.api_keys.test, body: { reason: 'Not this week, sorry.' } })
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200)
+    const thread = await call(app, 'GET', `/v1/threads/${j.body.thread_id}/messages?order=desc&limit=3`, { key: a.api_keys.test })
+    expect(thread.body.data.some((m: { body: string }) => m.body === 'Not this week, sorry.')).toBe(true)
   })
 })

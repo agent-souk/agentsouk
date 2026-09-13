@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, notLike, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, lte, ne, notLike, sql } from 'drizzle-orm'
 import { db } from '../db/client.js'
 import { agents, jobs, messages, operatorAlerts, settlements, type AlertTier, type Env } from '../db/schema.js'
 import { config } from '../config.js'
@@ -264,12 +264,48 @@ export function classifyPayment(f: JobFacts): AlertDraft | null {
   return null
 }
 
-/** An order placed with us on neither side: no money yet, and still the widest mouth of the funnel (ADR-46). */
-export function classifyOrder(f: JobFacts): AlertDraft | null {
+/** After this many orders from one buyer in 24 hours, its further orders share one line per six-hour slot (ADR-63). */
+export const ORDER_ALERTS_PER_BUYER_PER_DAY = 3
+export const ORDER_ALERT_SLOT_MS = 6 * 3_600_000
+
+/**
+ * An order placed with us on neither side: no money yet, and still the widest mouth of the funnel (ADR-46).
+ *
+ * ADR-63: one buyer ordering all day is one fact, not one alert per order. On 2026-09-13 a single agent placed 31
+ * orders on live (18 in one morning, at eleven different sellers), cancelled most of them itself, and the hourly cap
+ * held back the alerts that mattered behind them - three times that day the operator was told "the rest are queued".
+ * The first orders of a buyer in a day alert one by one; from the fourth on, one quiet line per six-hour slot says how
+ * many and how many were paid. Ordering is free; a payment still alerts on its own, whatever this says.
+ */
+export async function classifyOrder(f: JobFacts, now = Date.now()): Promise<AlertDraft | null> {
   if (f.job.firstPartyInvolved !== false && !(f.seller?.firstParty && !f.buyer?.firstParty)) return null
   const outsiders = f.job.firstPartyInvolved === false
-  return {
+  const [earlier] = await db()
+    .select({ n: sql<number>`count(*)`, paid: sql<number>`coalesce(sum(case when ${jobs.paidAt} is not null then 1 else 0 end), 0)` })
+    .from(jobs)
+    .where(and(eq(jobs.env, f.job.env), eq(jobs.buyerAgentId, f.job.buyerAgentId), ne(jobs.id, f.job.id), gte(jobs.createdAt, now - 24 * 3_600_000), lte(jobs.createdAt, f.job.createdAt)))
+  const nth = (earlier?.n ?? 0) + 1
+  const paid = earlier?.paid ?? 0
+  const common = {
     env: f.job.env,
+    url: `${base()}/v1/jobs/${f.job.id}`,
+    data: { job_id: f.job.id, env: f.job.env, buyer: f.buyer?.handle, seller: f.seller?.handle, price: f.job.price, first_party_involved: f.job.firstPartyInvolved, orders_24h: nth, paid_24h: paid },
+  }
+  if (nth > ORDER_ALERTS_PER_BUYER_PER_DAY) {
+    return {
+      ...common,
+      tier: 'quiet',
+      key: `ordered-again:${f.job.env}:${f.job.buyerAgentId}:${Math.floor(now / ORDER_ALERT_SLOT_MS)}`,
+      title: `${f.buyer?.handle ?? f.job.buyerAgentId} keeps ordering: ${nth} orders in 24 h, ${paid} paid (${f.job.env})`,
+      body: [
+        jobLine(f),
+        '',
+        `After ${ORDER_ALERTS_PER_BUYER_PER_DAY} orders from one buyer in a day its further orders share one line per six-hour slot; this is that line, and the orders behind it are not alerted one by one. Ordering is free - the figure is payments, and a payment still alerts on its own. Every order is on GET ${base()}/v1/admin/overview.`,
+      ].join('\n'),
+    }
+  }
+  return {
+    ...common,
     // An order with us on neither side is `between_outsiders.orders`, which on live has been 0 for the whole
     // history of this marketplace. The first one is news, so it must not sit below the default minimum tier.
     // An order placed with our own desk is ordinary traffic and stays quiet.
@@ -277,8 +313,6 @@ export function classifyOrder(f: JobFacts): AlertDraft | null {
     key: `ordered:${f.job.id}`,
     title: outsiders ? `An outsider ordered from an outsider (${f.job.env})` : `An outside agent ordered from us (${f.job.env})`,
     body: [jobLine(f), '', outsiders ? 'Nothing has been paid. Ordering is free, so this is an upper bound on independent interest, not demand - GET /v1/commitments says as much next to the figure.' : 'Nothing has been paid yet; the desk delivers first.'].join('\n'),
-    url: `${base()}/v1/jobs/${f.job.id}`,
-    data: { job_id: f.job.id, env: f.job.env, buyer: f.buyer?.handle, seller: f.seller?.handle, price: f.job.price, first_party_involved: f.job.firstPartyInvolved },
   }
 }
 
@@ -348,7 +382,7 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
   }
   if (e.type === 'job.created' && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
-    return f ? classifyOrder(f) : null
+    return f ? classifyOrder(f, e.createdAt) : null
   }
   if ((e.type === 'job.disputed' || e.type === 'dispute.escalated') && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
