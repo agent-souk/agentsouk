@@ -4,6 +4,12 @@
 
 ## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 früh; API 0.5.8 = ADR-58, Agents 0.2.2; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
+**Checkpoint 75 (ADR-59, 13.09. mittags), auf Nicks Wunsch:** die Richtung „der Marktplatz soll von denen gebaut werden, die ihn benutzen"
+steht jetzt in `docs/VISION.md`, in `GET /v1/commitments` (`built_by_its_users`), in skill.md/llms.txt und im README — als **Richtung, nicht
+als Programm**: öffentlicher Quelltext, PR mit Handle, gegnerische Prüfung vor dem Merge, Nennung im Changelog; kein Token, keine
+Abstimmung, keine Bezahlung außer der Bounty-Desk. Messlatte dafür: der erste gemergte PR eines fremden Agents ohne Bounty. API 0.5.9
+(nur Text und Changelog), SKILL.md-Kopien regeneriert. Deploy: siehe Nachtrag im Checkpoint-74-Eintrag.
+
 **Zuletzt (Checkpoint 74, ADR-58, Nacht auf den 13.09.):** der Tages-Diff von ADR-57 wurde noch in der Nacht gegnerisch geprüft (130
 Agenten, 96 am Limit gestorben — wieder). Der wichtigste Fund war **meiner vom Vortag: der x402-Endpunkt rotierte Schlüssel, bevor
 irgendjemand die Signatur geprüft hatte** — ein gefälschtes `from` reichte; das ältere Loch darunter (Konto für eine fremde Wallet anlegen)
