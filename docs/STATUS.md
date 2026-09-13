@@ -2,7 +2,31 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 früh; API 0.5.8 = ADR-58, Agents 0.2.2; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 nachmittags; API 0.5.10 = ADR-60, Agents 0.2.3; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 76 (ADR-60, 13.09. nachmittags) — beim Security-Anspruch war etwas passiert, und STATUS hatte es nicht gesehen:**
+`juan-codex-research` hatte um **01:30 UTC im Thread gefragt**, ob ein Bericht ohne Reproduktionsschritte zählt und ob die Frist sich
+verlängern lässt. Zwölf Stunden ohne Antwort — keine Desk beantwortet eine Frage, die ein Verkäufer von sich aus stellt, und kein Alarm
+kannte `message.received`. **Antwort 13:45 UTC** (nein, exakte Schritte nötig; keine Verlängerung — die Prüfung läuft im 72-h-Fenster
+**nach** der Lieferung; Korrektur des falschen „without a mark" vom 12.09.), **Korrektur 14:24 UTC** nach zwei gegnerischen
+Finder-Runden (5 + 3 Agenten, alle fertig, getrennte Workflows). **Wichtigster Fund:** die Desk schrieb seit 07.09. bis zu 2500 Zeichen
+der Vorschau in `needs_operator` auf der **öffentlichen** `/health` — für die Security-Bounty der ungefixte Bericht, von der Triage bis
+zur Zahlung; passiert ist es einmal (Fund vom 08.09., ~1 h, harmlos, damals nach 58 min gefixt). Dazu: die öffentliche Bewertung einer
+Security-Lieferung zitierte das Judge-Urteil; neuer Alarm ohne Nachrichtentext. **Deployt ~14:20 UTC:** API 0.5.10 = `1ed7560`
+(`SMOKE TEST PASSED`, `build.commit` und Changelog live geprüft), Agents 0.2.3 (Judge `PASSED` 0,21 USD; Health: `needs_operator`
+null, keine Fehler). **Live-Probe des neuen Alarms bestanden** (Wegwerf-Agent schreibt in der Sandbox an `souk-bounties` → Zeile
+`message:<thread>:start:<slot>`, `quiet`, `sent`, ohne Nachrichtentext; Agent danach geflaggt und gelöscht; Skript im Scratchpad der
+Sitzung, Muster wie `smoke.ts`). `smoke-x402`/`smoke:gasless` nicht gelaufen (Faucet trocken). Tests: API 44 Dateien grün (367; nach der letzten
+Änderung an der Deckelregel die Alarmdatei gezielt nachgeprüft), Agents 67 grün.
+**Das Endspiel heute Nacht läuft weiter automatisch, mit drei Korrekturen am Wissen:** (1) liefert er, liest der Betreiber die Vorschau
+**nur** mit `GET /v1/jobs/<id>` als Desk, nicht mehr auf `/health`; (2) bezahlt wird erst, wenn **der Judge die Vorschau angenommen
+hat und** der Betreiber mit `output_hash` bestätigt (fragt der Judge nach oder geht er weg, hilft keine Bestätigung); (3) liefert er
+nicht, kann er diese Bounty nicht erneut gewinnen (`awarded_to`), und der Job zählt öffentlich als fehlgeschlagen. Schreibt er wieder,
+entsteht jetzt ein Alarm (`message:`; auf live `notable`, ohne Text) — ntfy ist weiterhin nicht abonniert.
+**Messlatte:** `between_outsiders.orders` 6 → **24**, `orders_from_distinct_wallets` **1**, `jobs_completed` 0, `funded_by_us` 6,
+`flag_changes.unflagged` 0, `ever_paid_or_paid_for` 0. Forensik (Live-DB, nur lesend): **alle 24 von `veriton`**, 18 davon heute
+11:10–13:34 UTC bei elf fremden Verkäufern, meist selbst storniert, sechs über seine eigenen Bounties bezahlt (alle `funded_by_us`) —
+dieselbe Masche wie ADR-56, und die Kopfzahl hat richtig reagiert. **Platte 2,3 GB frei** (morgens 3,2; die Testläufe fressen).
 
 **Checkpoint 75 (ADR-59, 13.09. mittags), auf Nicks Wunsch:** die Richtung „der Marktplatz soll von denen gebaut werden, die ihn benutzen"
 steht jetzt in `docs/VISION.md`, in `GET /v1/commitments` (`built_by_its_users`), in skill.md/llms.txt und im README — als **Richtung, nicht
@@ -65,7 +89,7 @@ Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und
    urgent-Alarm** mit Frist, Job-Link und dem exakten Schreibbefehl — auf ntfy, sobald Nick das Thema abonniert hat. **Die Desk zahlt nicht**, bis
    `operator/confirm/<job_id>` den `output_hash` der Lieferung nennt (`{"output_hash": "…"}`; ein `true` gilt seit ADR-57 nicht mehr, damit
    niemand vor der Lieferung bestätigen kann). Fenster: 72 Stunden ab Lieferung, die Desk geht eine Stunde vor `pay_by`. **Nächste Sitzung dann:**
-   Vorschau lesen (`needs_operator` auf `https://agentsouk-agents.fly.dev/health`, oder `GET /v1/jobs/<id>` mit dem Key aus
+   Vorschau lesen (seit ADR-60 nur `GET /v1/jobs/<id>`, nicht mehr auf `/health`, mit dem Key aus
    `~/.agentsouk-ops/operator.env`), reproduzieren, fixen, deployen, dann den Memory-Schlüssel als `souk-bounties` setzen. Fix-first ist jetzt
    erzwungen, nicht versprochen.
 2. **Er liefert nicht.** Ab 2026-09-14T02:23:50Z (Frist plus Gnadenstunde) schließt der neue Sweep der API — oder die Desk beim nächsten Tick, wer
