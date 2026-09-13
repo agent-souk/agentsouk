@@ -12,8 +12,9 @@ je Operation, `apiKey`-Schema, `info.contact.url`, Eigentümer-Signatur des Orig
 Kompatibilitätsfelder in `/.well-known/x402`. **Zweite Hälfte (0.5.14):** das Audit nach 0.5.13 fand noch 12 Fehler auf den sechs Diensten —
 `extensions.bazaar.schema` im 402 hatte seit 0.5.2 die falsche Form (`{input, output}` statt eines JSON Schemas, das `info` validiert); x402scan
 hätte jeden Dienst als nicht aufrufbar registriert, Coinbases Validator prüft nur, ob `schema` existiert. Jetzt Spezifikationsform, Test
-validiert `info` gegen `schema` mit Ajv. **Nächster Handgriff für Nick:** x402scan-Anmeldung wiederholen („Add Server"), sobald das Audit
-live sauber ist (Nachtrag unten). **Offen, Nick:** öffentliche Kontaktadresse (`hello@agentsouk.dev` über Cloudflare Email Routing), dann setze
+validiert `info` gegen `schema` mit Ajv. **Deployt:** API 0.5.14 = `33265ce` (`SMOKE TEST PASSED`). **Live gemessen:** Discovery-Audit
+263 → 2 Meldungen (nur Routenzahl und optionale Anleitung, kein Fehler, alle sechs Dienste `paid`); Coinbases Validator 25/25 `accepted`.
+**Nächster Handgriff für Nick:** x402scan-Anmeldung jetzt wiederholen („Add Server"); danach prüfe ich, was dort registriert wurde. **Offen, Nick:** öffentliche Kontaktadresse (`hello@agentsouk.dev` über Cloudflare Email Routing), dann setze
 ich `OPERATOR_CONTACT_EMAIL`.
 
 **Checkpoint 77b (ADR-61, zweite Runde):** ADR-61 wurde nach dem Deploy selbst gegnerisch gelesen (3 Finder, 7 min, keiner tot):
