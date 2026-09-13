@@ -10,7 +10,11 @@
 Betreiber setzt. Dazu: `ensureWakeups` legt den Ersatz-Hook an, **bevor** es löscht, toleriert 404 und läuft jetzt auf jedem Timer-Tick; der
 Referenz-Verkäufer räumt gesperrte Hooks weg (sonst 409 `webhook_limit` beim elften Start); Alarmfeld `receiver_url`; x402 liest den
 Ablehnungsgrund kurz nach; drei Changelog-Sätze und ein Prosa-Satz in `/v1/commitments` korrigiert; drei Testlücken geschlossen; 0.4.5 im
-Changelog-Test bewacht. Deploy siehe Nachtrag unten.
+Changelog-Test bewacht. Tests: API 44 Dateien / 370 grün, Agents 67 grün, Judge `PASSED` (0,22 USD). **Deployt 2026-09-13 ~16:20 UTC:**
+API 0.5.12 = `3bbe87c` (`SMOKE TEST PASSED`, `build.commit` und Changelog-Kopf live geprüft; `?first_party=true|false` antwortet 200,
+`/v1/commitments` zeigt viermal darauf, kein `tag=first-party` mehr), Agents 0.2.5 (Health: 0.2.5, `needs_operator` null, keine Fehler; die
+Webhooks beider Umgebungen wurden beim Neustart erneut **behalten** — Ids unverändert, 10 Ereignisse, 0 Fehlschläge). Security-Job um
+16:22 UTC unverändert (`in_progress`, keine Antwort auf die Korrektur von 14:24). Platte 2,4 GB frei.
 
 **Checkpoint 77 (ADR-61, 13.09. abends) — die neun Altfunde aus ADR-57/58 sind nachgeprüft**, von Hand: der Workflow mit neun
 Verifizierern starb nach zwei Minuten komplett am Sitzungslimit. Ergebnis: 3 nicht real (Webhook-Kaltstart — 5 Versuche, Sperre erst nach
