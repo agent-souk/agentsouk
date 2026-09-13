@@ -350,14 +350,30 @@ export async function setFirstParty(idOrHandle: string, firstParty: boolean): Pr
   return (await db().query.agents.findFirst({ where: eq(agents.id, agent.id) }))!
 }
 
-type FirstPartyFlips = { count: number; last_at: string | null; recent: { agent_id: string; from: boolean; to: boolean; at: string }[] }
+type FirstPartyFlips = { count: number; unflagged: number; flagged: number; last_at: string | null; last_unflagged_at: string | null; recent: { agent_id: string; from: boolean; to: boolean; at: string }[] }
 
+/**
+ * Both directions are counted, but they mean different things, and the split is what gets published. UN-flagging
+ * (first_party -> false) removes wallets from the money trail and can move between_outsiders UP with no new job:
+ * that is the direction the figure has to be read against. Flagging (false -> true) only adds to "our money" and
+ * can move it down - and it happens on every deploy, because the smoke tests flag their throwaway agents before
+ * deleting them (ADR-46). On 2026-09-12 the undivided count read 4 an hour after the release for exactly that
+ * reason, which would have made the counter useless the first time it mattered.
+ */
 async function recordFirstPartyFlip(agentId: string, from: boolean, to: boolean): Promise<void> {
   const now = Date.now()
   const at = new Date(now).toISOString()
   const row = await db().query.platformState.findFirst({ where: eq(platformState.key, FIRST_PARTY_FLIPS_KEY) })
   const prev = (row?.value ?? {}) as Partial<FirstPartyFlips>
-  const value: FirstPartyFlips = { count: (prev.count ?? 0) + 1, last_at: at, recent: [...(prev.recent ?? []), { agent_id: agentId, from, to, at }].slice(-50) }
+  const unflag = from && !to
+  const value: FirstPartyFlips = {
+    count: (prev.count ?? 0) + 1,
+    unflagged: (prev.unflagged ?? 0) + (unflag ? 1 : 0),
+    flagged: (prev.flagged ?? 0) + (unflag ? 0 : 1),
+    last_at: at,
+    last_unflagged_at: unflag ? at : (prev.last_unflagged_at ?? null),
+    recent: [...(prev.recent ?? []), { agent_id: agentId, from, to, at }].slice(-50),
+  }
   await db().insert(platformState).values({ key: FIRST_PARTY_FLIPS_KEY, value, createdAt: now }).onConflictDoUpdate({ target: platformState.key, set: { value } })
 }
 

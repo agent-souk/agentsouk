@@ -3,7 +3,7 @@ import { cors } from 'hono/cors'
 import { and, asc, eq, gt, isNotNull, ne, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
-import { agents, jobs, listings, type Env } from '../../db/schema.js'
+import { agents, jobs, listings, platformState, type Env } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { ApiError, errors } from '../../lib/errors.js'
 import { errorResponses } from '../../lib/http.js'
@@ -13,11 +13,11 @@ import { raiseX402Purchase } from '../../ops/alerts.js'
 import { bazaarExtension } from './bazaar.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent, recoverKeys } from '../agents/service.js'
-import { getMemory, putMemory } from '../memory/service.js'
 import { normalizeEvmAddress } from '../payments/address.js'
+import { verifyDigestSignature } from '../payments/evm-signature.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
-import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, type RequirementsV2 } from '../payments/x402.js'
+import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type RequirementsV2 } from '../payments/x402.js'
 
 /**
  * ADR-48: a paid endpoint in the x402 shape, for OUR OWN services only.
@@ -85,16 +85,30 @@ export function parsePaymentHeader(header: string): PaymentPayload {
  * step it never asked for. The wallet is bound without the usual EIP-191 proof because the authorization in hand
  * IS a signature by that wallet; the proof exists, it just has a different shape.
  */
-type BuyerAccount = { agent: Parameters<typeof createJob>[1]; credentials: Record<string, unknown> | null }
+type BuyerAccount = { agent: Parameters<typeof createJob>[1]; credentials: Record<string, unknown> | null; created: boolean; recovered: boolean }
 
 const X402_ACCOUNT_DESCRIPTION = 'Registered by paying through the x402 endpoint (ADR-48); the wallet is the identity.'
-/** Memory key written on the account the moment a response actually carried its credentials. */
-const CREDENTIALS_SHOWN_KEY = 'x402/credentials_shown'
 
-async function credentialsShown(agentId: string): Promise<boolean> {
-  return getMemory(agentId, CREDENTIALS_SHOWN_KEY).then(() => true, () => false)
+/**
+ * Where this endpoint keeps what it knows about the accounts it created: platform_state, keyed by agent id. Not a
+ * profile field the agent can edit (0.5.7 compared the description text) and not the agent's own memory the agent
+ * can delete or fill to its limit (0.5.7 kept the "shown" marker there) - a fact about the account's origin
+ * belongs to the platform (ADR-58). Accounts created before 0.5.8 have no row and are never rotated.
+ */
+type X402Account = { created_at: string; shown_at: string | null; job_id?: string }
+const accountKey = (agentId: string) => `x402/account/${agentId}`
+async function x402Account(agentId: string): Promise<X402Account | null> {
+  const row = await db().query.platformState.findFirst({ where: eq(platformState.key, accountKey(agentId)) })
+  return (row?.value as X402Account | undefined) ?? null
+}
+async function saveX402Account(agentId: string, value: X402Account): Promise<void> {
+  await db().insert(platformState).values({ key: accountKey(agentId), value, createdAt: Date.now() }).onConflictDoUpdate({ target: platformState.key, set: { value } })
 }
 
+/**
+ * Only reached with a VERIFIED authorization (the handler recovers the signer first, ADR-58), so everything this
+ * function does happens on behalf of the wallet's owner.
+ */
 async function buyerForWallet(rawAddress: string): Promise<BuyerAccount> {
   // Case-insensitive, and stored checksummed like every other wallet binding (ADR-57): the signed authorization's
   // `from` arrives in whatever case the client used, and an exact match against a checksummed binding created a
@@ -105,19 +119,20 @@ async function buyerForWallet(rawAddress: string): Promise<BuyerAccount> {
     if (known.status !== 'active') throw errors.state('buyer_not_active', 'The agent bound to this wallet is not active.')
     // An account this endpoint created whose credentials never reached the buyer - the purchase failed after the
     // account existed: a slow seller, a facilitator refusal - is not "an account whose credentials were shown
-    // once". Its keys are replaced and handed over now, and the marker is written only when a response carries
-    // them (ADR-57). Any other existing account keeps its secret: proving control of the wallet again is not
-    // proof that this caller is the one that created it.
-    if (known.description === X402_ACCOUNT_DESCRIPTION && !(await credentialsShown(known.id))) {
+    // once". Its keys are replaced and handed over now, once; the marker is written when a response carries them.
+    // Any other existing account keeps its secret: the wallet's owner may not be the account's owner.
+    const origin = await x402Account(known.id)
+    if (origin && origin.shown_at == null) {
       const keys = await recoverKeys(known, true)
-      return { agent: known, credentials: { agent_id: known.id, handle: known.handle, api_keys: keys, keypair: null, keypair_note: 'The Ed25519 keypair was generated when this account was created by an earlier, failed purchase and cannot be recovered; rotate it with POST /v1/agents/me/key if you need one.' } }
+      return { agent: known, created: false, recovered: true, credentials: { agent_id: known.id, handle: known.handle, api_keys: keys, keypair: null, keypair_note: 'The Ed25519 keypair was generated when this account was created by an earlier, failed purchase and cannot be recovered; rotate it with POST /v1/agents/me/key if you need one.' } }
     }
-    return { agent: known, credentials: null }
+    return { agent: known, created: false, recovered: false, credentials: null }
   }
   const created = await createAgent({ name: `x402 buyer ${address.slice(0, 6)}${address.slice(-4)}`, description: X402_ACCOUNT_DESCRIPTION })
   await db().update(agents).set({ walletAddress: address, updatedAt: Date.now() }).where(eq(agents.id, created.agent.id))
+  await saveX402Account(created.agent.id, { created_at: new Date().toISOString(), shown_at: null })
   const agent = (await db().query.agents.findFirst({ where: eq(agents.id, created.agent.id) }))!
-  return { agent, credentials: { agent_id: agent.id, handle: agent.handle, api_keys: created.apiKeys, keypair: created.keypair ?? null } }
+  return { agent, created: true, recovered: false, credentials: { agent_id: agent.id, handle: agent.handle, api_keys: created.apiKeys, keypair: created.keypair ?? null } }
 }
 
 /** Polls the job row until the seller has delivered. Returns null on timeout; nothing is settled in that case. */
@@ -367,10 +382,15 @@ export function x402Routes() {
       if (auth.to.toLowerCase() !== payTo.toLowerCase()) throw errors.validation(`authorization.to must be the seller wallet ${payTo}.`, 'X-PAYMENT')
       if (Number(auth.value) < price) throw errors.validation(`authorization.value must be at least ${price} (${formatUsdc(price)}).`, 'X-PAYMENT')
       if (Number(auth.validBefore) * 1000 <= Date.now()) throw errors.validation('The authorization has already expired; request fresh terms.', 'X-PAYMENT')
+      // The signature is checked HERE, before an account is looked up, created or touched (ADR-58) - not ninety
+      // seconds later by the facilitator, after a seller has worked and (since 0.5.7) after a key rotation.
+      if (!(await verifyDigestSignature(env, auth.from, transferAuthorizationDigest(env, auth), payment.payload.signature))) {
+        throw errors.validation('payload.signature was not made by authorization.from over these terms.', 'PAYMENT-SIGNATURE', 'Sign the EIP-712 TransferWithAuthorization the 402 describes (USDC domain of this network) with the wallet named in authorization.from; a smart-contract wallet must answer EIP-1271 isValidSignature for the digest.')
+      }
       assertNotSanctioned(auth.from, 'The paying wallet address')
       assertNotSanctioned(payTo, 'The seller wallet address')
 
-      const { agent: buyer, credentials } = await buyerForWallet(auth.from)
+      const { agent: buyer, credentials, created, recovered } = await buyerForWallet(auth.from)
       const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
       const state = await waitForDelivery(job.id, 90_000)
       if (state !== 'delivered') {
@@ -389,9 +409,9 @@ export function x402Routes() {
       recordX402('paid', c.req.header('user-agent'))
       // ADR-49: this is the event the operator cannot usefully read about later. A failure to alert must never
       // cost the buyer the answer it has already paid for, so it is best-effort and never in the way.
-      await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: credentials != null }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
-      // The marker that makes "shown once" true: written only on the response that actually carries the credentials.
-      if (credentials) await putMemory(buyer.id, CREDENTIALS_SHOWN_KEY, { at: new Date().toISOString(), job_id: job.id }).catch((err) => log.warn({ err, job: job.id }, 'x402: could not mark the credentials as shown'))
+      await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: created }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
+      // The marker that makes "shown once" true: written only for a response that actually carries the credentials.
+      if (credentials) await saveX402Account(buyer.id, { ...((await x402Account(buyer.id)) ?? { created_at: new Date().toISOString(), shown_at: null }), shown_at: new Date().toISOString(), job_id: job.id }).catch((err) => log.warn({ err, job: job.id }, 'x402: could not mark the credentials as shown'))
       return c.json(
         {
           object: 'x402_result' as const,
@@ -400,7 +420,9 @@ export function x402Routes() {
           output: paid.job.output,
           paid: { amount: price, display: formatUsdc(price), transaction, network: terms.network, payer: auth.from, pay_to: payTo },
           receipt_url: `${base()}/v1/jobs/${job.id}/receipt`,
-          account: credentials
+          account: recovered
+            ? { note: `This wallet's account (${buyer.handle}) existed from an earlier purchase that failed after the account was created, so its keys had never reached you. They have been replaced and are shown here once: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on.`, ...credentials }
+            : credentials
             ? { note: 'Paying created an account bound to your wallet (ADR-48). These credentials are shown once and never again: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on. Lose them and the account still exists, but nothing proves it is yours.', ...credentials }
             : { note: `This wallet already has an account here (${buyer.handle}); its credentials were shown when it was created and are never shown again. Use the key you were given to fetch receipt_url.`, agent_id: buyer.id, handle: buyer.handle },
         },

@@ -102,8 +102,14 @@ describe('first_party (ADR-23)', () => {
     await listing(third, 'test')
     const s = await call(app, 'GET', '/v1/stats?env=test')
     expect(s.body.listings_active).toBe(2)
-    // ADR-57: the two admin flips above are counted and dated, so a move of the headline figure has its cause on record
-    expect(s.body.first_party).toEqual({ agents: 2, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0, flag_changes: { count: 2, last_at: expect.any(String) } })
+    // ADR-57: the two admin flips above are counted and dated, so a move of the headline figure has its cause on record -
+    // split by direction, because only un-flagging can move between_outsiders up, and flagging happens on every deploy
+    expect(s.body.first_party).toEqual({ agents: 2, listings_active: 1, jobs_completed: 0, volume_usdc_completed: 0, flag_changes: { count: 2, unflagged: 0, flagged: 2, last_at: expect.any(String), last_unflagged_at: null } })
+    expect((await flag(ours2.agent.id, false)).status).toBe(200)
+    expect((await flag(ours2.agent.id, false)).status).toBe(200) // no change, no count
+    const after = (await call(app, 'GET', '/v1/stats?env=test')).body.first_party
+    expect(after.agents).toBe(1)
+    expect(after.flag_changes).toMatchObject({ count: 3, unflagged: 1, flagged: 2, last_unflagged_at: expect.any(String) })
   })
 })
 

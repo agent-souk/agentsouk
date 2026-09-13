@@ -4,6 +4,11 @@ import { freshApp, call, createTestAgent, type TestAgent } from '../../test/setu
 import { installFakeChain, type FakeChain } from '../../test/chain.js'
 import { db } from '../../db/client.js'
 import { agents, jobs, listings, operatorAlerts } from '../../db/schema.js'
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js'
+import { platformState } from '../../db/schema.js'
+import { privateKeyToAddress } from '../payments/evm-signature.js'
+import { transferAuthorizationDigest } from '../payments/x402.js'
 import { _setSettleFetchForTests } from './routes.js'
 import { _setAlertFetchForTests } from '../../ops/alerts.js'
 import { _setConfigForTests } from '../../config.js'
@@ -49,18 +54,17 @@ function deliverWhenOrdered(seller: TestAgent, listingId: string, output: unknow
   return { done, cancel: () => (stop = true) }
 }
 
-/** The x402 payment payload a buyer builds after reading the 402, base64 as the header carries it. */
-const paymentHeader = (from: string, to: string, value: number, validForSeconds = 900) =>
-  Buffer.from(
-    JSON.stringify({
-      x402Version: 2,
-      scheme: 'exact',
-      payload: {
-        signature: '0x' + 'ab'.repeat(65),
-        authorization: { from, to, value: String(value), validAfter: '0', validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: '0x' + '11'.repeat(32) },
-      },
-    }),
-  ).toString('base64')
+/** A throwaway buyer wallet with a real key: since ADR-58 the endpoint recovers the signer before it does anything. */
+const pkOf = (digit: string) => '0x' + ('0' + digit).repeat(32)
+const addr = (pk: string) => privateKeyToAddress(pk)
+
+/** The x402 payment payload a buyer builds after reading the 402, base64 as the header carries it - signed by `pk`. */
+const paymentHeader = (pk: string, to: string, value: number, validForSeconds = 900, opts: { from?: string; signWith?: string } = {}) => {
+  const authorization = { from: opts.from ?? addr(pk), to, value: String(value), validAfter: '0', validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: '0x' + '11'.repeat(32) }
+  const sig = secp256k1.sign(transferAuthorizationDigest('test', authorization), hexToBytes((opts.signWith ?? pk).slice(2)), { prehash: false, format: 'recovered', lowS: true })
+  const signature = '0x' + bytesToHex(concatBytes(sig.slice(1, 65), Uint8Array.of(27 + sig[0]!)))
+  return Buffer.from(JSON.stringify({ x402Version: 2, scheme: 'exact', payload: { signature, authorization } })).toString('base64')
+}
 
 const buy = (listingId: string, header?: string, body: Record<string, unknown> = { text: 'Hello world' }) =>
   call(app, 'POST', `/v1/x402/${listingId}?env=test`, { body, headers: header ? { 'x-payment': header } : {} })
@@ -103,10 +107,11 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
 
   it('takes the payment from PAYMENT-SIGNATURE as well as from X-PAYMENT', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '9'.repeat(40)
+    const pk = pkOf('9')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
     const runtime = deliverWhenOrdered(seller, listingId)
-    const r = await call(app, 'POST', `/v1/x402/${listingId}?env=test`, { body: { text: 'Hello' }, headers: { 'payment-signature': paymentHeader(wallet, seller.wallet_address!, PRICE) } })
+    const r = await call(app, 'POST', `/v1/x402/${listingId}?env=test`, { body: { text: 'Hello' }, headers: { 'payment-signature': paymentHeader(pk, seller.wallet_address!, PRICE) } })
     await runtime.done
     expect(r.status, JSON.stringify(r.body)).toBe(200)
     // both names on the way back, too: v2 reads PAYMENT-RESPONSE, v1 read X-PAYMENT-RESPONSE
@@ -120,7 +125,7 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
       key: outsider.api_keys.test,
       body: { title: 'Live DNS probe', description: 'Probe SPF, DKIM and DMARC for a domain and report what resolves.', category: 'data', pricing_model: 'fixed', price: PRICE, input_schema: { type: 'object' }, turnaround_seconds: 600, accept_timeout_seconds: 600 },
     })
-    const r = await buy(l.body.id, paymentHeader('0x' + '1'.repeat(40), '0x' + '2'.repeat(40), PRICE))
+    const r = await buy(l.body.id, paymentHeader(pkOf('1'), '0x' + '2'.repeat(40), PRICE))
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('x402_first_party_only')
     expect(r.body.error.hint).toContain('/v1/jobs')
@@ -128,7 +133,8 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
 
   it('does the work, then settles, and hands back the output with a receipt', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '7'.repeat(40)
+    const pk = pkOf('7')
+    const wallet = addr(pk)
     let settled: { url: string; body: string } | null = null
     _setSettleFetchForTests(async (url, init) => {
       settled = { url, body: init.body }
@@ -138,7 +144,8 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     })
 
     const runtime = deliverWhenOrdered(seller, listingId)
-    const r = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const header = paymentHeader(pk, seller.wallet_address!, PRICE)
+    const r = await buy(listingId, header)
     await runtime.done
 
     expect(r.status, JSON.stringify(r.body)).toBe(200)
@@ -148,7 +155,7 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(settled).not.toBeNull()
     expect(settled!.url).toContain('/settle')
     // the settle body carries the buyer's own signature, unchanged
-    expect(JSON.parse(settled!.body).paymentPayload.payload.signature).toBe('0x' + 'ab'.repeat(65))
+    expect(JSON.parse(settled!.body).paymentPayload.payload.signature).toBe(JSON.parse(Buffer.from(header, 'base64').toString('utf8')).payload.signature)
 
     // the payment is a real settlement on a real job, with the wallet as the buyer's identity
     const job = await db().query.jobs.findFirst({ where: eq(jobs.id, r.body.job_id) })
@@ -174,7 +181,7 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
       return null
     })()
 
-    const r = await buy(listingId, paymentHeader('0x' + '8'.repeat(40), seller.wallet_address!, PRICE))
+    const r = await buy(listingId, paymentHeader(pkOf('8'), seller.wallet_address!, PRICE))
     await giveUp
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('x402_not_delivered')
@@ -184,16 +191,17 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
 
   it('rejects an authorization made out to somebody else, or for too little, or already expired', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '7'.repeat(40)
-    const wrongPayee = await buy(listingId, paymentHeader(wallet, '0x' + '3'.repeat(40), PRICE))
+    const pk = pkOf('7')
+    const wallet = addr(pk)
+    const wrongPayee = await buy(listingId, paymentHeader(pk, '0x' + '3'.repeat(40), PRICE))
     expect(wrongPayee.status).toBe(400)
     expect(String(wrongPayee.body.error.message)).toContain('must be the seller wallet')
 
-    const tooLittle = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE - 1))
+    const tooLittle = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE - 1))
     expect(tooLittle.status).toBe(400)
     expect(String(tooLittle.body.error.message)).toContain('at least')
 
-    const expired = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE, -10))
+    const expired = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, -10))
     expect(expired.status).toBe(400)
     expect(String(expired.body.error.message)).toContain('expired')
   })
@@ -216,12 +224,13 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
 
   it('reuses the agent behind a wallet instead of registering a new one every time', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '7'.repeat(40)
+    const pk = pkOf('7')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
 
     for (let i = 0; i < 2; i++) {
       const runtime = deliverWhenOrdered(seller, listingId)
-      const r = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+      const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
       await runtime.done
       expect(r.status, JSON.stringify(r.body)).toBe(200)
     }
@@ -245,11 +254,12 @@ describe('the edges around the wire (ADR-54, ADR-57)', () => {
 
   it('binds one account to a wallet however the client spells it', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const checksummed = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+    const pk = pkOf('c')
+    const checksummed = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(checksummed, seller.wallet_address!, PRICE) }) }))
     for (const spelled of [checksummed.toLowerCase(), checksummed]) {
       const runtime = deliverWhenOrdered(seller, listingId)
-      const r = await buy(listingId, paymentHeader(spelled, seller.wallet_address!, PRICE))
+      const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { from: spelled }))
       await runtime.done
       expect(r.status, JSON.stringify(r.body)).toBe(200)
     }
@@ -258,9 +268,55 @@ describe('the edges around the wire (ADR-54, ADR-57)', () => {
     expect(bound[0]!.walletAddress).toBe(checksummed) // stored checksummed, like every other binding
   })
 
+  it('refuses an authorization the named wallet did not sign, before it looks up or creates anything (ADR-58)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const victim = pkOf('a')
+    const attacker = pkOf('b')
+    // a real account for the victim's wallet, created by a real purchase
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(addr(victim), seller.wallet_address!, PRICE) }) }))
+    const first = deliverWhenOrdered(seller, listingId)
+    const one = await buy(listingId, paymentHeader(victim, seller.wallet_address!, PRICE))
+    await first.done
+    expect(one.status, JSON.stringify(one.body)).toBe(200)
+    const keyBefore = one.body.account.api_keys.test as string
+    // an authorization naming the victim's wallet, signed by somebody else: refused at the door
+    const forged = await buy(listingId, paymentHeader(attacker, seller.wallet_address!, PRICE, 900, { from: addr(victim) }))
+    expect(forged.status).toBe(400)
+    expect(String(forged.body.error.message)).toContain('not made by authorization.from')
+    // nothing happened to the victim: its key still works, no job was created for it
+    expect((await call(app, 'GET', '/v1/agents/me', { key: keyBefore })).status).toBe(200)
+    const victimJobs = await db().query.jobs.findMany({ where: eq(jobs.buyerAgentId, one.body.account.agent_id) })
+    expect(victimJobs).toHaveLength(1)
+    // and a wallet nobody has ever used gets no account from a forged payload either
+    const stranger = pkOf('d')
+    const squat = await buy(listingId, paymentHeader(attacker, seller.wallet_address!, PRICE, 900, { from: addr(stranger) }))
+    expect(squat.status).toBe(400)
+    expect(await db().select().from(agents).where(eq(agents.walletAddress, addr(stranger)))).toHaveLength(0)
+  })
+
+  it('never rotates the keys of an account this endpoint did not record as its own (accounts from before 0.5.8)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('e')
+    const wallet = addr(pk)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const first = deliverWhenOrdered(seller, listingId)
+    const one = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await first.done
+    expect(one.status, JSON.stringify(one.body)).toBe(200)
+    // an account from before the origin record existed: no platform_state row
+    await db().delete(platformState).where(eq(platformState.key, `x402/account/${one.body.account.agent_id}`))
+    const second = deliverWhenOrdered(seller, listingId)
+    const two = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await second.done
+    expect(two.status, JSON.stringify(two.body)).toBe(200)
+    expect(two.body.account.api_keys).toBeUndefined()
+    expect((await call(app, 'GET', '/v1/agents/me', { key: one.body.account.api_keys.test })).status).toBe(200) // the old key still works
+  })
+
   it('hands the credentials over on the next purchase when the first one failed after creating the account, once', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '6'.repeat(40)
+    const pk = pkOf('6')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
     // first purchase: the account is created, then the seller backs out - the buyer never sees its keys
     const giveUp = (async () => {
@@ -271,14 +327,14 @@ describe('the edges around the wire (ADR-54, ADR-57)', () => {
       }
       return null
     })()
-    const failed = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const failed = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await giveUp
     expect(failed.status).toBe(409)
     expect(await db().select().from(agents).where(eq(agents.walletAddress, wallet))).toHaveLength(1)
 
     // second purchase: the same wallet gets fresh keys, and is told what could not be recovered
     const second = deliverWhenOrdered(seller, listingId)
-    const two = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const two = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await second.done
     expect(two.status, JSON.stringify(two.body)).toBe(200)
     expect(two.body.account.api_keys.test).toMatch(/^as_test_/)
@@ -288,7 +344,7 @@ describe('the edges around the wire (ADR-54, ADR-57)', () => {
 
     // third purchase: shown once means once
     const third = deliverWhenOrdered(seller, listingId)
-    const three = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const three = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await third.done
     expect(three.status).toBe(200)
     expect(three.body.account.api_keys).toBeUndefined()
@@ -300,11 +356,12 @@ describe('the edges around the wire (ADR-54, ADR-57)', () => {
 describe('the account a purchase creates (ADR-48)', () => {
   it('hands back the credentials the first time a wallet pays, and never again', async () => {
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '5'.repeat(40)
+    const pk = pkOf('5')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
 
     const first = deliverWhenOrdered(seller, listingId)
-    const one = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const one = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await first.done
     expect(one.status, JSON.stringify(one.body)).toBe(200)
     expect(one.body.account.api_keys.test).toMatch(/^as_test_/)
@@ -319,7 +376,7 @@ describe('the account a purchase creates (ADR-48)', () => {
     // the same wallet paying again gets the account back, but not its keys: control of the wallet is not proof
     // that this caller is the one that created it
     const second = deliverWhenOrdered(seller, listingId)
-    const two = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const two = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await second.done
     expect(two.status, JSON.stringify(two.body)).toBe(200)
     expect(two.body.account.api_keys).toBeUndefined()
@@ -333,7 +390,8 @@ describe('the x402 funnel is counted (ADR-48)', () => {
     const { _resetHits, discoverySummary } = await import('../../discovery/hits.js')
     _resetHits()
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '4'.repeat(40)
+    const pk = pkOf('4')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
 
     await buy(listingId) // 402: terms
@@ -342,9 +400,9 @@ describe('the x402 funnel is counted (ADR-48)', () => {
       key: outsider.api_keys.test,
       body: { title: 'Live DNS probe', description: 'Probe SPF, DKIM and DMARC for a domain and report what resolves.', category: 'data', pricing_model: 'fixed', price: PRICE, input_schema: { type: 'object' }, turnaround_seconds: 600, accept_timeout_seconds: 600 },
     })
-    await buy(l.body.id, paymentHeader(wallet, seller.wallet_address!, PRICE)) // refused: not ours
+    await buy(l.body.id, paymentHeader(pk, seller.wallet_address!, PRICE)) // refused: not ours
     const runtime = deliverWhenOrdered(seller, listingId)
-    const ok = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const ok = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await runtime.done
     expect(ok.status, JSON.stringify(ok.body)).toBe(200)
 
@@ -370,10 +428,11 @@ describe('an x402 purchase raises exactly one operator alert (ADR-49)', () => {
     _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: 'https://ntfy.sh/agentsouk-x402-test', OPERATOR_ALERT_MIN_TIER: 'quiet' })
     _setAlertFetchForTests(async () => ({ status: 200, text: async () => 'ok' }))
     const { seller, listingId } = await firstPartySeller()
-    const wallet = '0x' + '5'.repeat(40)
+    const pk = pkOf('5')
+    const wallet = addr(pk)
     _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
     const runtime = deliverWhenOrdered(seller, listingId)
-    const r = await buy(listingId, paymentHeader(wallet, seller.wallet_address!, PRICE))
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
     await runtime.done
     expect(r.status, JSON.stringify(r.body)).toBe(200)
 
@@ -458,7 +517,7 @@ describe('upfront listings are neither advertised nor hung (audit fix)', () => {
     const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'Pay first', description: 'A platform-operated listing that wants payment before it delivers.', category: 'ops', pricing_model: 'fixed', price: PRICE, payment: 'upfront' } })
     expect(l.status).toBe(201)
     const started = Date.now()
-    const r = await buy(l.body.id, paymentHeader('0x' + '3'.repeat(40), seller.wallet_address!, PRICE))
+    const r = await buy(l.body.id, paymentHeader(pkOf('3'), seller.wallet_address!, PRICE))
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('x402_upfront_not_supported')
     expect(r.body.error.hint).toContain('/v1/jobs')

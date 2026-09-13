@@ -7,7 +7,7 @@ import type { App } from '../app.js'
 import { db } from '../db/client.js'
 import { agents, faucetClaims, jobs, operatorAlerts } from '../db/schema.js'
 import { channelKindOf, webhookRequest, emailRequest, channelStatus, clamp, headerSafe, MAX_MESSAGE_CHARS } from './alert-channels.js'
-import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, ALERT_DEFER_MAX_MS, classifyPayment, deliverAlerts, raise, recentAlerts } from './alerts.js'
+import { _setAlertFetchForTests, ALERT_MAX_ATTEMPTS, ALERT_BACKOFF_MS, ALERT_DEFER_MAX_MS, alertsStatus, classifyPayment, deliverAlerts, raise, recentAlerts, SUPPRESSED } from './alerts.js'
 
 const ADMIN = 'test-admin-token-1234567890'
 const WEBHOOK = 'https://ntfy.sh/agentsouk-operator-test'
@@ -162,6 +162,53 @@ describe('raising alerts (ADR-49)', () => {
     // this test stayed green with the environment filter removed. What tells the two apart is last_error.
     expect(l1.status).toBe('pending')
     expect(l1.last_error).toBeNull()
+  })
+})
+
+describe('the hourly-cap summary (ADR-54, ADR-57, ADR-58)', () => {
+  it('is one row per ENVIRONMENT and hour: the sandbox flooding first cannot swallow the live notice', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const now = Date.UTC(2026, 8, 14, 3, 0, 0)
+    await raise(draft({ key: 't1', tier: 'quiet', env: 'test' }), now)
+    await deliverAlerts(now)
+    await raise(draft({ key: 't2', tier: 'quiet', env: 'test' }), now + 1000) // held: the test hour is full
+    await raise(draft({ key: 'l1', tier: 'notable', env: 'live' }), now + 2000)
+    await deliverAlerts(now + 2000)
+    await raise(draft({ key: 'l2', tier: 'notable', env: 'live' }), now + 3000) // held: the live hour is full
+    const flood = (await recentAlerts()).filter((r) => r.key.startsWith('flood:'))
+    expect(flood.map((r) => r.key).sort()).toEqual(['flood:live:2026-09-14T03', 'flood:test:2026-09-14T03'])
+  })
+
+  it('is written by the delivery sweep too, when thirty rows arrive before anything was delivered', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 2 })
+    const now = Date.UTC(2026, 8, 14, 4, 0, 0)
+    for (const k of ['a', 'b', 'c', 'd', 'e']) await raise(draft({ key: k, tier: 'quiet' }), now) // raise() sees nothing delivered: no summary
+    expect((await recentAlerts()).some((r) => r.key.startsWith('flood:'))).toBe(false)
+    const first = await deliverAlerts(now)
+    expect(first).toMatchObject({ sent: 2, deferred: 3 })
+    const flood = (await recentAlerts()).filter((r) => r.key.startsWith('flood:'))
+    expect(flood).toHaveLength(1)
+    expect(flood[0]!.key).toBe('flood:test:2026-09-14T04')
+    const second = await deliverAlerts(now + 1000)
+    expect(second.sent).toBe(1) // the summary itself, past the cap
+    expect((await recentAlerts()).find((r) => r.key.startsWith('flood:'))!.status).toBe('sent')
+  })
+
+  it('is not written for a duplicate that was never queued', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_MAX_PER_HOUR: 1 })
+    const now = Date.UTC(2026, 8, 14, 5, 0, 0)
+    await raise(draft({ key: 'dup', tier: 'quiet' }), now)
+    await deliverAlerts(now)
+    await raise(draft({ key: 'dup', tier: 'quiet' }), now + 1000) // the other party's emission of the same fact
+    expect((await recentAlerts()).some((r) => r.key.startsWith('flood:'))).toBe(false)
+  })
+
+  it('tells the four endings apart in the summary the overview shows', async () => {
+    const now = Date.now()
+    const row = (key: string, lastError: string) => ({ id: `alr_${key}`, env: 'test' as const, tier: 'quiet' as const, key, title: 't', body: 'b', status: 'suppressed' as const, attempt: 1, nextAttemptAt: now, lastError, createdAt: now, updatedAt: now })
+    await db().insert(operatorAlerts).values([row('s1', SUPPRESSED.cap(12)), row('s2', SUPPRESSED.noChannel), row('s3', SUPPRESSED.ourMoney), row('s4', 'some new wording nobody has classified')])
+    const s = await alertsStatus(now)
+    expect(s.last_7_days).toMatchObject({ given_up_after_cap: 1, suppressed_no_channel: 1, suppressed_our_money: 1, suppressed_other: 1 })
   })
 })
 

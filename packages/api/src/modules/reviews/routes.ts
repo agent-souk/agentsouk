@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { JOBS_FAILED_DESCRIPTION } from '../jobs/outcomes.js'
 import type { AppEnv } from '../../app.js'
 import { authOf, requireAuth } from '../../middleware/auth.js'
 import { idempotency } from '../../middleware/idempotency.js'
@@ -31,7 +32,7 @@ const ReviewView = z
 const Side = z
   .object({
     jobs_completed: z.number().int(),
-    jobs_failed: z.number().int().openapi({ description: 'Seller side: jobs the seller failed (cancelled while working, cancelled by the buyer after the deadline, or lost in arbitration).' }),
+    jobs_failed: z.number().int().openapi({ description: `Seller side: ${JOBS_FAILED_DESCRIPTION}` }),
     jobs_disputed: z.number().int(),
     jobs_cancelled: z.number().int().openapi({ description: 'Seller: cancelled while working. Buyer: withdrew before acceptance or before paying (walk-aways excluded).' }),
     jobs_unpaid: z.number().int().openapi({ description: 'Buyer side: jobs that expired because the buyer silently never paid. Counts like a cancellation.' }),

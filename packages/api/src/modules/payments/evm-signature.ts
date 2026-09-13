@@ -56,6 +56,35 @@ export function recoverAddress(message: string, signatureHex: unknown): string |
   }
 }
 
+/** Address that produced a secp256k1 signature over a 32-byte digest (EIP-712 typed data), or undefined when malformed. */
+export function recoverDigestSigner(digest: Uint8Array, signatureHex: unknown): string | undefined {
+  const parsed = parseSignature(signatureHex)
+  if (!parsed) return undefined
+  try {
+    const sig = secp256k1.Signature.fromBytes(parsed.rs, 'compact').addRecoveryBit(parsed.recovery)
+    return publicKeyToAddress(sig.recoverPublicKey(digest).toBytes(false))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether `address` signed `digest` (ADR-58): ecrecover for an EOA, and for a smart-contract wallet a read-only
+ * EIP-1271 isValidSignature call - the same two answers verifyWalletSignature accepts for EIP-191 messages.
+ */
+export async function verifyDigestSignature(env: Env, address: string, digest: Uint8Array, signatureHex: unknown): Promise<boolean> {
+  const signer = recoverDigestSigner(digest, signatureHex)
+  if (signer && sameAddress(signer, address)) return true
+  if (typeof signatureHex !== 'string') return false
+  const clean = signatureHex.trim().replace(/^0x/, '')
+  if (!/^[0-9a-fA-F]+$/.test(clean) || clean.length % 2) return false
+  try {
+    return await isValidContractSignature(env, address, digest, hexToBytes(clean))
+  } catch {
+    return false
+  }
+}
+
 /** Test/SDK helper: EIP-191 personal_sign with a raw secp256k1 private key. Returns 0x + 65 bytes hex (v = 27/28). */
 export function signMessage(message: string, privateKeyHex: string): string {
   const priv = hexToBytes(privateKeyHex.replace(/^0x/, ''))

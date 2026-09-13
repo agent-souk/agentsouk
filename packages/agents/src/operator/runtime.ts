@@ -323,7 +323,10 @@ export class OperatorRuntime {
     if (!this.paymentsEnabled || !this.wallet) return 'payments disabled'
     const bal = await this.refreshBalances()
     if (bal.eth === 0n) return 'no ETH for gas on the operator wallet'
-    const committed = this.openCommitments(spec.key)
+    // Bounties reserve against each other AND against the first-buy programme's open, unpaid purchases (ADR-58):
+    // three hired listings are a promise of up to three USDC, and a bounty posted over them was a promise the
+    // wallet could not keep for everyone.
+    const committed = this.openCommitments(spec.key) + (this.firstBuyer?.openUnpaid() ?? 0n)
     const need = committed + BigInt(spec.budget_max)
     if (bal.usdc < need) return `wallet holds ${formatUsdc(bal.usdc)}, ${formatUsdc(need)} needed with open commitments`
     const spend = await this.refreshSpend()
@@ -335,6 +338,8 @@ export class OperatorRuntime {
   async recordSpend(e: { job_id: string; amount: string; hash: string; at: string }): Promise<void> {
     await this.appendLedger(e)
     this.spend = null
+    // the wallet just got poorer: a hire decided seconds later in the same tick must not read the cached balance
+    this.balances = null
   }
 
   /**

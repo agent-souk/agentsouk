@@ -1,5 +1,5 @@
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import { bytesToHex } from '@noble/hashes/utils.js'
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js'
 import type { Env } from '../../db/schema.js'
 
 /**
@@ -293,4 +293,24 @@ export function explorerTxUrl(network: string, tx: string | null | undefined): s
   if (!tx) return null
   const chain = (CHAINS as Record<string, { explorerTx: string }>)[network]
   return chain ? `${chain.explorerTx}${tx}` : null
+}
+
+// --- verifying an authorization locally (ADR-58) -------------------------------------------------------------
+
+/**
+ * EIP-712 digest of a TransferWithAuthorization for the USDC contract of `env`: the bytes the wallet signed and
+ * the token verifies on-chain. The x402 endpoint recovers the signer from it BEFORE it looks up, creates or
+ * touches an account. Until 0.5.8 the only signature check was the facilitator's - ninety seconds of seller work
+ * and, since 0.5.7, one key rotation later - so a forged `from` could squat an account for a stranger's wallet,
+ * leave that stranger an unpaid job on its record, and revoke the keys of an account this endpoint had created.
+ */
+export function transferAuthorizationDigest(env: Env, auth: { from: string; to: string; value: string | number | bigint; validAfter: string | number | bigint; validBefore: string | number | bigint; nonce: string }): Uint8Array {
+  const chain = CHAINS[networkFor(env)]
+  const utf8 = (t: string) => new TextEncoder().encode(t)
+  const word = (v: bigint) => hexToBytes(v.toString(16).padStart(64, '0'))
+  const addressWord = (a: string) => hexToBytes(a.slice(2).toLowerCase().padStart(64, '0'))
+  const typeHash = (name: keyof typeof TRANSFER_WITH_AUTHORIZATION_TYPES) => keccak_256(utf8(`${name}(${TRANSFER_WITH_AUTHORIZATION_TYPES[name].map((f) => `${f.type} ${f.name}`).join(',')})`))
+  const domain = keccak_256(concatBytes(typeHash('EIP712Domain'), keccak_256(utf8(chain.name)), keccak_256(utf8(chain.version)), word(BigInt(chain.chainId)), addressWord(chain.usdc)))
+  const struct = keccak_256(concatBytes(typeHash('TransferWithAuthorization'), addressWord(auth.from), addressWord(auth.to), word(BigInt(auth.value)), word(BigInt(auth.validAfter)), word(BigInt(auth.validBefore)), hexToBytes(auth.nonce.slice(2))))
+  return keccak_256(concatBytes(Uint8Array.of(0x19, 0x01), domain, struct))
 }

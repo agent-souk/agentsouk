@@ -5,7 +5,7 @@
  */
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { App } from '../../../api/src/app.js'
 import { installFakeChain } from '../../../api/src/test/chain.js'
 import { call, createTestAgent, freshApp } from '../../../api/src/test/setup.js'
@@ -106,6 +106,8 @@ function walletFor(privateKey: string, chain: ReturnType<typeof installFakeChain
   const wallet = new UsdcWallet(privateKey, CHAINS.test, { fetchImpl: rpc, sleep: async () => undefined })
   return { wallet, sent }
 }
+
+afterEach(() => vi.useRealTimers())
 
 describe('OperatorRuntime', () => {
   it('posts, awards, pays a sealed delivery on-chain, grades, reviews and stops at max_awards; state survives a restart', async () => {
@@ -255,6 +257,13 @@ describe('OperatorRuntime', () => {
     expect(st.needs_operator).toContain(`"output_hash": "${job.output_hash}"`)
     await rt.tick()
     expect(sent).toHaveLength(0) // still: `true` is not a confirmation of this delivery
+    // nor is a hash that is not this delivery's - copied from an older alert, or mistyped
+    await desk$.memory.set(`operator/confirm/${st.job_id}`, { output_hash: 'f'.repeat(64) })
+    await rt.tick()
+    expect(sent).toHaveLength(0)
+    await desk$.memory.set(`operator/confirm/${st.job_id}`, 'not-this-delivery')
+    await rt.tick()
+    expect(sent).toHaveLength(0)
 
     // the confirmation that names the sealed output is the one that pays
     await desk$.memory.set(`operator/confirm/${st.job_id}`, { output_hash: job.output_hash })
@@ -262,6 +271,44 @@ describe('OperatorRuntime', () => {
     expect(sent).toHaveLength(1)
     expect(st.pay_hash).toBe(sent[0])
     expect((await s.jobs.get(job.id)).payment.status).toBe('paid')
+  })
+
+  it('cancels a paid bounty job whose seller goes silent after a revision, so the refund is on the record (ADR-57)', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk)
+    const seller = await createTestAgent(app, { name: 'Silent Seller' })
+    const { wallet, sent } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 800_000n })
+    const judge = scriptedJudge({ verdict: 'revise' })
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, judge, [spec], 'test', () => undefined, { ...DEFAULT_CONFIG, totalBudget: 5_000_000n, considerationHours: 0 })
+    await rt.init()
+    await rt.tick()
+    const st = rt.stateOf(spec.key)!
+    const s = client(app, seller.api_keys.test)
+    await s.bounties.propose(st.bounty_id!, 800_000, 'I will run the walkthrough with the python sdk and report.')
+    await rt.tick()
+    await s.jobs.deliver(st.job_id!, { client: { kind: 'python-sdk' }, notes: 'ten words of honest notes about the sandbox walkthrough experience here' }, 'done', { client_kind: 'python-sdk' })
+    await rt.tick() // paid on-chain
+    expect(sent).toHaveLength(1)
+    await rt.tick() // revealed, judged 'revise': a revision is requested, the job is in_progress and paid
+    const revised = await s.jobs.get(st.job_id!)
+    expect(revised.status).toBe('in_progress')
+    expect(revised.revision_count).toBe(1)
+    expect(revised.payment.status).toBe('paid')
+    const jobId = st.job_id!
+    // the seller never answers; the revision deadline and the platform's grace hour pass
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.parse(revised.deadlines.deliver_by!) + 3600_000 + 60_000)
+    await rt.tick()
+    const ended = await s.jobs.get(jobId)
+    expect(ended.status).toBe('cancelled')
+    expect(ended.payment.refund_due).toBe(true) // the money left; the platform's own rules put it on the seller
+    expect(st.job_id).toBeNull()
+    expect(st.awards_paid).toBe(1) // paid is paid
+    expect(st.history[0]).toMatchObject({ job_id: jobId, outcome: 'paid_no_redelivery' })
+    const rep = await call(app, 'GET', `/v1/agents/${seller.agent.id}/reputation`)
+    expect(rep.body.test.as_seller).toMatchObject({ jobs_failed: 1, refunds_due: 1 })
   })
 
   it('asks for a better preview (mechanically, then via the judge), walks away near the deadline, and never posts what it cannot pay', async () => {

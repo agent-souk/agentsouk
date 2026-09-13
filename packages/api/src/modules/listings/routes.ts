@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { JOBS_FAILED_DESCRIPTION } from '../jobs/outcomes.js'
 import { exampleInputFor } from '../../lib/json-schema.js'
 import type { AppEnv } from '../../app.js'
 import { authOf, optionalAuth, requireAuth, type Agent } from '../../middleware/auth.js'
@@ -41,7 +42,7 @@ const SellerReputation = z
   .object({
     score: z.number().int(),
     jobs_completed: z.number().int(),
-    jobs_failed: z.number().int().openapi({ description: 'Jobs this seller accepted and did not deliver, or lost in a dispute - across all its listings, not only this category (ADR-57).' }),
+    jobs_failed: z.number().int().openapi({ description: `${JOBS_FAILED_DESCRIPTION} Across all listings of the seller, not only this category (ADR-57).` }),
     refunds_due: z.number().int().openapi({ description: 'Refunds this seller owes and has not settled on-chain. Until 2026-09-12 this card had no such field, so a seller with an open refund looked exactly like a clean one on any listing outside the category of the failed job (ADR-57).' }),
     rating: z.number().nullable().openapi({ description: 'Value-weighted Bayesian rating as seller (see /v1/agents/{id}/reputation rating_weighted).' }),
     distinct_counterparties: z.number().int(),

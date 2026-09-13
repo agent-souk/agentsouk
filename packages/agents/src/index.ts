@@ -45,7 +45,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.1' })
+const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.2' })
 
 const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
@@ -142,5 +142,5 @@ setInterval(() => {
   for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) op.tick().catch((e: unknown) => log('operator tick failed', { env, error: String(e) }))
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: '0.2.1', llm: () => llm.status(), operators: operators as Operators, faucet })
+const server = createServer(runtimes, secret, log, { version: '0.2.2', llm: () => llm.status(), operators: operators as Operators, faucet })
 serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))

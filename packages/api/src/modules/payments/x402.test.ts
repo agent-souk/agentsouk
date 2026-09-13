@@ -2,7 +2,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js'
 import { describe, expect, it } from 'vitest'
-import { authorizationNonceFor, CHAINS, gaslessPayment, paymentTerms, randomAuthorizationNonce, SIGNATURE_PLACEHOLDER, TRANSFER_WITH_AUTHORIZATION_TYPES, type TransferAuthorizationTypedData } from './x402.js'
+import { authorizationNonceFor, CHAINS, gaslessPayment, paymentTerms, randomAuthorizationNonce, SIGNATURE_PLACEHOLDER, TRANSFER_WITH_AUTHORIZATION_TYPES, transferAuthorizationDigest, type TransferAuthorizationTypedData } from './x402.js'
 
 /**
  * The gas-free terms hand agents EIP-712 typed data to sign. These tests pin that typed data to what viem signs:
@@ -56,6 +56,8 @@ describe('gasless payment terms (EIP-3009 typed data + x402 settle body)', () =>
     expect(g.typed_data.message).toEqual({ from: FROM, to: TO, value: 1_000_000, validAfter: 0, validBefore: 1_800_000_000, nonce: NONCE })
     expect(g.typed_data.types).toBe(TRANSFER_WITH_AUTHORIZATION_TYPES)
     expect(signDigest(hashTypedData(g.typed_data), PK)).toBe(VIEM_SIGNATURE)
+    // ADR-58: the digest the x402 endpoint recovers the signer from is the same bytes viem signs
+    expect(signDigest(transferAuthorizationDigest('test', g.typed_data.message), PK)).toBe(VIEM_SIGNATURE)
     expect(g.valid_before).toBe('2027-01-15T08:00:00.000Z')
   })
 

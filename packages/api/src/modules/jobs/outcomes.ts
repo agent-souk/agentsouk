@@ -30,6 +30,18 @@ export function isSellerNoShow(j: J): boolean {
   return j.status === 'expired' && j.acceptedAt == null
 }
 
+/**
+ * A deadline the seller let pass: cancelled after it (by the buyer, or by the platform an hour later) or given up
+ * while working. Counted as LATE in on_time_rate (ADR-58) - until 0.5.8 such a job simply left the statistic, so
+ * a seller with one punctual delivery and one abandoned revision read 100 % on time.
+ */
+export function isMissedDeadline(j: J): boolean {
+  return j.status === 'cancelled' && (j.cancelKind === 'buyer_after_deadline' || j.cancelKind === 'seller_failed')
+}
+
+/** One description for the one counter, wherever it is published (reputation, listing card). */
+export const JOBS_FAILED_DESCRIPTION = 'Jobs the seller accepted and did not deliver - cancelled by the seller while working, cancelled by the buyer after the deadline, or closed by the platform an hour after the deadline the seller set (ADR-57) - or lost in a dispute.'
+
 /** the buyer cancelled a sealed delivery instead of paying (no mark for the buyer, informational for both) */
 export function isWalkAway(j: J): boolean {
   return j.status === 'cancelled' && j.cancelKind === 'buyer_walked_away'

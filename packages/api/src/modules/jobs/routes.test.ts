@@ -711,6 +711,23 @@ describe('a seller that accepts and never delivers (ADR-57)', () => {
     expect((await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 5000)).undelivered).toBe(0) // once
   })
 
+  it('names a revision that never came for what it is, instead of "never delivered"', async () => {
+    const l = await makeListing({ price: 0 }) // free: revealed at once, so the buyer can ask for a revision unpaid
+    const j = await order(l.id, { text: 'a' }, { max_revisions: 1 })
+    await act(seller, j.id, 'accept')
+    await act(seller, j.id, 'deliver', { output: { translation: 'x' } })
+    const rev = await act(buyer, j.id, 'request_revision', { message: 'please fix' })
+    expect(rev.body.status).toBe('in_progress')
+    const deadline = Date.parse(rev.body.deadlines.deliver_by)
+    expect((await sweepJobs(deadline + GRACE_AFTER_DEADLINE_MS + 1000)).undelivered).toBe(1)
+    const view = await get(buyer, j.id)
+    expect(view.body.status).toBe('cancelled')
+    expect(view.body.cancel_reason).toContain('requested revision')
+    const msgs = await call(app, 'GET', `/v1/threads/${view.body.thread_id}/messages`, { key: buyer.api_keys.test })
+    expect(msgs.body.data.some((m: any) => String(m.body).includes('did not deliver the requested revision'))).toBe(true)
+    expect(msgs.body.data.some((m: any) => String(m.body).includes('accepted and did not deliver'))).toBe(false)
+  })
+
   it('tells the buyer of a paid job once that it can cancel, and decides nothing for it', async () => {
     const l = await makeListing()
     const j = await order(l.id, { text: 'a' }, { max_revisions: 1 })
@@ -732,6 +749,24 @@ describe('a seller that accepts and never delivers (ADR-57)', () => {
   })
 })
 
+describe('a refund the seller already made counts (ADR-58)', () => {
+  it('a seller that refunds in full and then cancels owes nothing more', async () => {
+    const l = await makeListing({ payment: 'upfront' })
+    const j = await order(l.id)
+    await act(seller, j.id, 'accept')
+    expect((await pay(j.id, chain.pay(wallet(buyer), wallet(seller), PRICE))).status).toBe(200)
+    // the seller sees it cannot deliver, sends the money back first, then cancels
+    const back = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 1000 }) } })
+    expect(back.status, JSON.stringify(back.body)).toBe(200)
+    const sc = await act(seller, j.id, 'cancel', { reason: 'cannot deliver, money returned' })
+    expect(sc.body.status).toBe('cancelled')
+    expect(sc.body.payment.refund_due).toBe(false) // nothing is owed: it was returned before the cancel
+    expect((await reputation(seller)).as_seller).toMatchObject({ jobs_failed: 1, refunds_due: 0, refunds_made: 1 })
+    const events = await call(app, 'GET', `/v1/jobs/${j.id}/events`, { key: buyer.api_keys.test })
+    expect(events.body.data.filter((e: any) => e.type === 'refund_due')).toHaveLength(0)
+  })
+})
+
 describe('a job refunded once can owe again (ADR-57)', () => {
   it('opens a fresh refund cycle for a transfer that lands after the first refund, instead of recording nothing', async () => {
     const l = await makeListing({ payment: 'upfront' })
@@ -750,7 +785,8 @@ describe('a job refunded once can owe again (ADR-57)', () => {
     expect(again.status, JSON.stringify(again.body)).toBe(200)
     const view = await get(buyer, j.id)
     expect(view.body.payment).toMatchObject({ refund_due: true, refund_expected: PRICE }) // a fresh cycle, not a sum with the settled one
-    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 1 })
+    expect(view.body.payment.refund).not.toBeNull() // the refund that WAS made stays on the job (ADR-58)
+    expect((await reputation(seller)).as_seller).toMatchObject({ refunds_due: 1, refunds_made: 1 })
     const events = await call(app, 'GET', `/v1/jobs/${j.id}/events`, { key: buyer.api_keys.test })
     expect(events.body.data.filter((e: any) => e.type === 'refund_due')).toHaveLength(2)
     const second = await call(app, 'POST', `/v1/jobs/${j.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(wallet(seller), wallet(buyer), PRICE, { timestamp: Date.now() + 3000 }) } })

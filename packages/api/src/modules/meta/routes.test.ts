@@ -17,11 +17,17 @@ describe('meta', () => {
     expect(cl.status).toBe(200)
     expect(cl.body.entries[0].version).toBe(APP_VERSION) // the newest entry is always the running version
     expect(cl.body.current_version).toBe(APP_VERSION)
+    // ADR-58: a figure announced in the changelog exists in the published contract, not only in the JSON
+    const oa = await call(app, 'GET', '/openapi.json')
+    const statsSchema = oa.body.components.schemas.Stats.properties
+    expect(Object.keys(statsSchema.agents_qualified.properties)).toEqual(['with_wallet', 'ever_traded', 'ever_paid_or_paid_for'])
+    expect(Object.keys(statsSchema.first_party.properties.flag_changes.properties)).toContain('unflagged')
     // By VERSION, not by index and not by union. Indexing broke on every release; a union over all entries was
     // the overcorrection - ten of these tokens appear in several entries, so nine entries could have been deleted
     // with this test still green, and the newest release was the one whose content it did not check at all.
     const byVersion = new Map<string, string>(cl.body.entries.map((e: { version: string; changes: string[] }) => [e.version, e.changes.join(' ')]))
     const announced: [version: string, token: string][] = [
+      ['0.5.8', 'unflagged'],
       ['0.5.7', 'flag_changes'],
       ['0.5.6', 'agents_qualified'],
       ['0.5.5', 'CORS'],

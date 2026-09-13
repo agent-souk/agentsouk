@@ -742,19 +742,49 @@ function alreadyUsed(): ApiError {
 
 /** Puts (or raises) the refund obligation on the seller. `amount` is what the buyer is owed for THIS trigger. */
 async function markRefundDue(jobId: string, actorId: string | null, why: string, amount: number, extra: Record<string, unknown> = {}): Promise<Job> {
-  const before = await reload(jobId)
   // A job refunded once can owe again: a second transfer that lands after the first refund, a seller cancelling
   // after a voluntary refund, a verdict. Returning early here left refund_due false while the callers went on to
   // tell the buyer "the seller has been told to refund you" - so a settled refund opens a FRESH cycle (ADR-57).
-  // The earlier refund stays on record as its settlement row and in the job events.
-  const fresh = before.refundedAt != null
-  const expected = (before.refundDue && !fresh ? (before.refundExpected ?? 0) : 0) + amount
-  await db().update(jobs).set({ refundDue: true, refundExpected: expected, refundedAt: null, refundSettlementId: null, updatedAt: Date.now() }).where(eq(jobs.id, jobId))
-  const updated = await reload(jobId)
-  await logJobEvent(jobId, 'refund_due', actorId, { why, amount, expected, ...(fresh ? { fresh_cycle: true, previous_refund_settlement_id: before.refundSettlementId } : {}), ...extra })
-  await note(updated, null, undefined, `Refund due: ${why} Seller: send ${money(expected)} back to the buyer wallet (payment.pay_from) in ONE transfer and submit the hash with POST /v1/jobs/{id}/refund. An open refund counts against your reputation.`, { job_id: jobId, refund_due: true, refund_expected: expected, ...extra })
-  await notify(updated, 'refund_due', { why, amount, refund_expected: expected, ...extra })
-  return updated
+  // `amount` is what is owed for THIS trigger, already net of what was refunded (the callers use owedAmount);
+  // the earlier refund keeps its settlement row, its job events and payment.refund (refundSettlementId stays).
+  //
+  // ADR-58: the read-modify-write runs under the settlements lock, guarded on the refundedAt it read, so a refund
+  // that lands concurrently (refundJob writes under the same lock) is never overwritten with a stale obligation;
+  // if the guard fails, the row is read again and the decision made afresh, once.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let updated: Job | null = null
+    let fresh = false
+    let previous: string | null = null
+    let expected = 0
+    await settle(async () => {
+      const before = await reload(jobId)
+      fresh = before.refundedAt != null
+      previous = before.refundSettlementId
+      expected = (before.refundDue && !fresh ? (before.refundExpected ?? 0) : 0) + amount
+      const guard = before.refundedAt == null ? isNull(jobs.refundedAt) : eq(jobs.refundedAt, before.refundedAt)
+      const r = await db().update(jobs).set({ refundDue: true, refundExpected: expected, refundedAt: null, updatedAt: Date.now() }).where(and(eq(jobs.id, jobId), guard))
+      if ((r.rowsAffected ?? 0) > 0) updated = await reload(jobId)
+    })
+    if (!updated) continue
+    const cycle = fresh ? { fresh_cycle: true, previous_refund_settlement_id: previous } : {}
+    await logJobEvent(jobId, 'refund_due', actorId, { why, amount, expected, ...cycle, ...extra })
+    await note(updated, null, undefined, `Refund due: ${why} Seller: send ${money(expected)} back to the buyer wallet (payment.pay_from) in ONE transfer and submit the hash with POST /v1/jobs/{id}/refund. An open refund counts against your reputation.`, { job_id: jobId, refund_due: true, refund_expected: expected, ...extra })
+    await notify(updated, 'refund_due', { why, amount, refund_expected: expected, ...cycle, ...extra })
+    return updated
+  }
+  return reload(jobId)
+}
+
+/**
+ * What the buyer is still owed on this job: settled payments minus settled refunds, never below zero (ADR-58).
+ * A seller that refunded in full and then cancels owes nothing more; until 0.5.8 the fresh refund cycle booked
+ * the gross payment a second time in that case - a phantom obligation with a public mark on it.
+ */
+async function owedAmount(job: Job): Promise<number> {
+  const rows = await listSettlementsForJob(job.id)
+  const paid = rows.filter((s) => s.kind === 'payment' && s.status === 'settled').reduce((s, p) => s + p.amount, 0)
+  const refunded = rows.filter((s) => s.kind === 'refund' && s.status === 'settled').reduce((s, p) => s + p.amount, 0)
+  return Math.max(0, (paid || job.price || 0) - refunded)
 }
 
 /** Records a verified transfer that cannot pay the job (already paid, or no longer payable) and puts the refund on the seller. */
@@ -1137,10 +1167,12 @@ export async function cancel(env: Env, actor: Agent, id: string, reason?: string
   }
   // The payment deadline is kept: a transfer already in flight is still matched and recorded (refund due).
   const updated = await transition(job, role, 'cancel', from, 'cancelled', { cancelReason: `${role}: ${reason ?? 'cancelled'}`.slice(0, 500), cancelKind: kind, reviewDeadlineAt: null })
-  await logJobEvent(id, 'cancelled', actor.id, { reason, seller_failure: sellerFailure, walk_away: walkAway, refund_due: sellerFailure && updated.paidAt != null })
+  // Owed = paid minus already refunded (ADR-58): a seller that gave the money back before cancelling owes nothing.
+  const owed = sellerFailure && updated.paidAt != null ? await owedAmount(updated) : 0
+  await logJobEvent(id, 'cancelled', actor.id, { reason, seller_failure: sellerFailure, walk_away: walkAway, refund_due: owed > 0 })
   await note(updated, actor.id, reason, noteText, { job_id: id, status: 'cancelled' })
-  await notify(updated, 'cancelled', { by: role, reason, walk_away: walkAway, refund_due: sellerFailure && updated.paidAt != null })
-  const final = sellerFailure && updated.paidAt != null ? await markRefundDue(updated.id, actor.id, `the job was cancelled by the ${role} after the buyer paid.`, await paidAmount(updated)) : updated
+  await notify(updated, 'cancelled', { by: role, reason, walk_away: walkAway, refund_due: owed > 0 })
+  const final = owed > 0 ? await markRefundDue(updated.id, actor.id, `the job was cancelled by the ${role} after the buyer paid.`, owed) : updated
   await finalize(final, sellerFailure ? 'failed' : undefined)
   return final
 }
@@ -1163,8 +1195,10 @@ export async function resolve(id: string, resolution: { outcome: JobResolution['
   if (res.by !== 'panel') await closeDisputeForJob(id, res.outcome, res.by)
   let final = flipped
   if (res.outcome !== 'seller' && flipped.paidAt != null) {
-    const paid = await paidAmount(flipped)
-    final = await markRefundDue(flipped.id, null, `${who} ruled '${res.outcome}'.`, res.outcome === 'split' ? Math.ceil(paid / 2) : paid, { outcome: res.outcome })
+    // ADR-58: never more than the seller still holds; a refund already made counts towards the verdict
+    const owed = await owedAmount(flipped)
+    const due = res.outcome === 'split' ? Math.min(owed, Math.ceil((await paidAmount(flipped)) / 2)) : owed
+    if (due > 0) final = await markRefundDue(flipped.id, null, `${who} ruled '${res.outcome}'.`, due, { outcome: res.outcome })
   }
   await finalize(final, res.outcome === 'buyer' ? 'failed' : 'completed')
   return final
@@ -1227,17 +1261,26 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
   const undelivered = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'in_progress'), isNull(jobs.paidAt), lt(jobs.deadlineAt, overdueBefore)), limit: 200 })
   for (const job of undelivered) {
     try {
-      const flipped = await setJobIf(job.id, ['in_progress'], { status: 'cancelled', cancelKind: 'seller_failed', cancelReason: 'platform: accepted and not delivered by the deadline', reviewDeadlineAt: null })
+      // ADR-58: name what actually happened. A revision that never came is not "never delivered", and an unpaid
+      // job can still carry an orphaned transfer the seller owes back - the text and the event say so.
+      const revision = (job.revisionCount ?? 0) > 0 || job.deliveredAt != null
+      const owed = job.refundDue && job.refundedAt == null ? (job.refundExpected ?? 0) : 0
+      const flipped = await setJobIf(job.id, ['in_progress'], { status: 'cancelled', cancelKind: 'seller_failed', cancelReason: revision ? 'platform: the requested revision was not delivered by the deadline' : 'platform: accepted and not delivered by the deadline', reviewDeadlineAt: null })
       if (!flipped) continue
-      await logJobEvent(job.id, 'cancelled', null, { seller_failure: true, by: 'platform', reason: 'delivery deadline passed' })
+      await logJobEvent(job.id, 'cancelled', null, { seller_failure: true, by: 'platform', reason: revision ? 'revision deadline passed' : 'delivery deadline passed', refund_due: owed > 0 })
       await note(
         flipped,
         null,
         undefined,
-        'Cancelled by the platform: the seller accepted and did not deliver by the deadline it set itself, plus one hour. Nothing was charged. Seller: this counts as a failed job on your public record (GET /v1/agents/{id}/reputation as_seller.jobs_failed). Buyer: nothing was owed; other sellers are in GET /v1/listings, and GET /v1/demand takes a bounty if nobody offers it.',
+        [
+          revision ? 'Cancelled by the platform: the seller did not deliver the requested revision by its deadline, plus one hour.' : 'Cancelled by the platform: the seller accepted and did not deliver by the deadline it set itself, plus one hour.',
+          owed > 0 ? `A transfer of ${money(owed)} the buyer sent is recorded as orphaned; the seller owes it back (refund_due).` : 'Nothing was charged.',
+          'Seller: this counts as a failed job on your public record (GET /v1/agents/{id}/reputation as_seller.jobs_failed).',
+          owed > 0 ? 'Buyer: the refund stays due; other sellers are in GET /v1/listings.' : 'Buyer: nothing was owed; other sellers are in GET /v1/listings, and GET /v1/demand takes a bounty if nobody offers it.',
+        ].join(' '),
         { job_id: job.id, status: 'cancelled', seller_failure: true },
       )
-      await notify(flipped, 'cancelled', { by: 'platform', seller_failure: true, refund_due: false })
+      await notify(flipped, 'cancelled', { by: 'platform', seller_failure: true })
       await finalize(flipped, 'failed')
       stats.undelivered++
     } catch (e) {
@@ -1245,12 +1288,15 @@ export async function sweepJobs(now = Date.now()): Promise<{ expired: number; ex
       log.error({ err: e, job: job.id }, 'sweep: closing an undelivered job failed')
     }
   }
-  const overduePaid = await db().query.jobs.findMany({ where: and(eq(jobs.status, 'in_progress'), isNotNull(jobs.paidAt), lt(jobs.deadlineAt, overdueBefore)), limit: 200 })
+  // Once per DEADLINE (a second missed revision gets its own notice), and excluded in the query itself: with the
+  // told-once check done per row after a `limit`, two hundred jobs already told would have hidden every new one.
+  const overduePaid = await db().query.jobs.findMany({
+    where: and(eq(jobs.status, 'in_progress'), isNotNull(jobs.paidAt), lt(jobs.deadlineAt, overdueBefore), sql`not exists (select 1 from job_events e where e.job_id = ${jobs.id} and e.type = 'delivery_overdue' and json_extract(e.data, '$.deadline_at') = ${jobs.deadlineAt})`),
+    limit: 200,
+  })
   for (const job of overduePaid) {
     try {
-      const told = await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'delivery_overdue')) })
-      if (told) continue
-      await logJobEvent(job.id, 'delivery_overdue', null)
+      await logJobEvent(job.id, 'delivery_overdue', null, { deadline_at: job.deadlineAt })
       await note(
         job,
         null,

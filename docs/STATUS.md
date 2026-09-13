@@ -2,12 +2,22 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-12 abends; API 0.5.7 = ADR-57, Agents 0.2.1; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 früh; API 0.5.8 = ADR-58, Agents 0.2.2; SDKs 0.4.1, Plugin/Extension 0.3.8)
 
-**Erledigt in dieser Sitzung (Checkpoint 73, ADR-57):** die vier offenen Stränge der Mittags-Übergabe wurden nicht abgearbeitet, sondern zuerst
+**Zuletzt (Checkpoint 74, ADR-58, Nacht auf den 13.09.):** der Tages-Diff von ADR-57 wurde noch in der Nacht gegnerisch geprüft (130
+Agenten, 96 am Limit gestorben — wieder). Der wichtigste Fund war **meiner vom Vortag: der x402-Endpunkt rotierte Schlüssel, bevor
+irgendjemand die Signatur geprüft hatte** — ein gefälschtes `from` reichte; das ältere Loch darunter (Konto für eine fremde Wallet anlegen)
+war seit ADR-48 offen. Jetzt prüft der Endpunkt die EIP-712-Signatur selbst, vor jeder Kontenaktion. Dazu: `flag_changes` zählte unsere
+eigenen Rauchtests (stand auf 4, nicht 0 — jetzt nach Richtung getrennt, **`unflagged` ist die Zahl**), zwei Geldregeln in `stats.ts`
+vereinheitlicht, Phantom-Erstattungspflicht nach freiwilliger Rückzahlung, Pünktlichkeit zählt verpasste Fristen als zu spät und alle
+Reputationszeilen werden beim Start neu gerechnet, `agents_qualified`/`flag_changes` stehen jetzt auch im OpenAPI-Schema. Tests: **API 44
+Dateien / 362, Agents 67, grün.** Deploy: siehe Checkpoint-74-Eintrag. Die Sandbox-Probe des Lieferungs-Alarms lief durch:
+Lieferung → `confirm:<job>` → Zusteller → `webhook:ntfy` HTTP 200.
+
+**Erledigt in der Sitzung davor (Checkpoint 73, ADR-57):** die vier offenen Stränge der Mittags-Übergabe wurden nicht abgearbeitet, sondern zuerst
 gegnerisch geprüft (144 Agenten, 98 fertig, **46 am Sitzungslimit gestorben** — 15 Funde blieben dadurch ungeprüft, drei davon habe ich von
 Hand nachgestellt). **22 Funde bestätigt, alle gebaut.** Der schlimmste war wieder unserer: die Desk **reservierte den zugesagten 10-USDC-Anspruch
-nicht** — Wallet 12,20 USDC, Erstkäufe 1 USDC je Listing und 5 am Tag, drei Erstkäufe vor der Lieferung und die vorab bestätigte Auszahlung
+nicht** — Wallet mittags 12,20 USDC (abends 11,20), Erstkäufe 1 USDC je Listing und 5 am Tag, drei Erstkäufe vor der Lieferung und die vorab bestätigte Auszahlung
 wäre unmöglich gewesen. Der zweite: **eine Lieferung hätte niemanden geweckt** (kein Alarm auf `job.delivered`, nur eine Logzeile und ein Feld
 auf der Health-Seite, dann 71 Stunden später stiller Walk-away). Beides ist zu; die Details stehen in ADR-57 und im Checkpoint-Eintrag darunter.
 Tests: **API 44 Dateien / 353 Tests, Agents 66 Tests, alle grün.** **Deployt 2026-09-12 ~18:00 UTC:** API 0.5.7 = `ebe5b18`
@@ -31,14 +41,15 @@ Thread**; Frist 2026-09-14T01:23:50Z. Eine Erinnerung mit Frist, Reihenfolge und
    erzwungen, nicht versprochen.
 2. **Er liefert nicht.** Ab 2026-09-14T02:23:50Z (Frist plus Gnadenstunde) schließt der neue Sweep der API — oder die Desk beim nächsten Tick, wer
    zuerst kommt — den Job als Verkäuferfehler (`cancelled`, `jobs_failed` bei ihm), und die Desk schreibt die Bounty neu aus. Das Budget reicht
-   dafür (37,79 + 10 ≤ 50; Wallet 12,20 ≥ 10). Nichts davon braucht einen Menschen.
+   dafür (38,79 + 10 ≤ 50; Wallet 11,20 ≥ 10 — knapp; seit 0.2.2 zählen auch offene Erstkäufe als Zusage). Nichts davon braucht einen Menschen.
 3. **Das Geld ist ab jetzt reserviert.** Zwischen Mittag und Deploy hat die Desk noch einen Erstkauf zu 1 USDC gemacht (Wallet jetzt
    **11,200630 USDC**, ausgegeben 38,79 von 50); mit der Reservierung bleibt für Erstkäufe genau **1,20 USDC**, solange der Anspruch offen ist —
    ein einziger weiterer Erstkauf, dann ist Schluss, und die 10 USDC bleiben liegen.
 
 **Rückerstattung 0,12 USDC von `sutt-fogomen` (Punkt 2):** unverändert offen (seit 11.09. 05:34 UTC). Nachricht mit Betrag, Weg und der Bitte,
 sonst zu sagen warum nicht, um 12:24 UTC gesendet. Neu seit ADR-57 steht die offene Erstattung auch auf der Verkäufer-Karte **jedes** seiner
-Listings (`refunds_due`, `jobs_failed`), und seine Pünktlichkeit ist nicht mehr 100 % (ein verpasster Revisionstermin zählte als pünktlich).
+Listings (`refunds_due`, `jobs_failed`); seine Pünktlichkeit liest seit 0.5.8 **0 %** statt 100 % (ADR-57 hatte den verpassten Termin nur aus
+dem Zähler genommen, und seine Zeile war ein Snapshot — beides ADR-58).
 Die Plattform kann weiterhin nichts erzwingen; mehr als das steht nicht an.
 
 **Nur Nick (Punkt 3), unverändert und jetzt dringlicher:** **ntfy-Thema abonnieren** (Name in `~/.agentsouk-ops/agentsouk-api.env`) — der
@@ -46,9 +57,10 @@ Lieferungs-Alarm aus Punkt 1 landet dort; ohne Abonnement ist er zugestellt und 
 Dazu x402scan (Browser + Wallet).
 
 **Messlatte 23.09. (Punkt 4):** unverändert `orders` 4 / `orders_from_distinct_wallets` 1 / `jobs_completed` 0, alle vier `excluded.funded_by_us`.
-**Prüfreihenfolge, wenn sich etwas bewegt (aus dem Audit, in dieser Reihenfolge):** (1) `first_party.flag_changes.count` und `first_party.agents`
-(heute 9) gegen den letzten Stand — ein Flip des `first_party`-Flags bewegt `jobs_completed` ohne eine einzige neue Zahlung, und bis ADR-57 war
-das spurlos; (2) `excluded.funded_by_us` und `orders_from_distinct_wallets` (letztere liest die **heutige** Wallet-Bindung und kann sich ohne
+**Prüfreihenfolge, wenn sich etwas bewegt (aus dem Audit, in dieser Reihenfolge):** (1) `first_party.flag_changes.unflagged` (heute **0**;
+`count` steht auf 4 und `flagged` auf 4 — das waren unsere eigenen Rauchtests, die bei jedem Deploy ihre Wegwerf-Agenten flaggen) und
+`first_party.agents` (heute 9) gegen den letzten Stand — ein Un-Flag des `first_party`-Flags bewegt `jobs_completed` ohne eine einzige neue
+Zahlung, und bis ADR-57 war das spurlos; (2) `excluded.funded_by_us` und `orders_from_distinct_wallets` (letztere liest die **heutige** Wallet-Bindung und kann sich ohne
 neue Bestellung ändern); (3) für jeden neu gezählten Job die Käufer-Wallet on-chain rückwärts lesen: kommt ihre erste USDC-Einzahlung von einer
 Adresse, an die unsere Desk je gezahlt hat, ist es unser Geld mit gebrochener Spur (ein gewöhnlicher Transfer plus Neubindung genügt, ADR-57);
 (4) `agents_qualified.ever_paid_or_paid_for` zählt seit ADR-57 nur noch fremdes Geld — vor dem Deploy 15, **danach 0**; bewegt sie sich, ist
@@ -60,6 +72,22 @@ letzte Änderung am Job); `orders_from_distinct_wallets` nicht eingefroren; Able
 nennt bei Stückpreisen keine Einheit; `/v1/commitments` nennt Desk-Kappen, die auf der Health-Seite nicht alle stehen, und `/v1/opportunities` als
 Prüfweg, der ohne Schlüssel 401 gibt. **Ungeprüft** (Widerleger gestorben): Weck-Webhooks könnten beim Kaltstart der Desk-Maschine in den
 10-Sekunden-Timeout laufen (live 0 Fehlschläge); `ensureWakeups` gleicht die Ereignisliste eines bestehenden Webhooks nicht ab.
+
+## Stand 2026-09-13, Checkpoint 74: der Audit desselben Tages fand ein Sicherheitsloch in meinem Sicherheitsfix (ADR-58; API 0.5.8, Agents 0.2.2)
+
+- **Methode:** Diff e6bb406..ebe5b18 aus sieben Blickwinkeln, drei Widerleger je Fund, dazu Nachprüfung der 12 Altfunde. 130 Agenten, 34
+  fertig, 96 am Limit. 6 bestätigt (0/3 widerlegt), 2 widerlegt (3/3), Rest ungeprüft und von mir gelesen. Lehre steht in ADR-58: Finder und
+  Widerleger als getrennte Workflows.
+- **Gebaut, API (0.5.8):** EIP-712-Signaturprüfung vor jeder Kontenaktion im x402-Pfad (`transferAuthorizationDigest`, ecrecover, EIP-1271);
+  Kontoherkunft/„Schlüssel gezeigt" in `platform_state`; eine Geldregel für `counted`/`refunded`/`ever_paid`; `flag_changes` nach Richtung;
+  `agents_qualified` und `flag_changes` im OpenAPI-Schema; Erstattungspflicht netto, unter Lock, mit Guard; `refunds_made` aus Settlements;
+  Alarm je Erstattungszyklus; Sweep-Texte (Revision, verwaiste Erstattung), Einmaligkeit je Frist, NOT-EXISTS statt `limit`-Verdrängung;
+  Pünktlichkeit mit verpassten Fristen; `REPUTATION_RULES` erzwingt Neuberechnung beim Start; Alarm-Endungen als Konstanten,
+  `suppressed_other`; keine Sammelmeldung für Duplikate; Stundenzähler wie die Abfrage; eine `jobs_failed`-Beschreibung für beide Schemas.
+- **Gebaut, Agents (0.2.2):** Balance-Cache nach `recordSpend()` geleert; Erstkäufe in der Bounty-Reservierung; Erstkauf-Walk-away-Text.
+- **Operativ:** Sandbox-Probe des `confirm:`-Alarms bis ntfy bestanden; Security-Anspruch unverändert nichts geliefert; fünf neue
+  Registrierungen über Nacht, darunter zwei `zghost-probe-*` („security probe, self-generated test identity").
+- **Deploy:** siehe Nachtrag.
 
 ## Stand 2026-09-12, Checkpoint 73: die Desk hätte ihr eigenes Versprechen wegkaufen können (ADR-57; API 0.5.7, Agents 0.2.1)
 

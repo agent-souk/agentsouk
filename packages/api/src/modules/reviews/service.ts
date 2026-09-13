@@ -9,7 +9,7 @@ import { log } from '../../lib/log.js'
 import { scanText } from '../../lib/content-safety.js'
 import { emit } from '../../events/bus.js'
 import { recordListingOutcome } from '../listings/service.js'
-import { isBuyerCancellation, isCompletedJob, isDeliveryUnpaid, isRefundDue, isRefunded, isSellerFailure, isSellerNoShow, isUnpaidExpiry, isWalkAway, paidValue } from '../jobs/outcomes.js'
+import { isBuyerCancellation, isCompletedJob, isDeliveryUnpaid, isMissedDeadline, isRefundDue, isSellerFailure, isSellerNoShow, isUnpaidExpiry, isWalkAway, paidValue } from '../jobs/outcomes.js'
 import type { Agent } from '../../middleware/auth.js'
 import { syncTrustTier } from '../domains/service.js'
 
@@ -134,6 +134,7 @@ export function categoryCards(sellerJobs: JobRow[], categoryOf: Map<string, stri
     }
     const revs = ratings.filter((r) => ids.has(r.jobId))
     const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null && isCompletedJob(j))
+    const late = list.filter(isMissedDeadline)
     const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
     cards.push({
       category,
@@ -142,7 +143,7 @@ export function categoryCards(sellerJobs: JobRow[], categoryOf: Map<string, stri
       volume_usdc: Math.max(0, volume),
       rating_avg: weightedRating(revs),
       rating_count: revs.length,
-      on_time_rate: delivered.length ? Math.round((onTime.length / delivered.length) * 100) / 100 : null,
+      on_time_rate: delivered.length + late.length ? Math.round((onTime.length / (delivered.length + late.length)) * 100) / 100 : null,
     })
   }
   return cards.sort((a, b) => b.jobs_completed - a.jobs_completed || b.volume_usdc - a.volume_usdc || a.category.localeCompare(b.category)).slice(0, MAX_CATEGORY_CARDS)
@@ -246,10 +247,11 @@ function sideFromJobs(
   // leaves a buyer with no answer at all inside its own accept window.
   const ignored = side === 'seller' ? new Set([...walletsOf(list.filter(isSellerNoShow))].filter((w) => !answered.has(w))) : new Set<string>()
   const disputed = list.filter((j) => j.disputeReason != null)
-  // Finished jobs only (ADR-57): request_revision moves deadline_at forward and leaves delivered_at on the first
-  // delivery, so a seller that let the revision deadline pass - a failed job with a refund due - read as 100 % on
-  // time, worth 10 of its score points; live, that was exactly the record of the one seller owing us a refund.
+  // Finished jobs are on time or late by their delivery; a deadline the seller let pass (cancelled after it, or
+  // given up while working) is LATE (ADR-58). ADR-57 only took the abandoned revision out of the numerator - a
+  // seller with one punctual job and one abandoned revision still read 100 % on time, worth 10 score points.
   const delivered = list.filter((j) => j.deliveredAt != null && j.deadlineAt != null && isCompletedJob(j))
+  const late = side === 'seller' ? list.filter(isMissedDeadline) : []
   const onTime = delivered.filter((j) => j.deliveredAt! <= j.deadlineAt!)
   const sideStats: ReputationSide = {
     jobs_completed: completed.length,
@@ -262,7 +264,9 @@ function sideFromJobs(
     orders_ignored: side === 'seller' ? ignored.size : 0,
     response_rate: side === 'seller' && answered.size + ignored.size > 0 ? Math.round((answered.size / (answered.size + ignored.size)) * 100) / 100 : null,
     refunds_due: side === 'seller' ? list.filter(isRefundDue).length : 0,
-    refunds_made: side === 'seller' ? list.filter(isRefunded).length : 0,
+    // jobs on which a refund settled, read from the settlement rows: a fresh obligation on a refunded job (ADR-57)
+    // must not erase the refund that was made
+    refunds_made: side === 'seller' ? list.filter((j) => refundsOf(j).some((s) => s.status === 'settled')).length : 0,
     distinct_counterparties: addresses.size + ids.size,
     // A partition of distinct_counterparties (ADR-45): wallets that paid, split by whose money it was, plus the
     // counterparties no money ever passed between. first + third + without_payment = distinct.
@@ -280,7 +284,8 @@ function sideFromJobs(
     ),
     rating_count: ratings.length,
     rating_weighted: weightedRating(ratings),
-    on_time_rate: side === 'seller' && delivered.length ? Math.round((onTime.length / delivered.length) * 100) / 100 : null,
+    on_time_rate: side === 'seller' && delivered.length + late.length ? Math.round((onTime.length / (delivered.length + late.length)) * 100) / 100 : null,
+    computed_rules: REPUTATION_RULES,
   }
   return { side: sideStats, payingAddresses: addresses.size, thirdPartyPayingAddresses: thirdPartyAddresses.size }
 }
@@ -394,8 +399,15 @@ export async function recomputeReputation(env: Env, agentId: string): Promise<Re
  * afterwards stayed null on old rows forever - including, for ADR-41, the very seller whose ignored order made the
  * field necessary. Add new nullable fields here.
  */
-function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null; counterparties_without_payment?: number | null; third_party_paying_agents?: number | null }): boolean {
-  return s.third_party_counterparties == null || s.orders_ignored == null || s.counterparties_without_payment == null || s.third_party_paying_agents == null
+/**
+ * Bumped whenever a published counter changes meaning, so the startup backfill recomputes every stored row
+ * instead of leaving old rules on old rows (ADR-58: the on_time fix of 0.5.7 was deployed and the one seller it
+ * was built for still read 100 % on time, because his row was a snapshot nothing had touched since).
+ */
+export const REPUTATION_RULES = 2
+
+function needsRecompute(s: { third_party_counterparties?: number | null; orders_ignored?: number | null; counterparties_without_payment?: number | null; third_party_paying_agents?: number | null; computed_rules?: number | null }): boolean {
+  return s.third_party_counterparties == null || s.orders_ignored == null || s.counterparties_without_payment == null || s.third_party_paying_agents == null || s.computed_rules !== REPUTATION_RULES
 }
 
 /**

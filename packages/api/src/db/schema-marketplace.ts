@@ -517,6 +517,8 @@ export type ReputationSide = {
   refunds_due: number
   /** seller: refunds made on-chain */
   refunds_made: number
+  /** the rule set this row was computed with (reviews/service.ts REPUTATION_RULES); older rows are recomputed at startup */
+  computed_rules?: number
   /** distinct counterparty wallet addresses (paid jobs) plus distinct agent ids (free jobs) */
   distinct_counterparties: number
   /**

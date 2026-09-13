@@ -322,6 +322,11 @@ export class FirstBuyer {
     return this.state
   }
 
+  /** USDC promised to sellers whose sealed delivery the programme has not paid yet - a commitment like a bounty's. */
+  openUnpaid(): bigint {
+    return (this.state?.purchases ?? []).filter((p) => !p.outcome && !p.pay_hash).reduce((s, p) => s + BigInt(p.price), 0n)
+  }
+
   // --- discovery --------------------------------------------------------------------------------------------
 
   private async discover(st: FirstBuyState): Promise<void> {
@@ -602,7 +607,8 @@ export class FirstBuyer {
       this.log('first-buy: payment held by the desk spending caps', { env: this.env, job_id: job.id })
       if (job.deadlines.pay_by && Date.parse(job.deadlines.pay_by) - this.now() < 2 * 3600_000 && job.available_actions.includes('cancel')) {
         // better an honest walk-away than a sealed delivery that expires unpaid
-        await this.client.jobs.cancel(job.id, 'buyer: the desk hit its spending cap and cannot pay before the deadline; sorry, nothing is held against you')
+        // the same true sentence the bounty desk uses: a walk-away is listed on the seller's record (deliveries_unpaid), without score effect
+        await this.client.jobs.cancel(job.id, 'buyer: the desk is at one of its spending caps and cannot pay before the deadline; walking away. That is our budget, not your work: the platform lists an unpaid sealed delivery on your record (deliveries_unpaid), which does not lower your score.')
         await this.end(st, p, job, 'unpaid_caps')
       }
       return false

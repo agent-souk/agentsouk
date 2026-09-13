@@ -49,6 +49,17 @@ export const ALERT_TIMEOUT_MS = 10_000
 export const ALERT_DEFER_MS = 10 * 60_000
 export const ALERT_DEFER_MAX_MS = 6 * 3600_000
 
+/**
+ * Why a row was not sent, as the one text each ending writes and the summary reads back (ADR-58). Three endings
+ * used to be told apart by free-text prefixes sixty lines from where they were written, with "our money" as the
+ * catch-all for anything unrecognised - so a delivery failure with a new wording read as an answer.
+ */
+export const SUPPRESSED = {
+  cap: (cap: number) => `held back by the ${cap}/hour cap for ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours and given up on`,
+  ourMoney: 'the paying wallet holds money that came from us (modules/payments/our-money.ts)',
+  noChannel: 'no channel configured',
+} as const
+
 /** The summary that says alerts are being held back must never itself be held back. */
 const bypassesCap = (row: { tier: AlertTier; key: string }) => row.tier === 'urgent' || row.key.startsWith('flood:')
 
@@ -108,7 +119,9 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
   // Held back, not dropped: the row stays pending and comes round again when the rolling hour has room.
   const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now)
   if (!id && opts.upgrade) return upgradePending(draft, now)
-  if (flooded) await floodSummary(draft.env, cap, draft, now)
+  // Only for a row that was actually written and held back: the second emission of the same fact (every job event
+  // is emitted once per party) collides on the key and is not queued, so it must not be named as "held back".
+  if (flooded && id) await floodSummary(draft.env, cap, draft, now)
   return id
 }
 
@@ -320,7 +333,8 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
     return {
       env: f.job.env,
       tier: 'notable',
-      key: `refund_due:${jobId}`,
+      // a fresh cycle (a second obligation after a settled refund, ADR-57) is a new fact, so it gets its own key
+      key: `refund_due:${jobId}${typeof (e.data as { previous_refund_settlement_id?: unknown })?.previous_refund_settlement_id === 'string' ? ':' + (e.data as { previous_refund_settlement_id: string }).previous_refund_settlement_id : ''}`,
       title: `A refund is owed and shows publicly until it is settled (${f.job.env})`,
       body: [jobLine(f), '', 'The platform never holds the money, so nothing here can force it back. If the seller is one of ours, it is ours to pay.'].join('\n'),
       url: `${base()}/v1/admin/overview`,
@@ -421,7 +435,7 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
         .update(operatorAlerts)
         .set(
           tooOld
-            ? { status: 'suppressed', lastError: `held back by the ${cap}/hour cap for ${Math.round(ALERT_DEFER_MAX_MS / 3600_000)} hours and given up on`, updatedAt: now }
+            ? { status: 'suppressed', lastError: SUPPRESSED.cap(cap), updatedAt: now }
             : { nextAttemptAt: now + ALERT_DEFER_MS, lastError: `held back: more than ${cap} alerts delivered in the last hour`, updatedAt: now },
         )
         .where(eq(operatorAlerts.id, row.id))
@@ -443,14 +457,14 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
       // modules/meta/stats.ts). A job paid partly by an outside wallet and partly by ours is excluded from the
       // published figure, so it must not wake anyone either. Two definitions drifting apart is ADR-43.
       if (payers.some((p) => our.has(String(p).toLowerCase()))) {
-        await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: 'the paying wallet holds money that came from us (modules/payments/our-money.ts)', updatedAt: now }).where(eq(operatorAlerts.id, row.id))
+        await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: SUPPRESSED.ourMoney, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
         stats.suppressed++
         continue
       }
     }
     const reqs = requestsFor(payload)
     if (!reqs.length) {
-      await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: 'no channel configured', updatedAt: now }).where(eq(operatorAlerts.id, row.id))
+      await db().update(operatorAlerts).set({ status: 'suppressed', attempt, lastError: SUPPRESSED.noChannel, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
       stats.suppressed++
       continue
     }
@@ -459,7 +473,8 @@ export async function deliverAlerts(now = Date.now()): Promise<{ sent: number; r
     if (results.some((r) => r.ok)) {
       await db().update(operatorAlerts).set({ status: 'sent', attempt, results, lastError: results.find((r) => !r.ok)?.error ?? null, sentAt: now, updatedAt: now }).where(eq(operatorAlerts.id, row.id))
       stats.sent++
-      deliveredThisHour.set(row.env, (deliveredThisHour.get(row.env) ?? 0) + 1)
+      // the same definition as the query above: urgent rows and the summary never count against the cap
+      if (!bypassesCap(row)) deliveredThisHour.set(row.env, (deliveredThisHour.get(row.env) ?? 0) + 1)
       continue
     }
     // Both halves: the status says whether the URL is wrong or the credential is, the body says why.
@@ -491,7 +506,8 @@ export async function alertsStatus(now = Date.now()) {
   // the overview, which shows the summary without the rows, the failure was indistinguishable from the answer.
   const last7: Record<string, number> = {}
   for (const r of rows) {
-    const k = r.status !== 'suppressed' ? r.status : r.lastError?.startsWith('held back') ? 'given_up_after_cap' : r.lastError?.startsWith('no channel') ? 'suppressed_no_channel' : 'suppressed_our_money'
+    const e = r.lastError ?? ''
+    const k = r.status !== 'suppressed' ? r.status : e.startsWith('held back by the') ? 'given_up_after_cap' : e === SUPPRESSED.noChannel ? 'suppressed_no_channel' : e === SUPPRESSED.ourMoney ? 'suppressed_our_money' : 'suppressed_other'
     last7[k] = (last7[k] ?? 0) + 1
   }
   return { channels: channelStatus(), last_7_days: last7 }

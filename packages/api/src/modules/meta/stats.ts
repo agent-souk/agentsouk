@@ -25,9 +25,10 @@ export type PlatformStats = {
    * THAT WAS NOT OURS. A registration is free; a signature over your own address is nearly free; a finished job
    * needs a counterparty; a settled payment needs money. Read the count you want with the price of faking it in
    * mind - and note that ever_traded counts our own desk as a counterparty (a first-buy is a finished job), while
-   * ever_paid_or_paid_for applies the between_outsiders rule: a payment from our desk, or with money that came
-   * from us, satisfies nothing. Until 2026-09-12 it did, and the figure read 15 while every settled cent on live
-   * had left our own wallet (ADR-57).
+   * ever_paid_or_paid_for applies the between_outsiders rule in full: at least the floor settled, net of refunds,
+   * on a job with no platform identity on it, paid with money that was not ours - and never for one of our own
+   * agents. A payment from our desk, or with money that came from us, satisfies nothing. Until 2026-09-12 it did,
+   * and the figure read 15 while every settled cent on live had left our own wallet (ADR-57).
    *
    * They are NOT nested, and the field names should not be read as a ladder: a job that has been paid but has not
    * finished counts under ever_paid_or_paid_for and not yet under ever_traded. `agents` and `with_wallet` are
@@ -47,8 +48,12 @@ export type PlatformStats = {
    * and a flip moves the headline figure with no new job. Freezing that seed was rejected - ADR-44 re-flagged
    * twelve smoke identities after the fact and needed their past payments to count as ours - so the flip stays
    * possible and stops being silent: a move of between_outsiders next to a change here has its cause on record.
+   *
+   * Read `unflagged`, not `count`: only first_party -> false can move between_outsiders up, and `flagged` ticks
+   * on every deploy because the smoke tests flag their throwaway agents before deleting them. The undivided count
+   * read 4 within an hour of the release that introduced it, all four from our own smoke runs.
    */
-  first_party: { agents: number; listings_active: number; jobs_completed: number; volume_usdc_completed: number; flag_changes: { count: number; last_at: string | null } }
+  first_party: { agents: number; listings_active: number; jobs_completed: number; volume_usdc_completed: number; flag_changes: { count: number; unflagged: number; flagged: number; last_at: string | null; last_unflagged_at: string | null } }
   /**
    * The number this marketplace lives or dies by (ADR-39): work bought and paid for with the platform on NEITHER
    * side. Everything else here can be produced by us alone - we can register, list, buy and pay, and we do. Only
@@ -87,6 +92,13 @@ export const OUTSIDER_PRICE_FLOOR = 10_000 // 0.01 USDC
 const paidOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled')`
 const refundedOn = sql`(select coalesce(sum(st.amount), 0) from settlements st where st.job_id = j.id and st.kind = 'refund' and st.status = 'settled')`
 const fromUsOf = (our: Set<string>) => sql`exists (select 1 from settlements st where st.job_id = j.id and st.kind = 'payment' and st.status = 'settled' and ${isOurWallet(sql`st.payer_address`, our)})`
+/**
+ * THE money rule, in one place (ADR-58): at least the floor settled on chain, none of it ours, and at least the
+ * floor still with the seller after refunds. Until 0.5.8 `counted` used "gross >= floor and not refunded in full"
+ * while ever_paid_or_paid_for used "net >= floor" - two definitions of the same thing in one file, which is how
+ * ADR-43 happened. The reputation counters have applied the net rule since ADR-52; now everything does.
+ */
+const outsiderMoney = (our: Set<string>) => sql`${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUsOf(our)} and ${paidOn} - ${refundedOn} >= ${OUTSIDER_PRICE_FLOOR}`
 
 /**
  * The one figure the go/no-go decision reads, computed so that neither we nor a single operator with two
@@ -98,7 +110,8 @@ const fromUsOf = (our: Set<string>) => sql`exists (select 1 from settlements st 
  *   - at least OUTSIDER_PRICE_FLOOR of USDC was actually settled on chain for it;
  *   - the buyer was not spending money that came from us - our sandbox faucet, or anything our own agents have
  *     paid out, followed through every further payment we can see;
- *   - it was not refunded in full.
+ *   - at least OUTSIDER_PRICE_FLOOR stayed with the seller after refunds (ADR-58: net, the same rule the
+ *     reputation counters apply; "not refunded in full" used to let 0.02 paid / 0.015 refunded count).
  *
  * Buyers, sellers and volume are then counted on NET position, not on gross transfers: a wallet is a buyer only
  * if it ended up poorer across the counted set, a seller only if it ended up richer. A ring of wallets passing
@@ -112,7 +125,7 @@ async function betweenOutsiders(env: Env, our: Set<string>): Promise<PlatformSta
   const outsiderJobs = sql`from jobs j where j.env = ${env} and j.status in ('completed','resolved') and j.first_party_involved = 0`
 
   const row = await db().get<{ jobs: number; buyers: number; sellers: number; net: number; gross: number; ex_no_money: number; ex_floor: number; ex_ours: number; ex_refunded: number; orders: number; order_wallets: number }>(sql`
-    with counted as (select j.id ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} < ${paidOn}),
+    with counted as (select j.id ${outsiderJobs} and ${outsiderMoney(our)}),
     flows as (
         select lower(st.payer_address) addr, -st.amount delta from settlements st join counted c on c.id = st.job_id where st.status = 'settled'
       union all
@@ -128,7 +141,7 @@ async function betweenOutsiders(env: Env, our: Set<string>): Promise<PlatformSta
       (select count(*) ${outsiderJobs} and ${paidOn} = 0) ex_no_money,
       (select count(*) ${outsiderJobs} and ${paidOn} > 0 and ${paidOn} < ${OUTSIDER_PRICE_FLOOR}) ex_floor,
       (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and ${fromUs}) ex_ours,
-      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${refundedOn} >= ${paidOn}) ex_refunded,
+      (select count(*) ${outsiderJobs} and ${paidOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUs} and ${paidOn} - ${refundedOn} < ${OUTSIDER_PRICE_FLOOR}) ex_refunded,
       (select count(*) from jobs j where j.env = ${env} and j.first_party_involved = 0) orders,
       (select count(distinct coalesce(lower(b.wallet_address), 'agent:' || j.buyer_agent_id)) from jobs j join agents b on b.id = j.buyer_agent_id
          where j.env = ${env} and j.first_party_involved = 0) order_wallets
@@ -185,10 +198,10 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
          select 1 from jobs j where j.env = ${env} and j.status in ('completed','resolved') and (j.buyer_agent_id = a.id or j.seller_agent_id = a.id))) ever_traded,
       (select count(*) from agents a where a.status = 'active' and a.first_party = 0 and exists (
          select 1 from jobs j where j.env = ${env} and j.first_party_involved = 0 and (j.buyer_agent_id = a.id or j.seller_agent_id = a.id)
-           and ${paidOn} - ${refundedOn} >= ${OUTSIDER_PRICE_FLOOR} and not ${fromUsOf(our)})) ever_paid
+           and ${outsiderMoney(our)})) ever_paid
   `)
   const outsiders = await betweenOutsiders(env, our)
-  const flips = (await db().query.platformState.findFirst({ where: eq(platformState.key, FIRST_PARTY_FLIPS_KEY) }))?.value as { count?: number; last_at?: string } | undefined
+  const flips = (await db().query.platformState.findFirst({ where: eq(platformState.key, FIRST_PARTY_FLIPS_KEY) }))?.value as { count?: number; unflagged?: number; flagged?: number; last_at?: string; last_unflagged_at?: string } | undefined
   const seriesRows = await db().select({ status: jobSeries.status, n: sql<number>`count(*)` }).from(jobSeries).where(eq(jobSeries.env, env)).groupBy(jobSeries.status)
   const seriesCount = (status: string) => seriesRows.find((r) => r.status === status)?.n ?? 0
   return {
@@ -204,7 +217,7 @@ export async function platformStats(env: Env, now = Date.now()): Promise<Platfor
     volume_usdc_completed: Math.max(0, paid - refunded),
     settlements: settlementCount,
     series: { active: seriesCount('active'), completed: seriesCount('completed'), stopped: seriesCount('stopped') },
-    first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded), flag_changes: { count: flips?.count ?? 0, last_at: flips?.last_at ?? null } },
+    first_party: { agents: fpAgents, listings_active: fpListings, jobs_completed: fpJobs, volume_usdc_completed: Math.max(0, fpPaid - fpRefunded), flag_changes: { count: flips?.count ?? 0, unflagged: flips?.unflagged ?? 0, flagged: flips?.flagged ?? 0, last_at: flips?.last_at ?? null, last_unflagged_at: flips?.last_unflagged_at ?? null } },
     between_outsiders: outsiders,
     generated_at: new Date(now).toISOString(),
   }

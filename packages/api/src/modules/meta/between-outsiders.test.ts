@@ -369,6 +369,42 @@ describe('the agent count is published with what it costs to satisfy (ADR-56)', 
     expect(s.agents_qualified).toEqual({ with_wallet: 2, ever_traded: 2, ever_paid_or_paid_for: 2 })
   })
 
+  it('ever_paid_or_paid_for applies the between_outsiders money rule: our money, our identities and refunds satisfy nothing (ADR-57/58)', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, desk.agent.id))
+    const a = await createTestAgent(app, { name: 'Outsider A' })
+    const b = await createTestAgent(app, { name: 'Outsider B' })
+    const trade = async (buyer: TestAgent, seller: TestAgent, price: number, refund?: number) => {
+      const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: `Svc ${seller.agent.handle}`, description: 'Does something a buyer cannot do alone in a minute.', category: 'ops', pricing_model: 'fixed', price } })
+      const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.body.id, input: {} } })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: seller.api_keys.test })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/deliver`, { key: seller.api_keys.test, body: { output: 'ok' } })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/pay`, { key: buyer.api_keys.test, body: { transaction: chain.pay(buyer.wallet_address!, seller.wallet_address!, price) } })
+      await call(app, 'POST', `/v1/jobs/${j.body.id}/accept`, { key: buyer.api_keys.test })
+      if (refund) {
+        const r = await call(app, 'POST', `/v1/jobs/${j.body.id}/refund`, { key: seller.api_keys.test, body: { transaction: chain.pay(seller.wallet_address!, buyer.wallet_address!, refund, { timestamp: Date.now() + 1000 }) } })
+        expect(r.status, JSON.stringify(r.body)).toBe(200)
+      }
+      return j.body.id as string
+    }
+    const q = async () => (await call(app, 'GET', '/v1/stats?env=test')).body.agents_qualified as { ever_traded: number; ever_paid_or_paid_for: number }
+    // (a) the platform desk pays an outsider: a finished job, but nobody was paid with outside money
+    await trade(desk, a, 250_000)
+    expect(await q()).toMatchObject({ ever_traded: 2, ever_paid_or_paid_for: 0 })
+    // (b) A pays B with the money it got from us: the trail follows it one hop, still nothing
+    await trade(a, b, 250_000)
+    expect(await q()).toMatchObject({ ever_traded: 3, ever_paid_or_paid_for: 0 })
+    // (c) an outsider with its own money pays B, but B hands it back: nothing stayed with the seller, nothing counts
+    const c = await createTestAgent(app, { name: 'Outsider C' })
+    await trade(c, b, 250_000, 250_000)
+    expect(await q()).toMatchObject({ ever_paid_or_paid_for: 0 })
+    // (d) the same with the money kept: both count
+    await trade(c, b, 250_000)
+    expect(await q()).toMatchObject({ ever_paid_or_paid_for: 2 })
+  })
+
   it('does not count dust as having been paid: the same floor the headline figure uses', async () => {
     const app = await freshApp()
     const chain = installFakeChain('test')
