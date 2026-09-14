@@ -10,7 +10,7 @@ import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
 import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
-import { bazaarExtension } from './bazaar.js'
+import { bazaarExtension, serviceMetadata } from './bazaar.js'
 import { ownershipProofs } from '../../discovery/ownership.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent, recoverKeys } from '../agents/service.js'
@@ -18,7 +18,7 @@ import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyDigestSignature } from '../payments/evm-signature.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
-import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type RequirementsV2 } from '../payments/x402.js'
+import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
 
 /**
  * ADR-48: a paid endpoint in the x402 shape, for OUR OWN services only.
@@ -149,23 +149,53 @@ async function waitForDelivery(jobId: string, timeoutMs: number, intervalMs = 70
   }
 }
 
-type SettleFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>
+type SettleFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; text(): Promise<string>; headers?: { get(name: string): string | null } }>
 let settleFetch: SettleFetch = (url, init) => fetch(url, init) as unknown as ReturnType<SettleFetch>
 /** Tests only: replace the call to the public facilitator. */
 export function _setSettleFetchForTests(f: SettleFetch | null) {
   settleFetch = f ?? ((url, init) => fetch(url, init) as unknown as ReturnType<SettleFetch>)
 }
 
-async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resource: { url: string; description: string; mimeType: string }, payment: PaymentPayload): Promise<string> {
+/**
+ * ADR-65: what the facilitator says about the `bazaar` extension it was handed, from the EXTENSION-RESPONSES header
+ * of its answer (base64 JSON keyed by extension). `success` and `processing` both mean the resource is, or is about
+ * to be, in that facilitator's public catalogue; `rejected` carries the reason. Absent when the facilitator does
+ * not implement discovery. Never throws: a header we cannot read is no header.
+ */
+export function bazaarOutcome(header: string | null | undefined): { status: string; rejectedReason?: string } | null {
+  if (!header) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as { bazaar?: { status?: unknown; rejectedReason?: unknown } }
+    const b = parsed?.bazaar
+    if (!b || typeof b.status !== 'string') return null
+    return { status: b.status.slice(0, 32), ...(typeof b.rejectedReason === 'string' ? { rejectedReason: b.rejectedReason.slice(0, 300) } : {}) }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * ADR-65: the payload carries the `bazaar` extension of OUR 402 and our own `resource` block - not whatever the
+ * buyer echoed. The spec has the client echo them so the facilitator can catalogue the resource; here the server is
+ * the one talking to the facilitator, so it sends the description it is the authority for. Until 0.5.19 the payload
+ * had no extensions at all, and in seven days of paid calls not one facilitator had learned that this endpoint
+ * exists: 28,634 resources in PayAI's catalogue, 15,380 in Coinbase's, none of them ours.
+ */
+async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resource: PaymentRequiredV2['resource'], payment: PaymentPayload, extensions: Record<string, unknown>, ua: string | undefined): Promise<string> {
   const chain = CHAINS[networkFor(env)]
   const url = `${chain.facilitator.replace(/\/$/, '')}/settle`
   const body = JSON.stringify({
     x402Version: 2,
-    paymentPayload: { x402Version: 2, resource, accepted: requirements, payload: payment.payload },
+    paymentPayload: { x402Version: 2, resource, accepted: requirements, payload: payment.payload, extensions },
     paymentRequirements: requirements,
   })
   const res = await settleFetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
   const text = await res.text()
+  const catalogued = bazaarOutcome(res.headers?.get('extension-responses'))
+  if (catalogued) {
+    recordX402(catalogued.status === 'rejected' ? 'catalog_rejected' : 'catalogued', ua)
+    log.info({ facilitator: chain.facilitator, resource: resource.url, ...catalogued }, 'x402: facilitator answered the bazaar extension')
+  }
   let parsed: { success?: boolean; transaction?: string; errorReason?: string } = {}
   try {
     parsed = JSON.parse(text) as typeof parsed
@@ -243,7 +273,10 @@ export async function sellableListings(env: Env) {
 export async function x402Index(base: string, env: Env) {
   const rows = await sellableListings(env)
   const chain = CHAINS[networkFor(env)]
-  const url = (id: string) => `${base}/v1/x402/${id}${env === 'test' ? '?env=test' : ''}`
+  // ADR-65: one URL per listing in both environments. The id names the environment (a listing exists in exactly
+  // one), and a facilitator catalogues the URL without its query string - a sandbox entry with ?env=test would
+  // have been catalogued as a live URL that answers 404.
+  const url = (id: string) => `${base}/v1/x402/${id}`
   const proofs = env === 'live' ? ownershipProofs() : []
   return {
     object: 'x402_index' as const,
@@ -262,7 +295,7 @@ export async function x402Index(base: string, env: Env) {
       // call what it advertises has told you where to go and not how to arrive.
       method: 'POST' as const,
       content_type: 'application/json',
-      url: `${base}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`,
+      url: url(listing.id),
       title: listing.title,
       description: listing.description,
       tags: listing.tags,
@@ -308,7 +341,7 @@ export function x402Routes() {
       path: '/v1/x402',
       tags: ['payments', 'listings'],
       summary: 'Every service Agent Souk sells for a single x402 payment, with price and input schema (ADR-50)',
-      description: 'No auth. One document an x402 client or a crawler can read to find what is buyable here without an account, and what to POST to each URL. Add ?env=test for the sandbox on Base Sepolia.',
+      description: 'No auth. One document an x402 client or a crawler can read to find what is buyable here without an account, and what to POST to each URL. Add ?env=test for the sandbox on Base Sepolia (the listing URLs it returns need no query: the id names the environment).',
       request: { query: z.object({ env: z.enum(['live', 'test']).optional() }) },
       responses: { 200: { description: 'What one x402 payment buys', content: { 'application/json': { schema: z.object({ object: z.literal('x402_index') }).passthrough().openapi('X402Index') } } }, ...errorResponses },
     }),
@@ -336,13 +369,16 @@ export function x402Routes() {
       },
     }),
     async (c) => {
-      const env: Env = c.req.valid('query').env ?? 'live'
+      const requestedEnv = c.req.valid('query').env
       const { listing_id } = c.req.valid('param')
       const units = c.req.valid('query').units ?? 1
       const input = (c.req.valid('json') ?? {}) as Record<string, unknown>
 
-      const listing = await db().query.listings.findFirst({ where: and(eq(listings.id, listing_id), eq(listings.env, env)) })
-      if (!listing || listing.status !== 'active') throw errors.notFound('Listing', listing_id, 'GET /v1/listings lists what is active.')
+      // ADR-65: the listing id names the environment (ids are unique across both), so the URL a catalogue holds
+      // needs no query string; ?env= is still honoured and a mismatch is the same 404 as an unknown id.
+      const listing = await db().query.listings.findFirst({ where: requestedEnv ? and(eq(listings.id, listing_id), eq(listings.env, requestedEnv)) : eq(listings.id, listing_id) })
+      if (!listing || listing.status !== 'active') throw errors.notFound('Listing', listing_id, 'GET /v1/x402 lists what can be bought here (add ?env=test for the sandbox).')
+      const env: Env = listing.env as Env
       const seller = await db().query.agents.findFirst({ where: eq(agents.id, listing.sellerAgentId) })
       // The legal boundary of this endpoint, as code (ADR-48): we may collect our own price, never someone else's.
       if (!seller?.firstParty) {
@@ -368,9 +404,10 @@ export function x402Routes() {
       const payTo = seller.walletAddress
       if (!payTo) throw errors.state('seller_has_no_wallet_address', 'The seller has no wallet address, so it cannot be paid.')
 
-      const resourceUrl = `${base()}/v1/x402/${listing.id}${env === 'test' ? '?env=test' : ''}`
-      // the 402 names what the amount buys: for a per-unit listing the unit and how many of it (ADR-61)
-      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, description: listing.pricingModel === 'per_unit' ? `${listing.title} (${units} × ${listing.unitName ?? 'unit'} at ${formatUsdc(listing.price ?? 0)} each)` : listing.title })
+      const resourceUrl = `${base()}/v1/x402/${listing.id}`
+      // the 402 names what the amount buys: for a per-unit listing the unit and how many of it (ADR-61); the
+      // resource block also names the service, its topics and an icon for the catalogues (ADR-65)
+      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, service: serviceMetadata(base(), listing.tags), description: listing.pricingModel === 'per_unit' ? `${listing.title} (${units} × ${listing.unitName ?? 'unit'} at ${formatUsdc(listing.price ?? 0)} each)` : listing.title })
       // ADR-50: v2 clients send the signed authorization in PAYMENT-SIGNATURE, v1 clients in X-PAYMENT. The
       // payload inside is the same shape, so one reader serves both generations.
       const header = c.req.header('payment-signature') ?? c.req.header('x-payment')
@@ -427,7 +464,7 @@ export function x402Routes() {
         )
       }
 
-      const transaction = await settleAtFacilitator(env, requirements, terms.x402.resource, payment)
+      const transaction = await settleAtFacilitator(env, requirements, terms.x402.resource, payment, bazaarExtension(listing), c.req.header('user-agent'))
       const paid = await payUntilMined(env, buyer, job.id, transaction)
       // The buyer is holding the result in this very response, so leaving the job open for a review window it will
       // never come back for would only make the seller wait. Accepting closes it and writes both public records.

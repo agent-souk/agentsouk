@@ -91,6 +91,12 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(v2.accepts[0]).toMatchObject({ scheme: 'exact', amount: String(PRICE), network: 'eip155:84532' })
     expect(v2.accepts[0].payTo).toBeTruthy()
     expect(v2.extensions.bazaar).toBeTruthy()
+    // ADR-65: the resource block names the service for the catalogues, within the facilitator's soft-drop rules
+    expect(v2.resource.serviceName).toBe('Agent Souk')
+    expect(v2.resource.iconUrl).toMatch(/^https?:\/\/.+\/icon\.png$/)
+    expect(Array.isArray(v2.resource.tags)).toBe(true)
+    expect(v2.resource.tags.length).toBeLessThanOrEqual(5)
+    expect(v2.resource.tags.some((t: string) => t.startsWith('souk:'))).toBe(false)
     expect(r.headers.get('access-control-expose-headers')).toContain('PAYMENT-REQUIRED')
 
     // v1 (the older generation): the body, in the shape its schema requires - a different name for the price,
@@ -485,7 +491,8 @@ describe('the index of what one x402 payment buys (ADR-50)', () => {
     expect(r.body.services.map((s: { listing_id: string }) => s.listing_id)).toEqual([listingId])
     const svc = r.body.services[0]
     expect(svc).toMatchObject({ price: PRICE, pay_to: seller.wallet_address, seller: seller.agent.handle })
-    expect(svc.url).toContain(`/v1/x402/${listingId}?env=test`)
+    // ADR-65: no query string - the id names the environment, and a facilitator catalogues the URL without its query
+    expect(svc.url.endsWith(`/v1/x402/${listingId}`)).toBe(true)
     expect(svc.input_schema).toMatchObject({ type: 'object' })
     expect(r.body.protocol).toMatchObject({ x402_version: 2, scheme: 'exact', network: 'base-sepolia', network_caip2: 'eip155:84532' })
     expect(String(r.body.limit)).toContain('POST /v1/jobs')
@@ -561,5 +568,102 @@ describe('upfront listings are neither advertised nor hung (audit fix)', () => {
     expect(svc.method).toBe('POST')
     expect(svc.content_type).toBe('application/json')
     expect((await app.request(new URL(svc.url).pathname + new URL(svc.url).search)).status).toBe(404)
+  })
+})
+
+/**
+ * ADR-65: a facilitator catalogues a resource from the `bazaar` extension in the PaymentPayload it receives - and
+ * from nothing else. This endpoint is the party that talks to the facilitator, so the payload it sends has to
+ * carry the extension of its own 402 and its own resource block; until 0.5.19 it carried neither, and no public
+ * x402 catalogue knew the endpoint existed.
+ */
+describe('the settle payload carries the bazaar extension and the service metadata (ADR-65)', () => {
+  const answer = (bazaar: Record<string, unknown>) => Buffer.from(JSON.stringify({ bazaar })).toString('base64')
+
+  it('echoes our extension and resource block, and counts the facilitator answer to it', async () => {
+    const { _resetHits, discoverySummary } = await import('../../discovery/hits.js')
+    _resetHits()
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('6')
+    const wallet = addr(pk)
+    let sent: Record<string, any> | null = null
+    _setSettleFetchForTests(async (_url, init) => {
+      sent = JSON.parse(init.body)
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }), headers: { get: (n: string) => (n.toLowerCase() === 'extension-responses' ? answer({ status: 'processing' }) : null) } }
+    })
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+
+    const payload = sent!.paymentPayload
+    // the extension is OURS - built from the listing, not copied from whatever the buyer sent
+    expect(payload.extensions.bazaar.info.input).toMatchObject({ type: 'http', method: 'POST', bodyType: 'json' })
+    expect(payload.extensions.bazaar.schema).toBeTruthy()
+    const ajv = new Ajv2020({ strict: false })
+    expect(ajv.validate(payload.extensions.bazaar.schema, payload.extensions.bazaar.info), JSON.stringify(ajv.errors)).toBe(true)
+    // the resource block names the service for the catalogue, and the URL has no query string to be stripped
+    expect(payload.resource).toMatchObject({ serviceName: 'Agent Souk', mimeType: 'application/json' })
+    expect(payload.resource.url.endsWith(`/v1/x402/${listingId}`)).toBe(true)
+    expect(payload.resource.iconUrl.endsWith('/icon.png')).toBe(true)
+    expect(payload.resource.tags.length).toBeLessThanOrEqual(5)
+    expect(payload.accepted).toEqual(sent!.paymentRequirements)
+
+    const summary = await discoverySummary()
+    expect(summary.by_surface_7d['x402:catalogued']).toBe(1)
+    expect(summary.by_surface_7d['x402:catalog_rejected']).toBeUndefined()
+  })
+
+  it('counts a rejection separately, and a facilitator without discovery counts nothing', async () => {
+    const { _resetHits, discoverySummary } = await import('../../discovery/hits.js')
+    _resetHits()
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('8')
+    const wallet = addr(pk)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }), headers: { get: (n: string) => (n.toLowerCase() === 'extension-responses' ? answer({ status: 'rejected', rejectedReason: 'info failed schema validation' }) : null) } }))
+    let runtime = deliverWhenOrdered(seller, listingId)
+    expect((await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))).status).toBe(200)
+    await runtime.done
+
+    // the same buyer again, at a facilitator that says nothing about extensions (no headers at all, as before 0.5.19)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    runtime = deliverWhenOrdered(seller, listingId)
+    expect((await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))).status).toBe(200)
+    await runtime.done
+
+    const summary = await discoverySummary()
+    expect(summary.by_surface_7d['x402:paid']).toBe(2)
+    expect(summary.by_surface_7d['x402:catalog_rejected']).toBe(1)
+    expect(summary.by_surface_7d['x402:catalogued']).toBeUndefined()
+  })
+})
+
+/**
+ * ADR-65: the URL a catalogue holds is the URL without its query string. So the listing id has to name the
+ * environment on its own, and the index has to publish that URL.
+ */
+describe('the listing id names the environment (ADR-65)', () => {
+  it('a sandbox listing answers 402 without ?env=test, still answers with it, and is a 404 under ?env=live', async () => {
+    const { listingId } = await firstPartySeller()
+    const plain = await call(app, 'POST', `/v1/x402/${listingId}`, { body: { text: 'Hello' } })
+    expect(plain.status).toBe(402)
+    const v2 = JSON.parse(Buffer.from(plain.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(v2.accepts[0].network).toBe('eip155:84532') // the sandbox network, read from the listing, not from the query
+    expect(v2.resource.url.endsWith(`/v1/x402/${listingId}`)).toBe(true)
+    expect(v2.resource.url).not.toContain('?')
+    expect((await call(app, 'POST', `/v1/x402/${listingId}?env=test`, { body: { text: 'Hello' } })).status).toBe(402)
+    const wrong = await call(app, 'POST', `/v1/x402/${listingId}?env=live`, { body: { text: 'Hello' } })
+    expect(wrong.status).toBe(404)
+    expect(wrong.body.error.hint).toContain('/v1/x402')
+  })
+
+  it('the index publishes the plain URL and the 402 behind it is reachable as published', async () => {
+    const { listingId } = await firstPartySeller()
+    const idx = await call(app, 'GET', '/v1/x402?env=test')
+    expect(idx.body.resources).toContain(`${new URL(idx.body.services[0].url).origin}/v1/x402/${listingId}`)
+    const svc = idx.body.services.find((s: { listing_id: string }) => s.listing_id === listingId)
+    expect(svc.url).not.toContain('?')
+    const r = await app.request(new URL(svc.url).pathname, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Hello' }) })
+    expect(r.status).toBe(402)
   })
 })

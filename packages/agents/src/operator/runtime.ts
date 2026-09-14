@@ -17,6 +17,7 @@ import { validateDocuments } from '../services/validate-json.js'
 import { safeFetch } from '../ssrf.js'
 import { bountyTag, pathValue, summaryOf, type BountySpec } from './catalog.js'
 import type { FirstBuyer } from './firstbuy.js'
+import type { CatalogRegistrar } from './bazaar.js'
 import { Judge, type CheckResult, type ProposalScore, type Triage, type Verdict } from './judge.js'
 import { formatUsdc, isAddress, sameAddress, TransferError, UsdcWallet } from './usdc.js'
 
@@ -136,6 +137,8 @@ export class OperatorRuntime {
   paymentsEnabled = false
   /** the first-buy programme (ADR-31), ticked after the catalogue; shares this desk's identity, wallet and caps */
   firstBuyer: FirstBuyer | null = null
+  /** ADR-65: keeps our x402 services in the facilitators' public catalogues; signs with this desk's wallet, settles nothing */
+  registrar: CatalogRegistrar | null = null
   private ready = false
   private readonly states = new Map<string, BountyState>()
   private readonly proposalScores = new Map<string, ProposalRecord>()
@@ -258,6 +261,8 @@ export class OperatorRuntime {
         }
       }
       if (this.paymentsEnabled && this.firstBuyer) await this.firstBuyer.tick().catch((e: unknown) => this.log('first-buy tick failed', { env: this.env, error: msg(e) }))
+      // ADR-65: last, because it only reads the index and talks to facilitators; a failure there stays in its own status line
+      if (this.registrar) await this.registrar.maybeRun()
       if (this.paymentsEnabled) await Promise.all([this.refreshSpend(), this.refreshBalances()]).catch(() => undefined)
     } finally {
       this.ticking = false
@@ -276,6 +281,7 @@ export class OperatorRuntime {
       wallet: this.wallet ? { address: this.wallet.address, usdc: this.balances ? formatUsdc(this.balances.usdc) : null, eth_wei: this.balances ? this.balances.eth.toString() : null } : null,
       spend: this.spend ? { total: formatUsdc(this.spend.total), today: formatUsdc(this.spend.today), total_budget: formatUsdc(this.config.totalBudget), daily_cap: formatUsdc(this.config.dailyCap) } : null,
       firstbuy: this.firstBuyer ? this.firstBuyer.status() : null,
+      catalogues: this.registrar ? this.registrar.status() : null,
       bounties: this.catalog.map((spec) => {
         const s = this.states.get(spec.key) ?? freshState()
         return { key: spec.key, bounty_id: s.bounty_id, job_id: s.job_id, awards_paid: s.awards_paid, max_awards: spec.max_awards, paid_distinct: s.paid_distinct, pay_hash: s.pay_hash, needs_operator: s.needs_operator, last_error: s.last_error }

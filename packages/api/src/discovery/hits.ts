@@ -121,7 +121,7 @@ export function recordMcpCall(rpcMethod: unknown, toolName: unknown, ua: string 
  * that would not broadcast). Without them the only way to tell whether anybody has tried is to go looking for
  * side effects in the job table, which is how we ended up diagnosing this marketplace from our own test traffic.
  */
-export function recordX402(stage: 'terms' | 'paid' | 'refused', ua: string | undefined | null, now = Date.now()) {
+export function recordX402(stage: 'terms' | 'paid' | 'refused' | 'catalogued' | 'catalog_rejected', ua: string | undefined | null, now = Date.now()) {
   count(`x402:${stage}`, ua, now)
 }
 

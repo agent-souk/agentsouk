@@ -20,6 +20,8 @@
  *   FIRSTBUY_ENABLED           default true: the desk hires new outside listings once (ADR-31), paid gas-free, graded and reviewed
  *   FIRSTBUY_MAX_USDC_LIVE/TEST  highest listing price bought (default 1 / 0.1); FIRSTBUY_DAILY_USDC_LIVE/TEST programme cap per day (default 5 / 1); FIRSTBUY_PER_SELLER default 2
  *   FIRSTBUY_SCREEN            default true: the judge screens each listing first (ADR-35: only work a buyer could not do alone, each function once); false buys unscreened
+ *   CDP_API_KEY_ID/SECRET      optional (ADR-65): a Coinbase Developer Platform API key; with it the live x402 services are also registered in Coinbase's
+ *                              x402 catalogue (the "Bazaar") once a day, next to PayAI's, which needs no key. Registration signs with the operator wallet and settles nothing.
  */
 import { serve } from '@hono/node-server'
 import { AgentSouk } from 'agentsouk'
@@ -29,6 +31,7 @@ import { Judge } from './operator/judge.js'
 import { DEFAULT_FIRSTBUY, FirstBuyer } from './operator/firstbuy.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './operator/runtime.js'
 import { CHAINS, typedDataSigner, UsdcWallet } from './operator/usdc.js'
+import { CatalogRegistrar, cdpFacilitator, type Facilitator } from './operator/bazaar.js'
 import { SellerRuntime, type Env } from './runner.js'
 import { createServer, type Operators, type Runtimes } from './server.js'
 import { allServices } from './services/index.js'
@@ -45,7 +48,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.9' })
+const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.10' })
 
 const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
@@ -70,6 +73,14 @@ for (const env of ['live', 'test'] as Env[]) {
     const cfg = { ...DEFAULT_FIRSTBUY[env], maxPrice: usdc(process.env[`FIRSTBUY_MAX_USDC_${E}`], DEFAULT_FIRSTBUY[env].maxPrice), dailyCap: usdc(process.env[`FIRSTBUY_DAILY_USDC_${E}`], DEFAULT_FIRSTBUY[env].dailyCap), perSeller: Number.isInteger(perSeller) && perSeller >= 0 ? perSeller : DEFAULT_FIRSTBUY[env].perSeller, screen: process.env.FIRSTBUY_SCREEN !== 'false' }
     if (cfg.maxPrice <= 0n || cfg.dailyCap <= 0n) cfg.enabled = false
     op.firstBuyer = new FirstBuyer(op.client, wallet, typedDataSigner(operatorKey, CHAINS[env]), judge, env, log, cfg, () => op.me, { canSpend: (a) => op.canSpend(a), recordSpend: (e) => op.recordSpend(e) })
+  }
+  // ADR-65: the live services go into the public x402 catalogues through the facilitators' /verify - PayAI without a
+  // key, Coinbase with one. The sandbox facilitator (x402.org) keeps no catalogue, and a sandbox entry would only
+  // advertise testnet prices, so the sandbox registers nowhere.
+  if (operatorKey && env === 'live') {
+    const facilitators: Facilitator[] = CHAINS.live.facilitator ? [{ name: 'payai', url: CHAINS.live.facilitator }] : []
+    if (process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET) facilitators.push(cdpFacilitator(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET))
+    op.registrar = new CatalogRegistrar({ baseUrl, env, chain: CHAINS.live, privateKey: operatorKey, facilitators, log })
   }
   operators[env] = op
 }
@@ -147,5 +158,5 @@ setInterval(() => {
   }
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: '0.2.9', llm: () => llm.status(), operators: operators as Operators, faucet })
+const server = createServer(runtimes, secret, log, { version: '0.2.10', llm: () => llm.status(), operators: operators as Operators, faucet })
 serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))

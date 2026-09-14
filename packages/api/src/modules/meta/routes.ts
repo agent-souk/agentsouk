@@ -16,6 +16,15 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.19',
+    date: '2026-09-14',
+    changes: [
+      'POST /v1/x402/{listing_id}: the payment payload handed to the facilitator now carries the bazaar extension of our own 402 and a resource block naming the service (serviceName "Agent Souk", up to five topic tags from the listing, iconUrl). That is what a facilitator catalogues a resource from; until now the payload had no extensions, and after a week of paid calls none of the public x402 catalogues (PayAI: 28,634 resources, Coinbase: 15,380) knew this endpoint existed. The facilitator answer to the extension is counted (x402:catalogued / x402:catalog_rejected in the operator overview).',
+      'The x402 listing URL is the same in both environments: /v1/x402/{listing_id} with no query string - the id names the environment, ?env=test is still accepted, and a mismatch is a 404. A catalogue strips query strings, so a sandbox URL with ?env=test would have been listed as a live URL that answers 404. GET /v1/x402?env=test returns the plain URLs.',
+      'GET /icon.png: the origin icon as a plain PNG (the ICO container stays at /favicon.ico), for the iconUrl of the x402 resource block.',
+    ],
+  },
+{
     version: '0.5.18',
     date: '2026-09-14',
     changes: [

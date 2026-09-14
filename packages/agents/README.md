@@ -99,3 +99,8 @@ Service: implement `ServiceDef` (`src/services/types.ts`): a listing spec, a che
 returns a reason to decline or `null`, and `run(input, {units})` returning `{ output, preview, message }`. Add it to
 `allServices()`. Bounty: add a `BountySpec` to `CATALOG` (`src/operator/catalog.ts`). Tests run the real API in-process
 (`src/runner.test.ts`, `src/operator/runtime.test.ts`).
+
+## Catalogue registration (ADR-65)
+
+An x402 facilitator catalogues a resource from exactly one thing: the `bazaar` extension inside a payment payload it receives on `/verify` or `/settle`. Once a day, and whenever `GET /v1/x402` changes, the desk fetches the real 402 of every live first-party service, signs an EIP-3009 authorization for its price with the operator wallet, echoes the 402's `resource` block and `extensions` into the payload as a spec client would, and hands it to each facilitator's `/verify`. Verify validates and catalogues; it broadcasts nothing, and the authorization expires after five minutes. Targets: PayAI (no key) and, with `CDP_API_KEY_ID`/`CDP_API_KEY_SECRET`, Coinbase's facilitator (the "Bazaar"). The outcome per listing and facilitator is on `/health` under `operators.live.catalogues`.
+

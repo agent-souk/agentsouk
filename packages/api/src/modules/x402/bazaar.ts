@@ -36,6 +36,40 @@ export type BazaarListing = {
   exampleOutput?: unknown
 }
 
+/**
+ * ADR-65: the provider-level fields of the x402 v2 `resource` block (specs/extensions/bazaar.md, "Service Metadata
+ * on resource"): a facilitator that catalogues the resource shows them as the service's name, topical tags and
+ * icon. Clients echo the whole `resource` block into their PaymentPayload, so a facilitator treats the fields as
+ * untrusted and soft-drops anything outside these rules - a name over 32 characters or a tag with a non-ASCII
+ * character would be dropped silently, so the rules are applied here, where we can see the result.
+ */
+export type ResourceServiceMetadata = { serviceName: string; tags: string[]; iconUrl: string }
+
+export const SERVICE_NAME = 'Agent Souk'
+const PRINTABLE_ASCII = /^[\x20-\x7e]{1,32}$/
+
+/**
+ * The listing's own tags, minus the `souk:<service>` routing tag (an internal name, not a topic), deduplicated
+ * case-insensitively and capped at five - exactly the facilitator's rule, so what we send is what gets shown.
+ */
+export function serviceTags(tags: readonly string[] | null | undefined): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of tags ?? []) {
+    if (typeof raw !== 'string') continue
+    const tag = raw.trim()
+    if (!PRINTABLE_ASCII.test(tag) || tag.startsWith('souk:') || seen.has(tag.toLowerCase())) continue
+    seen.add(tag.toLowerCase())
+    out.push(tag)
+    if (out.length === 5) break
+  }
+  return out
+}
+
+export function serviceMetadata(base: string, tags: readonly string[] | null | undefined): ResourceServiceMetadata {
+  return { serviceName: SERVICE_NAME, tags: serviceTags(tags), iconUrl: `${base.replace(/\/$/, '')}/icon.png` }
+}
+
 /** Bounds what we copy into a public document out of a listing an outside seller wrote. */
 const MAX_BYTES = 8_000
 
@@ -61,7 +95,12 @@ function bounded(value: unknown): unknown {
 export function bazaarExtension(listing: BazaarListing): BazaarExtension {
   const input = bounded(listing.exampleInput)
   const output = bounded(listing.exampleOutput)
-  const schemaIn = bounded(listing.inputSchema)
+  // A facilitator validates `info` against `schema` before it catalogues anything (ADR-65). With an example the
+  // platform has already checked it against the input schema (POST /v1/listings refuses a mismatch); without one
+  // the body is `{}`, which a schema with `required` fields would reject - so the schema keeps its properties as
+  // documentation and drops its top-level `required`, and the entry is catalogued rather than silently rejected.
+  const rawSchemaIn = bounded(listing.inputSchema) as Record<string, unknown> | undefined
+  const schemaIn = rawSchemaIn && input === undefined && Array.isArray(rawSchemaIn.required) ? Object.fromEntries(Object.entries(rawSchemaIn).filter(([k]) => k !== 'required')) : rawSchemaIn
   const schemaOut = bounded(listing.outputSchema)
   return {
     bazaar: {

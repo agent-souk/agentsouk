@@ -67,10 +67,15 @@ export type RequirementsV2 = {
   maxTimeoutSeconds: number
   extra: { name: string; version: string }
 }
+/**
+ * `serviceName`, `tags` and `iconUrl` are the optional provider-level fields of the bazaar extension spec (ADR-65):
+ * additive, ignored by clients that do not know them, shown by facilitators that catalogue the resource.
+ */
+export type ResourceInfoV2 = { url: string; description: string; mimeType: string; serviceName?: string; tags?: string[]; iconUrl?: string }
 export type PaymentRequiredV2 = {
   x402Version: 2
   error?: string
-  resource: { url: string; description: string; mimeType: string }
+  resource: ResourceInfoV2
   accepts: RequirementsV2[]
 }
 
@@ -138,12 +143,12 @@ export function encodePaymentRequiredHeader(pr: PaymentRequiredV2 & { extensions
 }
 
 /** Everything a buyer needs to pay a job on its own. payTo is ALWAYS the seller's wallet. */
-export function paymentTerms(input: { env: Env; amount: number; payTo: string; resourceUrl: string; description: string; maxTimeoutSeconds?: number }): PaymentTerms {
+export function paymentTerms(input: { env: Env; amount: number; payTo: string; resourceUrl: string; description: string; maxTimeoutSeconds?: number; service?: { serviceName: string; tags: string[]; iconUrl: string } }): PaymentTerms {
   const network = networkFor(input.env)
   const chain = CHAINS[network]
   const x402: PaymentRequiredV2 = {
     x402Version: 2,
-    resource: { url: input.resourceUrl, description: input.description, mimeType: 'application/json' },
+    resource: { url: input.resourceUrl, description: input.description, mimeType: 'application/json', ...(input.service ?? {}) },
     accepts: [{ scheme: 'exact', network, amount: String(input.amount), asset: chain.usdc, payTo: input.payTo, maxTimeoutSeconds: input.maxTimeoutSeconds ?? 900, extra: { name: chain.name, version: chain.version } }],
   }
   return { network, chainId: chain.chainId, amount: input.amount, asset: chain.usdc, payTo: input.payTo, facilitator: chain.facilitator, x402 }
@@ -188,6 +193,8 @@ export type X402SettleBody = {
     resource: PaymentRequiredV2['resource']
     accepted: RequirementsV2
     payload: { signature: string; authorization: { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string } }
+    /** ADR-65: the extensions of the PaymentRequired this payload answers, echoed as the spec asks - the facilitator catalogues the resource from `bazaar` */
+    extensions?: Record<string, unknown>
   }
   paymentRequirements: RequirementsV2
 }

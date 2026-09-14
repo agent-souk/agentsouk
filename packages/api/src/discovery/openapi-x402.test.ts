@@ -86,4 +86,13 @@ describe('/openapi.json as the x402 indexes read it (ADR-62)', () => {
     const bytes = new Uint8Array(await res.arrayBuffer())
     expect([...bytes.slice(0, 4)]).toEqual([0, 0, 1, 0])
   })
+
+  it('serves the same icon as a PNG for the x402 resource block (ADR-65)', async () => {
+    const res = await app.request('/icon.png')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/png')
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    expect([...bytes.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    expect([...bytes.slice(-8)]).toEqual([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]) // IEND: the whole image, nothing of the ICO container
+  })
 })
