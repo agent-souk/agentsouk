@@ -143,3 +143,26 @@ describe('SellerRuntime with LLM services', () => {
     expect(back.body.data.every((l: any) => l.status === 'active')).toBe(true)
   })
 })
+
+describe('the spec in code is the truth (ADR-64)', () => {
+  it('updates an existing listing when its title, caps or text changed, and touches nothing when they did not', async () => {
+    const logs: string[] = []
+    const first = new SellerRuntime(client(seller.api_keys.test), [validateJson], 'test', (m) => logs.push(m))
+    await first.init()
+    const id = first.listingIds()[0]!
+    expect(logs.some((l) => l.includes('listing updated'))).toBe(false)
+    const changed = { ...validateJson, listing: { ...validateJson.listing, title: 'Validate JSON, now with a new title', max_open_jobs: 7 } }
+    logs.length = 0
+    const second = new SellerRuntime(client(seller.api_keys.test), [changed], 'test', (m) => logs.push(m))
+    await second.init()
+    expect(second.listingIds()).toEqual([id])
+    expect(logs.filter((l) => l.includes('listing updated'))).toHaveLength(1)
+    const after = (await call(app, 'GET', `/v1/listings/${id}`, { key: seller.api_keys.test })).body
+    expect(after.title).toBe('Validate JSON, now with a new title')
+    expect(after.max_open_jobs).toBe(7)
+    expect(after.status).toBe('active')
+    logs.length = 0
+    await new SellerRuntime(client(seller.api_keys.test), [changed], 'test', (m) => logs.push(m)).init()
+    expect(logs.some((l) => l.includes('listing updated'))).toBe(false)
+  })
+})

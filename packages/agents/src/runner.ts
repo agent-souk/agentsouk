@@ -3,12 +3,32 @@
  * a webhook, and turns `job.created` events (or an inbox poll) into accept → run → deliver. Declines bad input
  * before accepting; a failure after accepting cancels the job (an honest seller_failed, never a silent stall).
  */
-import type { AgentSouk } from 'agentsouk'
-import { serviceTag, type ServiceDef } from './services/types.js'
+import type { AgentSouk, Listing, ListingInput } from 'agentsouk'
+import { serviceTag, type ListingSpec, type ServiceDef } from './services/types.js'
 
 export type Env = 'live' | 'test'
 export type Logger = (msg: string, extra?: Record<string, unknown>) => void
 export type Outcome = 'delivered' | 'declined' | 'cancelled' | 'skipped'
+
+/** The fields of the spec that differ from the listing as the API shows it; null when nothing does. */
+export function listingPatch(existing: Listing, spec: ListingSpec & { tags: string[] }): Partial<ListingInput> | null {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const patch: Partial<ListingInput> = {}
+  if (existing.title !== spec.title) patch.title = spec.title
+  if (existing.description !== spec.description) patch.description = spec.description
+  if (existing.category !== spec.category) patch.category = spec.category
+  if (!same([...existing.tags].sort(), [...spec.tags].sort())) patch.tags = spec.tags
+  if ((existing.pricing.price ?? null) !== spec.price) patch.price = spec.price
+  if ((existing.pricing.unit_name ?? null) !== (spec.unit_name ?? null)) patch.unit_name = spec.unit_name ?? null
+  if (!same(existing.input_schema, spec.input_schema)) patch.input_schema = spec.input_schema as ListingInput['input_schema']
+  if (!same(existing.output_schema, spec.output_schema ?? null)) patch.output_schema = (spec.output_schema ?? null) as ListingInput['output_schema']
+  if (!same(existing.example_input, spec.example_input)) patch.example_input = spec.example_input
+  if (!same(existing.example_output, spec.example_output)) patch.example_output = spec.example_output
+  if (existing.turnaround_seconds !== spec.turnaround_seconds) patch.turnaround_seconds = spec.turnaround_seconds
+  if (existing.accept_timeout_seconds !== spec.accept_timeout_seconds) patch.accept_timeout_seconds = spec.accept_timeout_seconds
+  if (existing.max_open_jobs !== spec.max_open_jobs) patch.max_open_jobs = spec.max_open_jobs
+  return Object.keys(patch).length ? patch : null
+}
 
 export class SellerRuntime {
   private readonly byListing = new Map<string, ServiceDef>()
@@ -42,9 +62,18 @@ export class SellerRuntime {
       if (!listing) {
         listing = await this.client.listings.create({ ...s.listing, pricing_model: s.listing.pricing_model ?? 'fixed', payment: 'on_delivery', tags: [...s.listing.tags, tag] })
         this.log('listing created', { env: this.env, service: s.key, listing_id: listing.id })
-      } else if (listing.status === 'paused') {
-        listing = await this.client.listings.update(listing.id, { status: 'active' })
-        this.log('listing resumed', { env: this.env, service: s.key, listing_id: listing.id })
+      } else {
+        // The spec in code is the truth. Until 0.2.8 an existing listing kept its first words for ever: the first audit of
+        // token-snapshot changed its title, caps and description, and live would have gone on selling the old text (ADR-64).
+        const patch = listingPatch(listing, { ...s.listing, tags: [...s.listing.tags, tag] })
+        if (patch) {
+          listing = await this.client.listings.update(listing.id, patch)
+          this.log('listing updated to the current spec', { env: this.env, service: s.key, listing_id: listing.id, fields: Object.keys(patch) })
+        }
+        if (listing.status === 'paused') {
+          listing = await this.client.listings.update(listing.id, { status: 'active' })
+          this.log('listing resumed', { env: this.env, service: s.key, listing_id: listing.id })
+        }
       }
       this.byListing.set(listing.id, s)
     }

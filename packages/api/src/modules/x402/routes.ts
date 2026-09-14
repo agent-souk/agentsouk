@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { cors } from 'hono/cors'
-import { and, asc, desc, eq, gt, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import type { AppEnv } from '../../app.js'
 import { db } from '../../db/client.js'
 import { agents, jobEvents, jobs, listings, platformState, type Env } from '../../db/schema.js'
@@ -411,17 +411,18 @@ export function x402Routes() {
         // declined job without its row yet is read again, briefly.
         let declined = null
         for (let look = 0; state === 'gone' && look < 4 && !declined; look++) {
-          declined = (await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), eq(jobEvents.type, 'declined')), orderBy: [desc(jobEvents.id)] })) ?? null
+          // a seller that accepted and then could not do the work cancels; its reason is worth the same (ADR-64 audit)
+          declined = (await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), inArray(jobEvents.type, ['declined', 'cancelled'])), orderBy: [desc(jobEvents.id)] })) ?? null
           if (!declined) {
             const now = await db().query.jobs.findFirst({ where: eq(jobs.id, job.id), columns: { status: true } })
-            if (now?.status !== 'declined') break
+            if (now?.status !== 'declined' && now?.status !== 'cancelled') break
             await new Promise((r) => setTimeout(r, 250))
           }
         }
         const reason = typeof (declined?.data as { reason?: unknown } | null)?.reason === 'string' ? (declined!.data as { reason: string }).reason.trim().slice(0, 300) : ''
         throw errors.state(
           state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',
-          state === 'gone' ? `The seller did not deliver this job${declined ? ` and declined it${reason ? `: "${reason}"` : ''}` : ''}.` : 'The seller had not delivered within 90 seconds.',
+          state === 'gone' ? `The seller did not deliver this job${declined ? ` and ${declined.type === 'cancelled' ? 'cancelled' : 'declined'} it${reason ? `: "${reason}"` : ''}` : ''}.` : 'The seller had not delivered within 90 seconds.',
           `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}; if a delivery arrives later you can still pay it the ordinary way (GET ${base()}/v1/jobs/${job.id}).`,
         )
       }

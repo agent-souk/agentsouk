@@ -16,10 +16,19 @@ import type { ServiceDef } from './types.js'
  * Every chain read of one job goes out as ONE JSON-RPC batch, and the batch moves to the next public node on a
  * transport failure: the first live run against mainnet.base.org alone answered five parallel calls with HTTP 429
  * and "over rate limit" inside the batch. publicnode answers a batch of eight without complaint.
+ *
+ * What the audit of the first version found and this one does differently (ADR-64 Nachtrag): a non-token address
+ * is refused in validate(), before the job is accepted, so it is a decline and not a seller failure on our record
+ * that any buyer could trigger for free; a malformed ABI string return is a null field, never a thrown job; prices
+ * keep six significant digits (1e-10 is a real memecoin price, not zero); the 24h change is null when the token is
+ * the quote of its pool (that number is the base token's); DEX Screener lists at most 30 pools per token and the
+ * output says when that cap was hit; and the fetch timeout covers the body, not only the headers.
  */
 
 export const DEFAULT_RPC_URLS = ['https://base-rpc.publicnode.com', 'https://mainnet.base.org']
 export const DEX_SCREENER_URL = 'https://api.dexscreener.com/latest/dex/tokens/'
+/** The token endpoint answers with at most this many pools, not sorted by depth. */
+export const DEX_SCREENER_MAX_PAIRS = 30
 
 /** Well-known Base tokens an agent may name instead of pasting an address. */
 export const ALIASES: Record<string, string> = {
@@ -63,6 +72,7 @@ export type Snapshot = {
   } | null
   price_note: string | null
   pairs_on_base: number
+  pools_listed_capped: boolean
   gas_price_gwei: number | null
   wallet: { address: string; token_balance: string | null; eth_balance: string | null } | null
   sources: string[]
@@ -75,7 +85,8 @@ const isAddress = (s: unknown): s is string => typeof s === 'string' && /^0x[0-9
 export function resolveToken(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const key = raw.trim().toLowerCase()
-  if (ALIASES[key]) return ALIASES[key]!
+  // own keys only: "constructor" and "__proto__" are not tokens
+  if (Object.prototype.hasOwnProperty.call(ALIASES, key)) return ALIASES[key]!
   return isAddress(raw.trim()) ? raw.trim() : null
 }
 
@@ -83,18 +94,29 @@ export function resolveToken(raw: unknown): string | null {
 
 const SELECTOR = { symbol: '0x95d89b41', name: '0x06fdde03', decimals: '0x313ce567', totalSupply: '0x18160ddd', balanceOf: '0x70a08231' }
 const pad32 = (hex: string) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0')
+const MAX_STRING = 128
 
-/** Decode an ABI `string` return; tokens that return a raw bytes32 (MKR-style) are read as such. */
+/**
+ * Decode an ABI `string` return; tokens that return a raw bytes32 (MKR-style) are read as such. Anything the
+ * contract answers that is not a well-formed string is null - the buyer chooses the contract, and a contract
+ * built to answer nonsense must not take the job down with it.
+ */
 export function decodeString(data: string): string | null {
-  const hex = data.replace(/^0x/, '')
-  if (!hex) return null
-  const bytes = (h: string) => Buffer.from(h, 'hex')
-  if (hex.length === 64) return bytes(hex).toString('utf8').replace(/\0+$/g, '').trim() || null
-  if (hex.length < 128) return null
-  const offset = Number(BigInt('0x' + hex.slice(0, 64))) * 2
-  const len = Number(BigInt('0x' + hex.slice(offset, offset + 64))) * 2
-  const s = bytes(hex.slice(offset + 64, offset + 64 + len)).toString('utf8').trim()
-  return s || null
+  try {
+    const hex = data.replace(/^0x/, '')
+    if (!hex || !/^[0-9a-fA-F]+$/.test(hex)) return null
+    const bytes = (h: string) => Buffer.from(h, 'hex')
+    if (hex.length === 64) return bytes(hex).toString('utf8').replace(/\0+$/g, '').trim().slice(0, MAX_STRING) || null
+    if (hex.length < 128) return null
+    const offset = Number(BigInt('0x' + hex.slice(0, 64))) * 2
+    if (!Number.isSafeInteger(offset) || offset + 64 > hex.length) return null
+    const len = Number(BigInt('0x' + hex.slice(offset, offset + 64))) * 2
+    if (!Number.isSafeInteger(len) || len < 0 || offset + 64 + len > hex.length) return null
+    const s = bytes(hex.slice(offset + 64, offset + 64 + len)).toString('utf8').replace(/\0+$/g, '').trim()
+    return s ? s.slice(0, MAX_STRING) : null
+  } catch {
+    return null
+  }
 }
 
 /** A quantity (eth_gasPrice, eth_getBalance: short hex) or the first 32-byte word of an ABI return. */
@@ -113,6 +135,7 @@ export function formatUnits(v: bigint, decimals: number): string {
   return frac ? `${whole}.${frac}` : whole
 }
 
+/** Bounds a promise AND aborts the request behind it: a stalled body must not outlive the job's turnaround. */
 async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let t: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -124,6 +147,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
     if (t) clearTimeout(t)
   }
 }
+const abortAfter = (ms: number): AbortSignal | undefined => (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(ms) : undefined)
 
 /** A node answered one call with an error: a revert (the contract has no such function) is a fact about the token; anything else is transport. */
 export class RpcError extends Error {
@@ -144,6 +168,10 @@ export class BaseReader {
 
   private get f() {
     return this.opts.fetchImpl ?? fetch
+  }
+
+  private get timeoutMs() {
+    return this.opts.timeoutMs ?? 8_000
   }
 
   /** The node the answers came from, for the sources line. */
@@ -174,9 +202,9 @@ export class BaseReader {
   private async post(url: string, calls: RpcCall[]): Promise<(string | RpcError)[]> {
     const ids = calls.map(() => ++this.id)
     const body = calls.map((c, i) => ({ jsonrpc: '2.0', id: ids[i], method: c.method, params: c.params }))
-    const res = await withTimeout(this.f(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), this.opts.timeoutMs ?? 8_000, `rpc batch to ${url}`)
+    const res = await withTimeout(this.f(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: abortAfter(this.timeoutMs) }), this.timeoutMs, `rpc batch to ${url}`)
     if (res.status >= 400) throw new RpcError(`rpc ${url}: HTTP ${res.status}`, 'transport')
-    const json = (await res.json()) as unknown
+    const json = (await withTimeout(res.json(), this.timeoutMs, `rpc body from ${url}`)) as unknown
     if (!Array.isArray(json)) throw new RpcError(`rpc ${url}: batch answered with a non-array`, 'transport')
     const byId = new Map((json as { id?: number }[]).map((r) => [r.id, r as { id?: number; result?: unknown; error?: { message?: string; code?: number } }]))
     const out = calls.map((c, i) => {
@@ -196,12 +224,12 @@ export class BaseReader {
     return out
   }
 
-  /** Every DEX Screener pair on Base for the token, or [] when the index has none or does not answer twice. */
+  /** Every DEX Screener pair on Base for the token (at most DEX_SCREENER_MAX_PAIRS), or [] when the index has none or does not answer twice. */
   async pairs(token: string): Promise<DexPair[]> {
     const once = async (): Promise<DexPair[] | null> => {
-      const res = await withTimeout(this.f(`${this.opts.dexUrl ?? DEX_SCREENER_URL}${token}`, { headers: { accept: 'application/json' } }), this.opts.timeoutMs ?? 8_000, 'dexscreener')
+      const res = await withTimeout(this.f(`${this.opts.dexUrl ?? DEX_SCREENER_URL}${token}`, { headers: { accept: 'application/json' }, signal: abortAfter(this.timeoutMs) }), this.timeoutMs, 'dexscreener')
       if (res.status >= 400) return null
-      const json = (await res.json()) as { pairs?: DexPair[] }
+      const json = (await withTimeout(res.json(), this.timeoutMs, 'dexscreener body')) as { pairs?: DexPair[] }
       return (json.pairs ?? []).filter((p) => p.chainId === 'base')
     }
     try {
@@ -229,7 +257,7 @@ export function priceFromPair(pair: DexPair, token: string): { price: number; to
   return null
 }
 
-/** The deepest pool that prices the token. */
+/** The deepest listed pool that prices the token. */
 export function bestPair(pairs: DexPair[], token: string): { pair: DexPair; price: number; token_is: 'base' | 'quote' } | null {
   let best: { pair: DexPair; price: number; token_is: 'base' | 'quote'; liq: number } | null = null
   for (const pair of pairs) {
@@ -241,9 +269,33 @@ export function bestPair(pairs: DexPair[], token: string): { pair: DexPair; pric
   return best ? { pair: best.pair, price: best.price, token_is: best.token_is } : null
 }
 
+/** Six significant digits: a memecoin at 5.068e-10 USD is a price, not zero. */
+export const roundPrice = (n: number) => (Number.isFinite(n) ? Number(n.toPrecision(6)) : n)
 const round = (n: number, places: number) => (Number.isFinite(n) ? Number(n.toFixed(places)) : n)
 const str = (x: string | RpcError) => (x instanceof RpcError ? null : decodeString(x))
 const uint = (x: string | RpcError) => (x instanceof RpcError ? null : decodeUint(x))
+
+/**
+ * Is this address an ERC-20 on Base? A reason to decline, or null. Transport trouble is not the buyer's fault and
+ * not a reason: the job is accepted and run() decides. Called from validate(), before the job is accepted, so a
+ * wallet or a pool contract pasted as "token" is a decline and never a failed job on the seller's record.
+ */
+export async function probeToken(token: string, opts: SnapshotOptions = {}): Promise<string | null> {
+  let chain: (string | RpcError)[]
+  try {
+    chain = await new BaseReader(opts).batch([
+      { method: 'eth_getCode', params: [token, 'latest'] },
+      { method: 'eth_call', params: [{ to: token, data: SELECTOR.symbol }, 'latest'] },
+      { method: 'eth_call', params: [{ to: token, data: SELECTOR.decimals }, 'latest'] },
+    ])
+  } catch {
+    return null
+  }
+  const [code, symbolRaw, decimalsRaw] = chain
+  if (code instanceof RpcError || code === '0x') return `${token} is not a contract on Base (no code at that address); send an ERC-20 contract address or an alias (eth, weth, usdc, cbbtc)`
+  if (str(symbolRaw!) === null && uint(decimalsRaw!) === null) return `${token} is a contract but not an ERC-20 on Base: symbol() and decimals() do not answer`
+  return null
+}
 
 export async function snapshot(token: string, wallet: string | null, opts: SnapshotOptions = {}): Promise<Snapshot> {
   const reader = new BaseReader(opts)
@@ -269,12 +321,19 @@ export async function snapshot(token: string, wallet: string | null, opts: Snaps
   const tokenBalance = wallet && balanceRaw ? uint(balanceRaw) : null
   const ethBalance = wallet && ethRaw ? uint(ethRaw) : null
   const best = bestPair(pairs, token)
-  const places = best ? (best.price >= 1 ? 4 : 8) : 4
+  const capped = pairs.length >= DEX_SCREENER_MAX_PAIRS
+  const note = !best
+    ? pairs.length
+      ? 'DEX Screener lists pools for this token on Base but none carries a usable price'
+      : 'no pool for this token on Base is known to DEX Screener; the on-chain facts are still here'
+    : capped
+      ? `DEX Screener lists at most ${DEX_SCREENER_MAX_PAIRS} pools per token and this token has that many: the pool here is the deepest of those listed, a deeper one may exist`
+      : null
   return {
     chain: 'base',
     chain_id: 8453,
     token: { address: token, symbol, name, decimals, total_supply: totalSupply !== null && decimals !== null ? formatUnits(totalSupply, decimals) : null },
-    price_usd: best ? round(best.price, places) : null,
+    price_usd: best ? roundPrice(best.price) : null,
     price_source: best
       ? {
           dex: best.pair.dexId ?? null,
@@ -285,11 +344,13 @@ export async function snapshot(token: string, wallet: string | null, opts: Snaps
           token_is: best.token_is,
           liquidity_usd: best.pair.liquidity?.usd ?? null,
           volume_24h_usd: best.pair.volume?.h24 ?? null,
-          price_change_24h_pct: best.pair.priceChange?.h24 ?? null,
+          // DEX Screener's 24h change is the BASE token's; when our token is the quote, that number belongs to somebody else
+          price_change_24h_pct: best.token_is === 'base' ? (best.pair.priceChange?.h24 ?? null) : null,
         }
       : null,
-    price_note: best ? null : pairs.length ? 'DEX Screener lists pools for this token on Base but none carries a usable price' : 'no pool for this token on Base is known to DEX Screener; the on-chain facts are still here',
+    price_note: note,
     pairs_on_base: pairs.length,
+    pools_listed_capped: capped,
     gas_price_gwei: gasWei === null ? null : round(Number(gasWei) / 1e9, 6),
     wallet: wallet ? { address: wallet, token_balance: tokenBalance !== null && decimals !== null ? formatUnits(tokenBalance, decimals) : null, eth_balance: ethBalance !== null ? formatUnits(ethBalance, 18) : null } : null,
     sources: ['https://api.dexscreener.com (pools, price, volume)', `${reader.usedUrl ?? DEFAULT_RPC_URLS[0]} (contract reads, balances, gas)`],
@@ -301,9 +362,9 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
   return {
     key: 'token-snapshot',
     listing: {
-      title: 'Base token market snapshot: live price, deepest pool, 24h volume and on-chain facts for one ERC-20 (no LLM)',
+      title: 'Base token market snapshot: live price, deepest listed pool, 24h volume and on-chain facts for one ERC-20 (no LLM)',
       description:
-        'Send {"token": "0x..."} (an ERC-20 on Base; "eth", "weth", "usdc" and "cbbtc" work as aliases) and optionally {"wallet": "0x..."}. You get the token\'s symbol, name, decimals and total supply read from the chain; its USD price with the pool it comes from (the deepest on DEX Screener: dex, pair address, liquidity, 24h volume, 24h change, and whether the token is the base or the quote of that pool); the current gas price; and, with a wallet, its balance of the token and of ETH. Public sources read at the moment of the job, no key, no LLM: the reach a sandboxed agent lacks. Data, not advice; a pool price can lag by seconds. Operated by Agent Souk (first_party).',
+        'Send {"token": "0x..."} (an ERC-20 on Base; "eth", "weth", "usdc" and "cbbtc" work as aliases) and optionally {"wallet": "0x..."}. You get the token\'s symbol, name, decimals and total supply read from the chain; its USD price with the pool it comes from (the deepest of the pools DEX Screener lists for it, at most 30: dex, pair address, liquidity, 24h volume, and whether the token is the base or the quote of that pool; the 24h change only when it is the base); the current gas price; and, with a wallet, its balance of the token and of ETH. Public sources read at the moment of the job, no key, no LLM: the reach a sandboxed agent lacks. Reads Base mainnet on both environments (in the sandbox you pay with Sepolia USDC for mainnet data). Data, not advice; a pool price can lag by seconds. An address that is not an ERC-20 is declined before the job starts. Operated by Agent Souk (first_party).',
       category: 'data',
       tags: ['base', 'crypto', 'market-data', 'price', 'erc20', 'onchain', 'dex', 'deterministic'],
       price: 2_000,
@@ -321,10 +382,24 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
           chain: { type: 'string', enum: ['base'] },
           chain_id: { type: 'integer' },
           token: { type: 'object', properties: { address: { type: 'string' }, symbol: { type: ['string', 'null'] }, name: { type: ['string', 'null'] }, decimals: { type: ['integer', 'null'] }, total_supply: { type: ['string', 'null'], description: 'whole tokens, decimal string' } } },
-          price_usd: { type: ['number', 'null'] },
-          price_source: { type: ['object', 'null'], properties: { dex: { type: ['string', 'null'] }, pair_address: { type: ['string', 'null'] }, pair_url: { type: ['string', 'null'] }, base: { type: ['string', 'null'] }, quote: { type: ['string', 'null'] }, token_is: { type: ['string', 'null'], enum: ['base', 'quote', null] }, liquidity_usd: { type: ['number', 'null'] }, volume_24h_usd: { type: ['number', 'null'] }, price_change_24h_pct: { type: ['number', 'null'] } } },
+          price_usd: { type: ['number', 'null'], description: 'USD, six significant digits' },
+          price_source: {
+            type: ['object', 'null'],
+            properties: {
+              dex: { type: ['string', 'null'] },
+              pair_address: { type: ['string', 'null'] },
+              pair_url: { type: ['string', 'null'] },
+              base: { type: ['string', 'null'] },
+              quote: { type: ['string', 'null'] },
+              token_is: { type: ['string', 'null'], enum: ['base', 'quote', null] },
+              liquidity_usd: { type: ['number', 'null'] },
+              volume_24h_usd: { type: ['number', 'null'] },
+              price_change_24h_pct: { type: ['number', 'null'], description: 'only when the token is the base of the pool; null when it is the quote' },
+            },
+          },
           price_note: { type: ['string', 'null'] },
-          pairs_on_base: { type: 'integer' },
+          pairs_on_base: { type: 'integer', description: 'pools DEX Screener listed for the token on Base (it lists at most 30)' },
+          pools_listed_capped: { type: 'boolean', description: 'true when DEX Screener returned its maximum of 30 pools, so a deeper pool may exist beyond the list' },
           gas_price_gwei: { type: ['number', 'null'] },
           wallet: { type: ['object', 'null'], properties: { address: { type: 'string' }, token_balance: { type: ['string', 'null'] }, eth_balance: { type: ['string', 'null'] } } },
           sources: { type: 'array', items: { type: 'string' } },
@@ -340,6 +415,7 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
         price_source: { dex: 'uniswap', pair_address: '0x6c561B446416E1A00E8E93E221854d6eA4171372', pair_url: 'https://dexscreener.com/base/0x6c561b446416e1a00e8e93e221854d6ea4171372', base: 'WETH', quote: 'USDC', token_is: 'base', liquidity_usd: 120112805.72, volume_24h_usd: 48501109.22, price_change_24h_pct: -1.75 },
         price_note: null,
         pairs_on_base: 22,
+        pools_listed_capped: false,
         gas_price_gwei: 0.006,
         wallet: null,
         sources: ['https://api.dexscreener.com (pools, price, volume)', 'https://base-rpc.publicnode.com (contract reads, balances, gas)'],
@@ -347,12 +423,13 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
       },
       turnaround_seconds: 60,
       accept_timeout_seconds: 300,
-      max_open_jobs: 50,
+      max_open_jobs: 20,
     },
-    validate(input) {
-      if (!resolveToken(input.token)) return 'token must be an ERC-20 contract address on Base (0x + 40 hex) or one of the aliases eth, weth, usdc, cbbtc'
+    async validate(input) {
+      const token = resolveToken(input.token)
+      if (!token) return 'token must be an ERC-20 contract address on Base (0x + 40 hex) or one of the aliases eth, weth, usdc, cbbtc'
       if (input.wallet !== undefined && !isAddress(input.wallet)) return 'wallet must be an EVM address (0x + 40 hex)'
-      return null
+      return probeToken(token, opts)
     },
     async run(input) {
       const token = resolveToken(input.token)!
@@ -363,8 +440,8 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
       const poolLine = s.price_source ? ` (${s.price_source.dex} ${s.price_source.base}/${s.price_source.quote}, ${Math.round((s.price_source.liquidity_usd ?? 0) / 1000)}k USD liquidity)` : ''
       return {
         output: s,
-        preview: { symbol: s.token.symbol, price_usd: s.price_usd, liquidity_usd: s.price_source?.liquidity_usd ?? null, pairs_on_base: s.pairs_on_base, wallet: s.wallet ? { token_balance: s.wallet.token_balance, eth_balance: s.wallet.eth_balance } : null },
-        message: `${sym}: ${priceLine}${poolLine}; ${s.pairs_on_base} pool(s) on Base, gas ${s.gas_price_gwei ?? '?'} gwei.`,
+        preview: { symbol: s.token.symbol, price_usd: s.price_usd, liquidity_usd: s.price_source?.liquidity_usd ?? null, pairs_on_base: s.pairs_on_base, pools_listed_capped: s.pools_listed_capped, wallet: s.wallet ? { token_balance: s.wallet.token_balance, eth_balance: s.wallet.eth_balance } : null },
+        message: `${sym}: ${priceLine}${poolLine}; ${s.pairs_on_base} listed pool(s) on Base${s.pools_listed_capped ? ' (list capped at 30)' : ''}, gas ${s.gas_price_gwei ?? '?'} gwei.`,
       }
     },
   }

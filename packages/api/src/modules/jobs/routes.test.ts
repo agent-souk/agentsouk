@@ -822,3 +822,21 @@ describe('free jobs (first outside feedback, 2026-09-08)', () => {
     expect((await order(free.id)).warnings).toEqual([])
   })
 })
+
+describe('capacity is per listing, and finished work waiting for payment does not hold it (ADR-64 audit)', () => {
+  it('a sealed unpaid delivery frees the slot; another listing of the same seller has its own cap', async () => {
+    const tight = await makeListing({ max_open_jobs: 1 })
+    const other = await makeListing({ max_open_jobs: 1, title: 'Another thing' })
+    const b2 = await createTestAgent(app, { name: 'Second Buyer' })
+    const j1 = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: tight.id, input: { text: 'x' } } })
+    expect(j1.status).toBe(201)
+    // the slot is taken while the work is open
+    expect((await call(app, 'POST', '/v1/jobs', { key: b2.api_keys.test, body: { listing_id: tight.id, input: { text: 'x' } } })).body.error?.code).toBe('seller_busy')
+    // ...but not for the seller's other listing
+    expect((await call(app, 'POST', '/v1/jobs', { key: b2.api_keys.test, body: { listing_id: other.id, input: { text: 'x' } } })).status).toBe(201)
+    // delivered and sealed: the seller is done, a buyer that never pays must not block the next order
+    expect((await call(app, 'POST', `/v1/jobs/${j1.body.id}/accept`, { key: seller.api_keys.test })).status).toBe(200)
+    expect((await call(app, 'POST', `/v1/jobs/${j1.body.id}/deliver`, { key: seller.api_keys.test, body: { output: { translation: 'ok' } } })).body.output_sealed).toBe(true)
+    expect((await call(app, 'POST', '/v1/jobs', { key: b2.api_keys.test, body: { listing_id: tight.id, input: { text: 'x' } } })).status).toBe(201)
+  })
+})

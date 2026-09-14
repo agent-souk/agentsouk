@@ -47,6 +47,12 @@ export const PAYMENT_GRACE_MS = 3600_000
 const PAYMENT_SKEW_MS = 10 * 60_000
 const TERMINAL: JobStatus[] = ['completed', 'declined', 'cancelled', 'expired', 'resolved']
 const OPEN_FOR_SELLER: JobStatus[] = ['open', 'quote_requested', 'quoted', 'awaiting_payment', 'in_progress', 'delivered']
+/**
+ * What a listing's max_open_jobs bounds: work the seller still has to do on THAT listing. A sealed delivery waiting
+ * for payment is finished work; until 0.5.18 it counted, seller-wide, so ten buyers who never paid could block every
+ * listing of a seller for the 72-hour payment window - at no cost to them (ADR-64 audit).
+ */
+const CAPACITY_STATUSES: JobStatus[] = ['open', 'quote_requested', 'quoted', 'awaiting_payment', 'in_progress']
 const DEFAULT_TURNAROUND = 3600
 
 /** All settlement writes go through one lock: SQLite has a single writer and we want deterministic races. */
@@ -311,7 +317,7 @@ async function advanceSeries(job: Job, outcome: 'completed' | 'stopped'): Promis
     } catch (e) {
       throw errors.state('listing_schema_changed', `The listing input_schema changed since the series was planned; the planned input for milestone ${next.index} no longer fits (${e instanceof Error ? e.message : String(e)}).`, 'Start a new series with inputs that match the current schema.')
     }
-    await assertSellerCapacity(s.env, listing.sellerAgentId, listing.maxOpenJobs)
+    await assertSellerCapacity(s.env, listing.id, listing.maxOpenJobs)
   } catch (e) {
     const reason = e instanceof ApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e)
     log.warn({ err: e, series: s.id }, 'series: next milestone cannot be created')
@@ -380,9 +386,9 @@ const money = (price: number | null | undefined) => formatUsdc(price ?? 0)
 export type MilestoneInput = { title?: string; input: unknown; units?: number }
 export type CreateJobInput = { listing_id: string; input?: unknown; units?: number; title?: string; max_revisions?: number; milestones?: MilestoneInput[] }
 
-async function assertSellerCapacity(env: Env, sellerId: string, maxOpen: number) {
-  const open = await db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), eq(jobs.sellerAgentId, sellerId), inArray(jobs.status, OPEN_FOR_SELLER)))
-  if ((open[0]?.n ?? 0) >= maxOpen) throw errors.state('seller_busy', 'This seller has reached its concurrent job limit.', 'Try again later or pick another listing: GET /v1/listings?q=.')
+async function assertSellerCapacity(env: Env, listingId: string, maxOpen: number) {
+  const open = await db().select({ n: sql<number>`count(*)` }).from(jobs).where(and(eq(jobs.env, env), eq(jobs.listingId, listingId), inArray(jobs.status, CAPACITY_STATUSES)))
+  if ((open[0]?.n ?? 0) >= maxOpen) throw errors.state('seller_busy', 'This listing has reached its concurrent job limit (max_open_jobs).', 'Try again later or pick another listing: GET /v1/listings?q=.')
 }
 
 function paymentIntro(payment: PaymentTiming, price: number | null): string {
@@ -419,7 +425,7 @@ type InsertJobInput = { env: Env; buyer: Agent; seller: Agent; listing: Listing;
 /** Creates one job row with its thread, first system message, job event and notifications (one job, or one milestone). */
 async function insertJob(o: InsertJobInput): Promise<Job> {
   const { env, listing } = o
-  await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
+  await assertSellerCapacity(env, listing.id, listing.maxOpenJobs)
   const price = priceFor(listing, o.units)
   const now = Date.now()
   const id = o.id ?? newId('job')
@@ -492,7 +498,7 @@ async function createSeries(env: Env, buyer: Agent, seller: Agent, listing: List
     if (planBytes > SERIES_MAX_PLAN_BYTES) throw errors.validation(`The milestone inputs together exceed ${SERIES_MAX_PLAN_BYTES} bytes.`, 'milestones', 'Split the work into fewer or smaller steps, or start a second series later.')
     return { index: i + 1, title: (m.title ?? `${title} (${i + 1}/${ms.length})`).slice(0, 120), input: jobInput, units, price: priceFor(listing, units, `${param}.units`), job_id: null }
   })
-  await assertSellerCapacity(env, listing.sellerAgentId, listing.maxOpenJobs)
+  await assertSellerCapacity(env, listing.id, listing.maxOpenJobs)
   const now = Date.now()
   const id = newId('series')
   const firstId = newId('job')

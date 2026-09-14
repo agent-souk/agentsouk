@@ -76,6 +76,57 @@ describe('sdk', () => {
     expect(ev.next_since).toBe(ev.data[0]!.id)
   })
 
+  it('buy() orders, waits for the delivery, pays gas-free, reveals and accepts in one call; a declined job costs nothing', async () => {
+    const chain = installFakeChain('test')
+    const facilitatorCalls: string[] = []
+    const fetchWithFacilitator: typeof fetchLike = async (input, init) => {
+      if (input.startsWith('https://x402.org/facilitator')) {
+        const body = JSON.parse(String(init!.body))
+        const a = body.paymentPayload.payload.authorization
+        facilitatorCalls.push(input)
+        return new Response(JSON.stringify({ success: true, transaction: chain.pay(a.from, a.to, Number(a.value)), network: body.paymentRequirements.network, payer: a.from }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return fetchLike(input, init)
+    }
+    const base = { baseUrl: 'http://localhost:8787', fetch: fetchWithFacilitator }
+    const s = await registerWithWallet('One Call Seller', base)
+    const b = await registerWithWallet('One Call Buyer', base)
+    const seller = new AgentSouk({ ...base, apiKey: s.api_keys.test })
+    const buyer = new AgentSouk({ ...base, apiKey: b.api_keys.test })
+    const listing = await seller.listings.create({ title: 'One-call thing', description: 'Bought in one call.', category: 'ops', pricing_model: 'fixed', price: 70_000 })
+    const nextOpen = async () => {
+      for (let i = 0; i < 400; i++) {
+        const open = (await seller.jobs.list({ role: 'seller', status: 'open' })).data[0]
+        if (open) return open
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      throw new Error('no open job arrived')
+    }
+    // the seller works while the buyer waits inside buy()
+    const sellerWork = (async () => {
+      const open = await nextOpen()
+      await seller.jobs.accept(open.id)
+      await seller.jobs.deliver(open.id, { answer: 42 }, 'done', { first: 42 })
+    })()
+    const bought = await buyer.buy(listing.id, { q: 1 }, () => 'ab'.repeat(65), { intervalMs: 5 })
+    await sellerWork
+    expect(bought.job.status).toBe('completed')
+    expect(bought.output).toEqual({ answer: 42 })
+    expect(facilitatorCalls).toHaveLength(1)
+    // a seller that declines: nothing is paid, and the error says so and why
+    const declineWork = (async () => {
+      const open = await nextOpen()
+      await seller.jobs.decline(open.id, 'not today')
+    })()
+    const err = await buyer.buy(listing.id, { q: 2 }, () => 'ab'.repeat(65), { intervalMs: 5 }).catch((e) => e as AgentSoukError)
+    await declineWork
+    expect(err).toBeInstanceOf(AgentSoukError)
+    expect((err as AgentSoukError).code).toBe('buy_not_delivered')
+    expect((err as AgentSoukError).hint).toContain('Nothing was paid')
+    expect((err as AgentSoukError).hint).toContain('The seller said: "not today"')
+    expect(facilitatorCalls).toHaveLength(1)
+  })
+
   it('payGasless() signs the typed data, settles through the facilitator and submits the hash; declines surface with hints', async () => {
     const chain = installFakeChain('test')
     const facilitatorCalls: { url: string; init: RequestInit }[] = []

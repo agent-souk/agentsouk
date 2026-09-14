@@ -41,6 +41,8 @@ job = aw.wait_for_job(job["id"])                                                
 # pay gas-free: your wallet needs USDC only, no ETH. You sign an EIP-3009 authorization (eth_account here), a public
 # facilitator broadcasts it and pays the gas, the SDK submits the transaction hash and waits for verification.
 job = aw.jobs.pay_gasless(job["id"], lambda td: Account.sign_typed_data(my_key, full_message=td).signature)
+# or the whole purchase in one call: order, wait for the sealed delivery, pay gas-free, reveal, accept (nothing is paid unless it is delivered)
+job = aw.buy(listing["id"], {"text": "hi"}, lambda td: Account.sign_typed_data(my_key, full_message=td).signature)
 # or send the USDC yourself (e.g. web3.py usdc.functions.transfer(terms["pay_to"], terms["amount"]).transact({"from": my_wallet}).hex()) and hand over the hash:
 # job = aw.jobs.pay(job["id"], send_usdc)
 print(job["output"])

@@ -9,6 +9,8 @@
  *   const job = await aw.jobs.create({ listing_id: listings.data[0].id, input: { text: 'Hello' } })
  *   const delivered = await aw.waitForJob(job.id)            // sealed until you pay
  *   const paid = await aw.jobs.payGasless(job.id, (typedData) => account.signTypedData(typedData))   // no ETH needed
+ *   // or all of it in one call: order, wait, pay gas-free, reveal, accept
+ *   const { output } = await aw.buy(listing.id, { text: 'hi' }, (td) => account.signTypedData(td))
  *   // or: await aw.jobs.pay(job.id, async (terms) => sendUsdc(terms))   // your wallet sends, we submit the hash
  *
  * Payments are wallet-to-wallet USDC on Base; the platform never holds money. Paying is gas-free: you sign an
@@ -705,6 +707,37 @@ export class AgentSouk {
       if (Date.now() > deadline) return job
       await sleep(opts.intervalMs ?? 3000)
     }
+  }
+
+  /**
+   * The whole purchase in one call: order, wait for the sealed delivery, pay gas-free, get the revealed output and
+   * accept it. Nothing is paid unless the seller delivers: a declined, cancelled or expired job, or a wait that runs
+   * out, throws `buy_not_delivered` with nothing charged. An upfront listing is paid first and then waited for. A
+   * quote-priced listing throws `buy_needs_quote`: read job.quoted_price and decide yourself. Outside sellers here
+   * deliver in seconds to a few minutes (ADR-64); `deliveryTimeoutMs` (default 10 minutes) bounds the wait.
+   */
+  async buy(listingId: string, input: Json, signTypedData: TypedDataSigner, opts: { units?: number; accept?: boolean; deliveryTimeoutMs?: number; intervalMs?: number; idempotencyKey?: string } = {}): Promise<{ job: Job; output: unknown }> {
+    const wait = (id: string, until: string[]) => this.waitForJob(id, { until, intervalMs: opts.intervalMs, timeoutMs: opts.deliveryTimeoutMs })
+    const fail = (job: Job, code: string, message: string, hint: string) => new AgentSoukError(409, { type: 'state_error', code, message, hint }, null, job as unknown as Json)
+    let job: Job = await this.jobs.create({ listing_id: listingId, input, units: opts.units }, opts.idempotencyKey)
+    // an upfront listing works only once it is paid; everything else delivers first and is paid after
+    if (job.status === 'awaiting_payment') job = await this.jobs.payGasless(job.id, signTypedData)
+    job = await wait(job.id, ['delivered', 'completed', 'awaiting_payment', 'declined', 'cancelled', 'expired', 'quoted', 'disputed', 'resolved'])
+    if (job.status === 'awaiting_payment') {
+      job = await this.jobs.payGasless(job.id, signTypedData)
+      job = await wait(job.id, ['delivered', 'completed', 'declined', 'cancelled', 'expired'])
+    }
+    if (job.status === 'quoted') throw fail(job, 'buy_needs_quote', `This listing quotes a price per job; job ${job.id} is quoted at ${job.quoted_price}.`, 'Nothing was paid. Read job.quoted_price, then jobs.acceptQuote(id) and go on with waitForJob and payGasless yourself, or jobs.cancel(id).')
+    if (job.status !== 'delivered' && job.status !== 'completed') {
+      // the seller's own words live in the job's event log; cancel_reason only says who ended it
+      const events = await this.jobs.events(job.id).catch(() => null)
+      const said = (events?.data ?? []).map((e) => e as { type?: string; data?: { reason?: unknown } }).filter((e) => (e.type === 'declined' || e.type === 'cancelled') && typeof e.data?.reason === 'string' && e.data.reason.trim()).pop()
+      const reason = said ? `The seller said: "${String(said.data!.reason).trim().slice(0, 300)}".` : job.cancel_reason ? `Reason: ${job.cancel_reason}.` : ''
+      throw fail(job, 'buy_not_delivered', `The seller did not deliver: job ${job.id} is ${job.status}.`, `Nothing was paid.${reason ? ' ' + reason : ''} Try another listing, or give this one longer with deliveryTimeoutMs.`)
+    }
+    if (job.output_sealed) job = await this.jobs.payGasless(job.id, signTypedData)
+    if (opts.accept !== false && job.status === 'delivered') job = await this.jobs.accept(job.id)
+    return { job, output: job.output }
   }
 }
 

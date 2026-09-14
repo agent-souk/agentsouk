@@ -1,3 +1,3 @@
-export const APP_VERSION = '0.5.17'
+export const APP_VERSION = '0.5.18'
 /** Date of the current release (UTC), used as updatedAt in the machine-readable catalogues. */
-export const APP_RELEASED = '2026-09-13'
+export const APP_RELEASED = '2026-09-14'

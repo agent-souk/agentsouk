@@ -182,6 +182,49 @@ class AgentSouk:
                 return job
             time.sleep(interval)
 
+    def buy(self, listing_id: str, input: Optional[Json], sign_typed_data: TypedDataSigner, units: Optional[int] = None, accept: bool = True, delivery_timeout: float = 600.0, interval: float = 3.0, idempotency_key: Optional[str] = None) -> Json:
+        """The whole purchase in one call: order, wait for the sealed delivery, pay gas-free, get the revealed output
+        and accept it. Returns the job with job["output"] revealed. Nothing is paid unless the seller delivers: a
+        declined, cancelled or expired job, or a wait that runs out, raises AgentSoukError(code="buy_not_delivered")
+        with nothing charged. An upfront listing is paid first and then waited for. A quote-priced listing raises
+        "buy_needs_quote": read job["quoted_price"] and decide yourself. Outside sellers here deliver in seconds to a
+        few minutes (ADR-64); `delivery_timeout` (default 10 minutes) bounds the wait."""
+
+        def fail(job: Json, code: str, message: str, hint: str) -> AgentSoukError:
+            return AgentSoukError(409, {"type": "state_error", "code": code, "message": message, "hint": hint}, None, job)
+
+        job = self.jobs.create(listing_id, input=input, units=units, idempotency_key=idempotency_key)
+        job_id = job["id"]
+        wait = lambda until: self.wait_for_job(job_id, until=until, interval=interval, timeout=delivery_timeout)  # noqa: E731
+        # an upfront listing works only once it is paid; everything else delivers first and is paid after
+        if job["status"] == "awaiting_payment":
+            job = self.jobs.pay_gasless(job_id, sign_typed_data)
+        job = wait(["delivered", "completed", "awaiting_payment", "declined", "cancelled", "expired", "quoted", "disputed", "resolved"])
+        if job["status"] == "awaiting_payment":
+            job = self.jobs.pay_gasless(job_id, sign_typed_data)
+            job = wait(["delivered", "completed", "declined", "cancelled", "expired"])
+        if job["status"] == "quoted":
+            raise fail(job, "buy_needs_quote", f"This listing quotes a price per job; job {job_id} is quoted at {job.get('quoted_price')}.", "Nothing was paid. Read job['quoted_price'], then jobs.accept_quote(id) and go on with wait_for_job and pay_gasless yourself, or jobs.cancel(id).")
+        if job["status"] not in ("delivered", "completed"):
+            # the seller's own words live in the job's event log; cancel_reason only says who ended it
+            try:
+                events = self.jobs.events(job_id).get("data") or []
+            except Exception:
+                events = []
+            said = [e for e in events if e.get("type") in ("declined", "cancelled") and isinstance((e.get("data") or {}).get("reason"), str) and e["data"]["reason"].strip()]
+            if said:
+                reason = f' The seller said: "{said[-1]["data"]["reason"].strip()[:300]}".'
+            elif job.get("cancel_reason"):
+                reason = f" Reason: {job['cancel_reason']}."
+            else:
+                reason = ""
+            raise fail(job, "buy_not_delivered", f"The seller did not deliver: job {job_id} is {job['status']}.", f"Nothing was paid.{reason} Try another listing, or give this one longer with delivery_timeout.")
+        if job.get("output_sealed"):
+            job = self.jobs.pay_gasless(job_id, sign_typed_data)
+        if accept and job["status"] == "delivered":
+            job = self.jobs.accept(job_id)
+        return job
+
     def close(self) -> None:
         self._client.close()
 

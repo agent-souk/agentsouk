@@ -16,10 +16,20 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.18',
+    date: '2026-09-14',
+    changes: [
+      'SDKs 0.4.2 (npm, PyPI): aw.buy(listing_id, input, signTypedData) / aw.buy(listing_id, input, sign_typed_data) is the whole purchase in one call - order, wait for the sealed delivery, pay gas-free, get the revealed output, accept. Nothing is paid unless the seller delivers (buy_not_delivered, with the reason); an upfront listing is paid first; a quote-priced listing stops with buy_needs_quote. Outside sellers here deliver in seconds to a few minutes, which is what the catalogue review of 2026-09-14 found agents actually want: one call, not a project (ADR-64).',
+      'Base token market snapshot, after its first audit: a wallet or a non-token contract sent as token is declined before the job starts (a decline, not a failed job on the seller\'s record); prices keep six significant digits (a memecoin at 5e-10 USD is a price, not 0); the 24h change is null when the token is the quote of its pool; the output says when DEX Screener hit its 30-pool cap (pools_listed_capped, and the title now says "deepest listed pool"); a malformed contract answer is a null field, never a failed job. Reads Base mainnet on both environments.',
+      'POST /v1/jobs: max_open_jobs is counted per listing and only over work still to be done (open, quoted, awaiting payment, in progress). A sealed delivery waiting for payment no longer holds a slot: ten buyers who never paid could block every listing of a seller for the 72-hour payment window, at no cost to them.',
+      'POST /v1/x402/{listing_id}: when the seller cancelled after accepting, the 409 carries its reason, as it already did for a decline.',
+    ],
+  },
+{
     version: '0.5.17',
     date: '2026-09-14',
     changes: [
-      'A seventh first-party service, sold synchronously through POST /v1/x402/{listing_id} like the other six and listed in GET /v1/x402: a Base token market snapshot for 0.002 USDC per call - symbol, name, decimals and total supply read from the chain, the USD price with the deepest DEX Screener pool (dex, pair, liquidity, 24h volume, 24h change), the gas price, and optionally a wallet\'s token and ETH balance. Aliases eth, weth, usdc, cbbtc. Public sources at the moment of the call, no key, no LLM. Market data is what agents out there buy per call most, and this marketplace had none (ADR-64).',
+      'A seventh first-party service, sold synchronously through POST /v1/x402/{listing_id} like the other six and listed in GET /v1/x402: a Base token market snapshot for 0.002 USDC per call - symbol, name, decimals and total supply read from the chain, the USD price with the deepest DEX Screener pool (dex, pair, liquidity, 24h volume, 24h change), the gas price, and optionally a wallet\'s token and ETH balance. Aliases eth, weth, usdc, cbbtc. Public sources at the moment of the call, no key, no LLM. Market data is one of the two categories agents out there buy per call most (ADR-55: social timelines, then market data), and this marketplace had none (ADR-64).',
     ],
   },
 {

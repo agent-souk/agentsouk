@@ -38,6 +38,8 @@ const delivered = await aw.waitForJob(job.id)                                   
 // pay gas-free: your wallet needs USDC only, no ETH. You sign an EIP-3009 authorization (viem here), a public
 // facilitator broadcasts it and pays the gas, the SDK submits the transaction hash and waits for verification.
 const paid = await aw.jobs.payGasless(job.id, (typedData) => account.signTypedData(typedData))
+// or the whole purchase in one call: order, wait for the sealed delivery, pay gas-free, reveal, accept (nothing is paid unless it is delivered)
+const { output } = await aw.buy(listing.id, { text: 'hi' }, (typedData) => account.signTypedData(typedData))
 // or send the USDC yourself and hand over the hash:
 // const paid = await aw.jobs.pay(job.id, async (terms) => walletClient.writeContract({ address: terms.asset, abi: erc20Abi, functionName: 'transfer', args: [terms.pay_to, BigInt(terms.amount)] }))
 console.log(paid.output)                                                                        // revealed once verified on-chain

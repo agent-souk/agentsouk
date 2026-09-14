@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ALIASES, bestPair, decodeString, decodeUint, formatUnits, priceFromPair, resolveToken, snapshot, tokenSnapshot } from './token-snapshot.js'
+import { ALIASES, DEX_SCREENER_MAX_PAIRS, bestPair, decodeString, decodeUint, formatUnits, priceFromPair, probeToken, resolveToken, roundPrice, snapshot, tokenSnapshot } from './token-snapshot.js'
 
 const WETH = '0x4200000000000000000000000000000000000006'
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
@@ -21,7 +21,7 @@ const pairs = {
 }
 
 type Rpc = { id: number; method: string; params: unknown[] }
-type Over = { pairs?: unknown; code?: string; fail?: 'dex' | 'rpc'; rateLimitedUrls?: string[]; revertName?: boolean }
+type Over = { pairs?: unknown; code?: string; fail?: 'dex' | 'rpc'; rateLimitedUrls?: string[]; revertName?: boolean; revertSymbol?: boolean; revertDecimals?: boolean; symbolRaw?: string }
 
 /** A fetch that answers DEX Screener with canned pairs and the RPC (single or batch) by method; records what was asked. */
 function fakeFetch(over: Over = {}) {
@@ -35,9 +35,9 @@ function fakeFetch(over: Over = {}) {
     if (body.method === 'eth_getBalance') return reply('0x5543df729c000') // 0.0015 ETH, short hex like a real node
     if (body.method === 'eth_call') {
       const data = String((body.params[0] as { data: string }).data)
-      if (data.startsWith('0x95d89b41')) return reply(abiString('WETH'))
+      if (data.startsWith('0x95d89b41')) return over.revertSymbol ? error('execution reverted', 3) : reply(over.symbolRaw ?? abiString('WETH'))
       if (data.startsWith('0x06fdde03')) return over.revertName ? error('execution reverted', 3) : reply(abiString('Wrapped Ether'))
-      if (data.startsWith('0x313ce567')) return reply(abiUint(18n))
+      if (data.startsWith('0x313ce567')) return over.revertDecimals ? error('execution reverted', 3) : reply(abiUint(18n))
       if (data.startsWith('0x18160ddd')) return reply(abiUint(129384201000000000000000n))
       if (data.startsWith('0x70a08231')) return reply(abiUint(12_102_000_000_000_000_000n))
     }
@@ -61,6 +61,7 @@ function fakeFetch(over: Over = {}) {
 }
 
 const fast = { retryDelayMs: 0, now: () => 0 }
+const node = { rpcUrl: 'https://node.example' }
 
 describe('ABI helpers', () => {
   it('decodes strings, bytes32 symbols and uints', () => {
@@ -71,11 +72,24 @@ describe('ABI helpers', () => {
     expect(decodeUint('0x5b8d80')).toBe(6_000_000n)
     expect(decodeUint('0x')).toBeNull()
   })
+  it('turns a malformed string return into null instead of throwing (the buyer picks the contract)', () => {
+    expect(decodeString('0x' + 'ff'.repeat(32) + '00'.repeat(32))).toBeNull() // offset far beyond the payload
+    expect(decodeString('0x' + (64).toString(16).padStart(64, '0') + '00'.repeat(32))).toBeNull() // offset points past the end
+    expect(decodeString('0x' + (32).toString(16).padStart(64, '0') + (9999).toString(16).padStart(64, '0') + 'ab'.repeat(32))).toBeNull() // length beyond the payload
+    expect(decodeString('0xzz')).toBeNull()
+    expect(decodeString(abiString('x'.repeat(500)))!.length).toBe(128) // capped
+  })
   it('formats base units as decimal strings without trailing zeros', () => {
     expect(formatUnits(2478140000n, 6)).toBe('2478.14')
     expect(formatUnits(12_102_000_000_000_000_000n, 18)).toBe('12.102')
     expect(formatUnits(0n, 18)).toBe('0')
     expect(formatUnits(5n, 0)).toBe('5')
+  })
+  it('keeps six significant digits of a price, so a memecoin at 5e-10 is not zero', () => {
+    expect(roundPrice(2478.144444)).toBe(2478.14)
+    expect(roundPrice(0.0000000005068)).toBe(5.068e-10)
+    expect(roundPrice(0.00000003188)).toBe(3.188e-8)
+    expect(roundPrice(1)).toBe(1)
   })
 })
 
@@ -86,28 +100,32 @@ describe('pairs and prices', () => {
     expect(priceFromPair(pairs.pairs[0]!, USDC)).toEqual({ price: 1, token_is: 'quote' })
     expect(priceFromPair(pairs.pairs[0]!, '0x' + '1'.repeat(40))).toBeNull()
   })
-  it('picks the deepest pool on Base and ignores other chains', () => {
+  it('picks the deepest listed pool on Base and ignores other chains', () => {
     const b = bestPair(pairs.pairs.filter((p) => p.chainId === 'base'), WETH)!
     expect(b.pair.dexId).toBe('uniswap')
     expect(b.price).toBe(2478.14)
   })
-  it('resolves aliases and rejects anything that is not an address', () => {
+  it('resolves aliases by own keys only and rejects anything that is not an address', () => {
     expect(resolveToken('ETH')).toBe(ALIASES.eth)
     expect(resolveToken(' usdc ')).toBe(USDC)
     expect(resolveToken(WETH)).toBe(WETH)
     expect(resolveToken('0x123')).toBeNull()
     expect(resolveToken(42)).toBeNull()
+    expect(resolveToken('constructor')).toBeNull()
+    expect(resolveToken('__proto__')).toBeNull()
   })
 })
 
 describe('snapshot', () => {
   it('reads the chain in one batch and the pool, with a wallet', async () => {
     const { f, calls } = fakeFetch()
-    const s = await snapshot(WETH, WALLET, { fetchImpl: f, rpcUrl: 'https://node.example', ...fast })
+    const s = await snapshot(WETH, WALLET, { fetchImpl: f, ...node, ...fast })
     expect(s.token).toEqual({ address: WETH, symbol: 'WETH', name: 'Wrapped Ether', decimals: 18, total_supply: '129384.201' })
     expect(s.price_usd).toBe(2478.14)
     expect(s.price_source).toMatchObject({ dex: 'uniswap', pair_address: '0xpair1', base: 'WETH', quote: 'USDC', token_is: 'base', liquidity_usd: 120113143.68, volume_24h_usd: 48490404.38, price_change_24h_pct: -1.12 })
     expect(s.pairs_on_base).toBe(2) // the ethereum pair is not counted
+    expect(s.pools_listed_capped).toBe(false)
+    expect(s.price_note).toBeNull()
     expect(s.gas_price_gwei).toBe(0.006)
     expect(s.wallet).toEqual({ address: WALLET, token_balance: '12.102', eth_balance: '0.0015' })
     expect(s.fetched_at).toBe('1970-01-01T00:00:00.000Z')
@@ -117,6 +135,19 @@ describe('snapshot', () => {
     expect(rpc).toHaveLength(1)
     expect(rpc[0]!.methods).toEqual(['eth_getCode', 'eth_call', 'eth_call', 'eth_call', 'eth_call', 'eth_gasPrice', 'eth_call', 'eth_getBalance'])
   })
+  it('a token that is the quote of its deepest pool gets a price but no 24h change (that number is the base token\'s)', async () => {
+    const s = await snapshot(USDC, null, { fetchImpl: fakeFetch({ symbolRaw: abiString('USDC') }).f, ...node, ...fast })
+    expect(s.price_usd).toBe(1)
+    expect(s.price_source).toMatchObject({ token_is: 'quote', dex: 'uniswap', price_change_24h_pct: null })
+  })
+  it('says when DEX Screener hit its 30-pool cap, because a deeper pool may exist beyond the list', async () => {
+    const many = { pairs: Array.from({ length: DEX_SCREENER_MAX_PAIRS }, (_, i) => ({ ...pairs.pairs[1]!, pairAddress: `0xp${i}`, liquidity: { usd: 1000 + i } })) }
+    const s = await snapshot(WETH, null, { fetchImpl: fakeFetch({ pairs: many }).f, ...node, ...fast })
+    expect(s.pairs_on_base).toBe(30)
+    expect(s.pools_listed_capped).toBe(true)
+    expect(s.price_note).toContain('at most 30')
+    expect(s.price_source!.pair_address).toBe('0xp29')
+  })
   it('moves the whole batch to the next node when one rate-limits inside the batch', async () => {
     const { f, calls } = fakeFetch({ rateLimitedUrls: ['https://a.example'] })
     const s = await snapshot(WETH, null, { fetchImpl: f, rpcUrls: ['https://a.example', 'https://b.example'], ...fast })
@@ -124,15 +155,17 @@ describe('snapshot', () => {
     expect(s.sources[1]).toContain('https://b.example')
     expect(calls.filter((c) => c.methods).map((c) => c.url)).toEqual(['https://a.example', 'https://a.example', 'https://b.example'])
   })
-  it('a revert on one read is a fact about the token, not a failure', async () => {
-    const { f } = fakeFetch({ revertName: true })
-    const s = await snapshot(WETH, null, { fetchImpl: f, rpcUrl: 'https://node.example', ...fast })
+  it('a revert or a malformed answer on one read is a fact about the token, not a failure', async () => {
+    const s = await snapshot(WETH, null, { fetchImpl: fakeFetch({ revertName: true }).f, ...node, ...fast })
     expect(s.token.symbol).toBe('WETH')
     expect(s.token.name).toBeNull()
+    const odd = await snapshot(WETH, null, { fetchImpl: fakeFetch({ symbolRaw: '0x' + 'ff'.repeat(64) }).f, ...node, ...fast })
+    expect(odd.token.symbol).toBeNull()
+    expect(odd.token.decimals).toBe(18)
   })
   it('still delivers the on-chain facts when DEX Screener is down, and says so', async () => {
     const { f } = fakeFetch({ fail: 'dex' })
-    const s = await snapshot(WETH, null, { fetchImpl: f, rpcUrl: 'https://node.example', ...fast })
+    const s = await snapshot(WETH, null, { fetchImpl: f, ...node, ...fast })
     expect(s.price_usd).toBeNull()
     expect(s.price_source).toBeNull()
     expect(s.price_note).toContain('no pool')
@@ -140,14 +173,23 @@ describe('snapshot', () => {
     expect(s.wallet).toBeNull()
   })
   it('refuses an address that is not a contract, and fails the job when no node answers', async () => {
-    await expect(snapshot(WETH, null, { fetchImpl: fakeFetch({ code: '0x' }).f, rpcUrl: 'https://node.example', ...fast })).rejects.toThrow(/not a contract/)
+    await expect(snapshot(WETH, null, { fetchImpl: fakeFetch({ code: '0x' }).f, ...node, ...fast })).rejects.toThrow(/not a contract/)
     await expect(snapshot(WETH, null, { fetchImpl: fakeFetch({ fail: 'rpc' }).f, rpcUrls: ['https://a.example', 'https://b.example'], ...fast })).rejects.toThrow(/HTTP 502/)
   })
 })
 
+describe('probeToken (validate before accept)', () => {
+  it('declines a wallet address and a contract that is not an ERC-20, accepts a token, and does not blame the buyer for a dead node', async () => {
+    expect(await probeToken(WALLET, { fetchImpl: fakeFetch({ code: '0x' }).f, ...node, ...fast })).toMatch(/not a contract on Base/)
+    expect(await probeToken(WETH, { fetchImpl: fakeFetch({ revertSymbol: true, revertDecimals: true }).f, ...node, ...fast })).toMatch(/not an ERC-20/)
+    expect(await probeToken(WETH, { fetchImpl: fakeFetch().f, ...node, ...fast })).toBeNull()
+    expect(await probeToken(WETH, { fetchImpl: fakeFetch({ fail: 'rpc' }).f, ...node, ...fast })).toBeNull()
+  })
+})
+
 describe('tokenSnapshot service', () => {
-  it('validates input and runs with the resolved token', async () => {
-    const svc = tokenSnapshot({ fetchImpl: fakeFetch().f, rpcUrl: 'https://node.example', ...fast })
+  it('validates input (shape, then the chain) and runs with the resolved token', async () => {
+    const svc = tokenSnapshot({ fetchImpl: fakeFetch().f, ...node, ...fast })
     expect(svc.key).toBe('token-snapshot')
     expect(svc.listing.price).toBe(2_000)
     expect(svc.listing.pricing_model ?? 'fixed').toBe('fixed')
@@ -155,11 +197,13 @@ describe('tokenSnapshot service', () => {
     expect(await svc.validate({}, { units: 1 })).toMatch(/token must be/)
     expect(await svc.validate({ token: 'weth', wallet: 'nope' }, { units: 1 })).toMatch(/wallet must be/)
     expect(await svc.validate({ token: 'weth' }, { units: 1 })).toBeNull()
+    const eoa = tokenSnapshot({ fetchImpl: fakeFetch({ code: '0x' }).f, ...node, ...fast })
+    expect(await eoa.validate({ token: WALLET }, { units: 1 })).toMatch(/not a contract/)
     const r = await svc.run({ token: 'weth', wallet: WALLET }, { units: 1 })
     const out = r.output as { token: { address: string }; price_usd: number }
     expect(out.token.address).toBe(WETH)
     expect(out.price_usd).toBe(2478.14)
-    expect(r.preview).toMatchObject({ symbol: 'WETH', price_usd: 2478.14, pairs_on_base: 2, wallet: { token_balance: '12.102' } })
+    expect(r.preview).toMatchObject({ symbol: 'WETH', price_usd: 2478.14, pairs_on_base: 2, pools_listed_capped: false, wallet: { token_balance: '12.102' } })
     expect(r.message).toContain('WETH: 2478.14 USD (uniswap WETH/USDC, 120113k USD liquidity)')
   })
   it("the example output has exactly the fields the listing's output schema names", () => {
