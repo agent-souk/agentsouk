@@ -2,7 +2,28 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.18 = ADR-64, Agents 0.2.9; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 nachmittags; API 0.5.19 = ADR-65, Agents 0.2.10; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 81 (ADR-65, 14.09. nachmittags) — die x402-Kataloge kannten uns nicht, jetzt stehen alle sieben Dienste in PayAIs Katalog.**
+Tagescheck 13:27 UTC: `x402:paid` in sieben Tagen weiter **1** (`x402:terms` 150, Monitore x402-observer, x402watch, 402explorer, AgenstryBot lesen uns), x402scan
+weiter 6 Ressourcen (kein Re-Crawl seit 13.09. 17:24). Also nachgesehen, wo x402-Käufer suchen: **Coinbases Bazaar** (15.380 Ressourcen, 1.993 Hosts) und
+**PayAIs Katalog** (28.634) — **null von uns**, obwohl unser Rauchtest über PayAI lief. Ursache (Spec `bazaar.md`): ein Facilitator katalogisiert nur aus der
+`bazaar`-Erweiterung im Payload, das er auf `/verify`/`/settle` bekommt — und `settleAtFacilitator()` ließ `extensions` weg. Versuch 13:42 UTC: 402 holen,
+5-Minuten-Autorisierung signieren, Erweiterung zurückgeben, PayAI `/verify` → `{"bazaar":{"status":"processing"}}`, **acht Sekunden später gelistet**, nichts gebucht.
+**Gebaut und deployt ~14:03–14:07 UTC:** API 0.5.19 = `2a1494e` (`SMOKE TEST PASSED`; live geprüft: 402-`resource` trägt `serviceName "Agent Souk"`, fünf Tags,
+`iconUrl …/icon.png`; `/icon.png` 200 image/png; Index-URLs ohne `?env=test`, Sandbox-Listing ohne Query → 402; Settle-Payload trägt jetzt Erweiterung + Metadaten,
+Antwort des Facilitators gezählt als `x402:catalogued`/`x402:catalog_rejected`), Agents 0.2.10 (Judge `PASSED` 0,24 USD; Health: `operators.live.catalogues` —
+**7 von 7 bei PayAI `verified: true`, `processing`**, Lauf 14:07:22 UTC, nächster 15.09. 14:07; `curl facilitator.payai.network/discovery/resources?limit=500`
+zeigt alle sieben, `serviceName`/`tags` dort noch null — PayAI speichert die Felder offenbar noch nicht, bei 20.100 fremden Einträgen auch keiner). Die Desk
+registriert täglich und bei jeder Index-Änderung neu, signiert mit der Operator-Wallet, sendet nichts. **Coinbases Bazaar braucht einen CDP-API-Schlüssel**
+(jeder Aufruf 401, auch `/supported`) — siehe „Dinge, die dich brauchen". Tests: API 46 Dateien / 397, Agents 13 / 96 grün. Gegnerischer Lauf über den Diff
+(3 Finder) läuft beim Schreiben dieser Zeilen; Ergebnis im Nachtrag zu ADR-65.
+**Messlatte 13:27 UTC:** `orders` 49 → **78** (Alarmliste: alles veriton, „62 orders in 24 h"), `orders_from_distinct_wallets` **1**, `jobs_completed` 0, `unflagged` 0,
+`ever_paid_or_paid_for` 0. **Desk seit 02:24 UTC:** die drei Erstkäufe der Nacht (codex-cash50-runtime, rjh-signal-technologies, codex-revenue-agent) sind alle
+**abgelaufen** (nie angenommen); danach `softpeanut-korean-ui` gekauft und bezahlt (1 USDC, Note 5) und `roman-sourcecheck` offen (1 USDC). Ausgegeben 40,99 von 50,
+Wallet 9,00 USDC. veriton hat `token-snapshot` sechsmal in 24 h über den normalen Marktplatz bestellt (2 bezahlt, unser Geld im Kreis) und auf dem Job an
+`souk-services` geschrieben. `refunds_due`: `sutt-fogomen` schuldet der Desk seit 80 h 0,12 USDC (Vorkasse, nach Frist storniert) — öffentlich sichtbar, kein Handgriff.
+Platte 2,1 GB frei.
 
 **Checkpoint 80 (ADR-64, 14.09. früh) — ein siebter x402-Dienst in der Kategorie, für die x402-Agenten draußen zahlen.** Aus der
 Katalog-Analyse (unten) folgte der Bau: `token-snapshot` (Base-Marktdaten: Preis und tiefster Pool von DEX Screener, Symbol/Name/Dezimalen/
@@ -151,6 +172,11 @@ Reputationszeilen werden beim Start neu gerechnet, `agents_qualified`/`flag_chan
 Dateien / 362, Agents 67, grün.** **Deployt 2026-09-13 ~12:00 UTC:** API 0.5.8 = `97f0950` (`SMOKE TEST PASSED`; Signatur-Sperre live
 negativ geprüft: gefälschter Payload → 400 `invalid_request`, kein Konto, kein Job), Agents 0.2.2 (Judge `PASSED`, Health sauber). Die
 Sandbox-Probe des Lieferungs-Alarms lief durch: Lieferung → `confirm:<job>` → Zusteller → `webhook:ntfy` HTTP 200.
+
+**Neu, ADR-65 (14.09. nachmittags), ein Handgriff:** ein **CDP-API-Schlüssel** (portal.cdp.coinbase.com → API keys → „Create API key", Secret API key, Ed25519 ist
+Standard) als Fly-Secrets der Agents-App: `flyctl secrets set -a agentsouk-agents CDP_API_KEY_ID=… CDP_API_KEY_SECRET=…`. Danach stehen die sieben Dienste beim
+nächsten Tick auch in Coinbases Bazaar (15.380 Ressourcen; der Katalog, den `@coinbase/x402`, AgentKit und die meisten Käufer-Werkzeuge abfragen). Ohne Schlüssel
+kommen wir dort nicht hinein — jeder Aufruf antwortet 401. Prüfen: `/health` → `operators.live.catalogues.registrations[].facilitator == "cdp"`.
 
 **Drei Dinge, die dich brauchen, in dieser Reihenfolge:**
 1. **Die Desk steht am Boden.** Live-Wallet **10,000630 USDC**, Lebenszeitbudget **39,99 von 50** ausgegeben (ADR-23). Die Reservierung aus
