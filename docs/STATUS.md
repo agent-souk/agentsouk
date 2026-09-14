@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.17 = ADR-64, Agents 0.2.7; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.18 = ADR-64, Agents 0.2.8; SDKs 0.4.2, Plugin/Extension 0.3.8)
 
 **Checkpoint 80 (ADR-64, 14.09. früh) — ein siebter x402-Dienst in der Kategorie, für die x402-Agenten draußen zahlen.** Aus der
 Katalog-Analyse (unten) folgte der Bau: `token-snapshot` (Base-Marktdaten: Preis und tiefster Pool von DEX Screener, Symbol/Name/Dezimalen/
@@ -18,7 +18,10 @@ nichts geliefert; der Sweep schließt ab 02:24 UTC. Messlatte 01:00 UTC: `orders
 dem Annehmen abgelehnt (vorher ein kostenloser Hebel gegen die Reputation von souk-services), die 30-Pool-Kappe von DEX Screener wird benannt,
 24-h-Änderung bei Quote-Token null, Preise mit sechs Stellen; in der API zählt `max_open_jobs` jetzt je Listing und ohne versiegelte
 Lieferungen, und der x402-409 nennt auch Stornierungsgründe. Dazu SDKs 0.4.2 mit `aw.buy(...)` (Bestellen, Warten, gasfrei Zahlen,
-Annehmen in einem Aufruf). **Deploy-Stand (Agents 0.2.8, API 0.5.18, SDKs 0.4.2):** siehe Nachtrag unten in diesem Block.
+Annehmen in einem Aufruf). **Deployt ~01:55–02:05 UTC:** API 0.5.18 = `874f8f4`, Agents 0.2.8 (beides `PASSED`); der Runner hat die Listings auf beiden
+Umgebungen mit der Spezifikation abgeglichen (neuer Titel, Kappe 20); Sandbox-Probe: Wallet als Token → `declined` mit Grund, `usdc` → geliefert.
+`agentsouk@0.4.2` auf npm und PyPI veröffentlicht. **Offen für die nächste Sitzung:** (1) x402scan zeigt weiterhin 6 Ressourcen, bis 15.09.
+abwarten, sonst „Add Server" erneut (Nick); (2) `x402:paid` in `GET /v1/admin/overview` täglich lesen — die Messlatte für ADR-64.
 
 **Analyse 14.09. früh (Nicks Frage „ist das Problem, dass nur Schrott angeboten wird?"), keine Codeänderung:** alle 92 aktiven Live-Angebote eingeordnet (`research/catalogue-quality-2026-09-14.json`). 31 der 86 fremden Angebote sind echte Dienste, 45 sind Klone, Selbstmachbares, Plattform-Tests oder kaputt. Die guten wurden von der Desk gekauft und mit 4–5 bewertet und haben seither **keinen einzigen weiteren Käufer**. Die 4.267 Suchen auf live stammen fast alle von je einem Client und sind Verkäufer, die Nischen abklopfen (am 09.09. Suche nach dnssec/tls/crt.sh, am selben Nachmittag veritons Listings dazu). **Befund: Schrott kostet Glaubwürdigkeit, ist aber nicht der Hauptgrund.** In dieser Reihenfolge: (1) es kommen keine fremden Käufer; (2) das Angebot hat die falsche Form: fremde Angebote sind durchweg asynchrone Einzelaufträge (54 von 92 mit bis zu 1 h Laufzeit), während Agenten draußen für synchrone Datenaufrufe im Cent-Bereich zahlen (Social-Media-Daten, Marktdaten, Suche, Rendering; alles fehlt); (3) für die guten Angebote müsste ein Käufer privaten Code an anonyme Handles ohne Historie geben. Das Erstkauf-Programm hat das Angebot außerdem auf das getrimmt, was sein Judge belohnt (1 USDC, „executable regression tests"), nicht auf das, was Fremde wiederholt aufrufen.
 
