@@ -2,7 +2,7 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.18 = ADR-64, Agents 0.2.8; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.18 = ADR-64, Agents 0.2.9; SDKs 0.4.2, Plugin/Extension 0.3.8)
 
 **Checkpoint 80 (ADR-64, 14.09. früh) — ein siebter x402-Dienst in der Kategorie, für die x402-Agenten draußen zahlen.** Aus der
 Katalog-Analyse (unten) folgte der Bau: `token-snapshot` (Base-Marktdaten: Preis und tiefster Pool von DEX Screener, Symbol/Name/Dezimalen/
@@ -26,6 +26,12 @@ abwarten, sonst „Add Server" erneut (Nick); (2) `x402:paid` in `GET /v1/admin/
 by the deadline`), **nichts bezahlt**; `juan-codex-research` trägt öffentlich `jobs_failed` 1 und `on_time_rate` 0,67. Der Desk-Slot `security-finding` ist frei,
 die Neuausschreibung folgt beim nächsten Tick; die 10-USDC-Reservierung ist aufgehoben (Spielraum 10,01 USDC = höchstens zehn Erstkäufe à 1 USDC, dann ist das
 Lebenszeitbudget zu Ende — Punkt 3 der Übergabe bleibt deine Entscheidung).
+**Danach (02:24–03:05 UTC):** die Desk hat die 10 USDC sofort in **drei Erstkäufe** gesteckt (codex-cash50-runtime, rjh-signal-technologies,
+codex-revenue-agent, je 1 USDC, offen) und um 02:48 die Security-Bounty **trotzdem** neu ausgeschrieben (52,99 von 50 USDC zugesagt) — ein
+Fehler beim Kaltstart der Maschine (der Bounty-Tick lief vor dem Laden des Erstkauf-Zustands). Bounty um 02:52 geschlossen, Ursache behoben
+(Agents 0.2.9). **Stand jetzt:** die drei Lieferungen werden bezahlt, wenn sie kommen (39,99 + 3 ≤ 50); die Security-Bounty bleibt
+unausgeschrieben, bis du aufstockst (sie bräuchte 10 USDC in einer Wallet, die nach den drei Zahlungen 7 hält). Aufstocken = Überweisung an
+`0xc6e1DfE98e3e07FcC5eE70AdA3A34669B03d4C30` auf Base **und** `OPERATOR_TOTAL_BUDGET_USDC` als Fly-Secret; ich stelle nichts davon ohne dich ein.
 
 **Analyse 14.09. früh (Nicks Frage „ist das Problem, dass nur Schrott angeboten wird?"), keine Codeänderung:** alle 92 aktiven Live-Angebote eingeordnet (`research/catalogue-quality-2026-09-14.json`). 31 der 86 fremden Angebote sind echte Dienste, 45 sind Klone, Selbstmachbares, Plattform-Tests oder kaputt. Die guten wurden von der Desk gekauft und mit 4–5 bewertet und haben seither **keinen einzigen weiteren Käufer**. Die 4.267 Suchen auf live stammen fast alle von je einem Client und sind Verkäufer, die Nischen abklopfen (am 09.09. Suche nach dnssec/tls/crt.sh, am selben Nachmittag veritons Listings dazu). **Befund: Schrott kostet Glaubwürdigkeit, ist aber nicht der Hauptgrund.** In dieser Reihenfolge: (1) es kommen keine fremden Käufer; (2) das Angebot hat die falsche Form: fremde Angebote sind durchweg asynchrone Einzelaufträge (54 von 92 mit bis zu 1 h Laufzeit), während Agenten draußen für synchrone Datenaufrufe im Cent-Bereich zahlen (Social-Media-Daten, Marktdaten, Suche, Rendering; alles fehlt); (3) für die guten Angebote müsste ein Käufer privaten Code an anonyme Handles ohne Historie geben. Das Erstkauf-Programm hat das Angebot außerdem auf das getrimmt, was sein Judge belohnt (1 USDC, „executable regression tests"), nicht auf das, was Fremde wiederholt aufrufen.
 
