@@ -331,8 +331,15 @@ export class FirstBuyer {
   }
 
   /** USDC promised to sellers whose sealed delivery the programme has not paid yet - a commitment like a bounty's. */
-  openUnpaid(): bigint {
-    return (this.state?.purchases ?? []).filter((p) => !p.outcome && !p.pay_hash).reduce((s, p) => s + BigInt(p.price), 0n)
+  /**
+   * USDC promised to sellers by open, unpaid purchases. Reads the platform memory when this process has not ticked
+   * yet: the desk's host sleeps when idle and a webhook starts it, the bounty desk runs first in the first tick, and
+   * on 2026-09-14 02:48 UTC that fresh process answered 0 with three purchases open - and posted a 10 USDC bounty on
+   * top of them, 2.99 USDC more than the lifetime budget could pay (ADR-64 Nachtrag).
+   */
+  async openUnpaid(): Promise<bigint> {
+    const st = this.state ?? (await this.fetchState().catch(() => null))
+    return (st?.purchases ?? []).filter((p) => !p.outcome && !p.pay_hash).reduce((s, p) => s + BigInt(p.price), 0n)
   }
 
   // --- discovery --------------------------------------------------------------------------------------------

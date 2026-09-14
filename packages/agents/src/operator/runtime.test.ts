@@ -242,6 +242,27 @@ describe('OperatorRuntime', () => {
     expect(await rich.canSpend(400_000n)).toBe(true)
   })
 
+  it('a fresh process counts the first-buy programme\'s open purchases before it posts a bounty (ADR-64 Nachtrag)', async () => {
+    const app = await freshApp()
+    const chain = installFakeChain('test')
+    const desk = await createTestAgent(app, { name: 'Souk Bounties' })
+    await flagFirstParty(desk)
+    const seller = await createTestAgent(app, { name: 'Seller' })
+    const { wallet } = walletFor(desk.wallet!.privateKey, chain, { to: seller.wallet!.address, value: 1n }, { usdc: 1_500_000n })
+    const logs: string[] = []
+    const rt = new OperatorRuntime(client(app, desk.api_keys.test), wallet, scriptedJudge(), [spec], 'test', (m, d) => logs.push(`${m} ${JSON.stringify(d ?? {})}`), { ...DEFAULT_CONFIG, totalBudget: 5_000_000n })
+    // the first-buy programme has not ticked in this process, but three purchases are open: 0.6 USDC of promises
+    let promised = 600_000n
+    rt.firstBuyer = { openUnpaid: async () => promised, tick: async () => undefined, status: () => null } as unknown as NonNullable<typeof rt.firstBuyer>
+    await rt.init()
+    await rt.tick()
+    expect(rt.stateOf(spec.key)!.bounty_id).toBeNull() // 0.6 promised + 1.0 bounty > 1.5 in the wallet
+    expect(logs.some((l) => l.includes('bounty not posted') && l.includes('needed with open commitments'))).toBe(true)
+    promised = 400_000n
+    await rt.tick()
+    expect(rt.stateOf(spec.key)!.bounty_id).toMatch(/^bty_/) // 0.4 + 1.0 fits
+  })
+
   it('pays a confirmation-gated bounty only for the delivery the operator actually confirmed (ADR-57)', async () => {
     const app = await freshApp()
     const chain = installFakeChain('test')

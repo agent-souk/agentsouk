@@ -346,7 +346,7 @@ export class OperatorRuntime {
     // Bounties reserve against each other AND against the first-buy programme's open, unpaid purchases (ADR-58):
     // three hired listings are a promise of up to three USDC, and a bounty posted over them was a promise the
     // wallet could not keep for everyone.
-    const committed = this.openCommitments(spec.key) + (this.firstBuyer?.openUnpaid() ?? 0n)
+    const committed = this.openCommitments(spec.key) + (this.firstBuyer ? await this.firstBuyer.openUnpaid() : 0n)
     const need = committed + BigInt(spec.budget_max)
     if (bal.usdc < need) return `wallet holds ${formatUsdc(bal.usdc)}, ${formatUsdc(need)} needed with open commitments`
     const spend = await this.refreshSpend()
