@@ -2,7 +2,16 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-13 spätabends; API 0.5.15 = ADR-63, Agents 0.2.5; SDKs 0.4.1, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 früh; API 0.5.17 = ADR-64, Agents 0.2.7; SDKs 0.4.1, Plugin/Extension 0.3.8)
+
+**Checkpoint 80 (ADR-64, 14.09. früh) — ein siebter x402-Dienst in der Kategorie, für die x402-Agenten draußen zahlen.** Aus der
+Katalog-Analyse (unten) folgte der Bau: `token-snapshot` (Base-Marktdaten: Preis und tiefster Pool von DEX Screener, Symbol/Name/Dezimalen/
+Gesamtangebot/Gas per RPC-Batch, optional Wallet-Guthaben; 0,002 USDC, ohne Schlüssel, ohne LLM), verkauft synchron über `POST /v1/x402/…`
+wie die sechs anderen. Bewusst: fremde Verkäufer bleiben vom x402-Endpunkt ausgeschlossen (ADR-47). Was es misst: `x402:paid` in der
+Discovery-Statistik (bisher 1, unser Rauchtest) und `ever_paid_or_paid_for`. In sieben Tagen 92 fremde Abrufe unserer 402-Bedingungen,
+seit 14.09. 00:24 UTC auch der Monitor `x402-observer/1.0` (x402-trust.com), kein fremder Kauf. **Security-Anspruch:** Frist 01:23 UTC
+verstrichen, nichts geliefert; der Sweep schließt ab 02:24 UTC. Messlatte 01:00 UTC: `orders` 49 (alle veriton), `distinct wallets` 1,
+`jobs_completed` 0; die Sammelzeile je Käufer funktioniert (2 Alarme in 4 Stunden statt 30). **Deploy-Stand:** siehe Nachtrag in diesem Block.
 
 **Analyse 14.09. früh (Nicks Frage „ist das Problem, dass nur Schrott angeboten wird?"), keine Codeänderung:** alle 92 aktiven Live-Angebote eingeordnet (`research/catalogue-quality-2026-09-14.json`). 31 der 86 fremden Angebote sind echte Dienste, 45 sind Klone, Selbstmachbares, Plattform-Tests oder kaputt. Die guten wurden von der Desk gekauft und mit 4–5 bewertet und haben seither **keinen einzigen weiteren Käufer**. Die 4.267 Suchen auf live stammen fast alle von je einem Client und sind Verkäufer, die Nischen abklopfen (am 09.09. Suche nach dnssec/tls/crt.sh, am selben Nachmittag veritons Listings dazu). **Befund: Schrott kostet Glaubwürdigkeit, ist aber nicht der Hauptgrund.** In dieser Reihenfolge: (1) es kommen keine fremden Käufer; (2) das Angebot hat die falsche Form: fremde Angebote sind durchweg asynchrone Einzelaufträge (54 von 92 mit bis zu 1 h Laufzeit), während Agenten draußen für synchrone Datenaufrufe im Cent-Bereich zahlen (Social-Media-Daten, Marktdaten, Suche, Rendering; alles fehlt); (3) für die guten Angebote müsste ein Käufer privaten Code an anonyme Handles ohne Historie geben. Das Erstkauf-Programm hat das Angebot außerdem auf das getrimmt, was sein Judge belohnt (1 USDC, „executable regression tests"), nicht auf das, was Fremde wiederholt aufrufen.
 

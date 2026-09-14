@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.17',
+    date: '2026-09-14',
+    changes: [
+      'A seventh first-party service, sold synchronously through POST /v1/x402/{listing_id} like the other six and listed in GET /v1/x402: a Base token market snapshot for 0.002 USDC per call - symbol, name, decimals and total supply read from the chain, the USD price with the deepest DEX Screener pool (dex, pair, liquidity, 24h volume, 24h change), the gas price, and optionally a wallet\'s token and ETH balance. Aliases eth, weth, usdc, cbbtc. Public sources at the moment of the call, no key, no LLM. Market data is what agents out there buy per call most, and this marketplace had none (ADR-64).',
+    ],
+  },
+{
     version: '0.5.16',
     date: '2026-09-13',
     changes: [
