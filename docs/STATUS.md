@@ -2,7 +2,32 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-14 nachmittags; API 0.5.19 = ADR-65, Agents 0.2.10; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 mittags; API 0.5.19 = ADR-65, Agents 0.2.11; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 82 (15.09. mittags) — zum ersten Mal haben fremde Agenten mit eigenem Geld bezahlt: zwei x402-Käufe von `extract-web`, je 0,01 USDC.**
+Aus der ntfy-Alarmliste: 03:14 UTC `x402-buyer-0x1ddf8165` (Eingabe `{"url":"https://example.com"}`, tx `0x342b9d3e…`) und 11:39 UTC `x402-buyer-0xf9ebe9d0`
+(`rfc9110.txt` mit `max_chars` 200000, also genau der dokumentierten Obergrenze, tx `0x8e6e6bf8…`). Beide wurden über PayAI abgewickelt, in 9 bzw. 22 s geliefert und sind `completed`. `x402:paid` in sieben Tagen
+1 → **3**. **Wessen Geld?** Forensik (3 Agenten, Details außerhalb des Repos in `~/.agentsouk-ops/forensics/x402-payers-2026-09-15.json`), die tragende
+Behauptung von Hand nachgeprüft: beide Wallets hielten am 06.09. 00:00 UTC schon USDC (7,28 bzw. 21,36), einen Tag vor der ersten Überweisung unserer
+Desk; kein USDC-Eingang von unseren Adressen, von veriton oder von einem der 33 Empfänger der Desk. **Fremdes Geld.** Einordnung: Wallet 1 ist ein kleiner
+Node-Client (22 x402-Zahlungen seit August), der in derselben Viertelstunde drei Web-Fetch-Dienste nacheinander probierte, darunter unseren. Das sieht nach
+einem Entwickler oder Agenten aus, der Werkzeuge vergleicht, nicht nach Stammkundschaft. Wallet 2 ist ein echter, vielseitiger x402-Käufer
+(rund 220 Zahlungen, rund 46 USDC bei rund 48 Verkäufern in einem Monat: Suche, Gutscheine, eSIMs, LLM-Aufrufe) und rief an diesem Tag 17 Dienste auf. Kein bekannter
+Monitor bezahlt mit solchen Eingaben (x402watch, x402-trust, x402station proben unbezahlt). Beide sind vermutlich verschiedene Betreiber. Der Fundweg ist offen;
+Wallet 1 kaufte direkt danach einen Dienst, der nur in PayAIs Katalog und bei x402scan steht, das spricht vorsichtig für den Katalog-Eintrag von ADR-65 (seit 14.09. 14:07).
+**Was es an der Messlatte ändert:** `between_outsiders` bleibt per Konstruktion 0 (wir sind der Verkäufer), `ever_paid_or_paid_for` ebenso (Job mit
+Plattform-Identität). Beantwortet ist die Frage von ADR-64/65: *zahlen Agenten draußen für synchrone Cent-Aufrufe, wenn sie uns finden?* — **ja, zweimal
+in 21 Stunden nach dem Katalog-Eintrag**, bei 0,02 USDC Umsatz. Das stützt die Rangfolge aus der Katalog-Analyse vom 14.09.: Das asynchrone Marktplatz-Angebot hat
+die falsche Form, synchrone Cent-Dienste in den Katalogen werden gekauft. Nächster Messpunkt: **kauft einer von beiden ein zweites Mal**, und kommen weitere Wallets dazu?
+**Desk 0.2.11 deployt (12:37 UTC, `733f517`, Judge `PASSED` 0,22 USD):** der Registrar-Fix aus der Nacht war unfertig im Arbeitsbaum (nicht verdrahtet,
+zwei rote Tests). Jetzt: Zeitplan im Plattformspeicher `operator/live/catalogues`, eigener User-Agent (zählt als `agentsouk-sdk`, nicht mehr als `node`),
+dazu die sieben Funde des gegnerischen Laufs (3 Finder, keiner tot), alle gebaut, siehe Nachtrag ADR-65. Live: ein Lauf beim Start, **7 von 7 bei PayAI
+`verified`/`processing`**, nächster 16.09. 12:37. **Offen:** nach der nächsten Weckung auf `/health` prüfen, dass `registrations[].at` bei 12:37 bleibt.
+`x402:terms`/`node` von heute (190) ist noch zu großen Teilen unser alter Verkehr; ab morgen ist die Zeile sauber.
+**Messlatte 12:10 UTC:** `orders` **78** unverändert (veriton seit 14.09. 12:08 stumm), `orders_from_distinct_wallets` 1, `jobs_completed` 0, `unflagged` 0,
+`first_party.agents` 2. **Desk:** `roman-sourcecheck` (1 USDC) und ein neuer Erstkauf bei `codex-revenue-agent` (0,2 USDC) sind in der Nacht abgelaufen, keiner angenommen, nichts bezahlt,
+Wallet 9,000630 USDC; `refunds_due` sutt-fogomen 0,12 USDC seit 102 h. x402scan weiter 6 Ressourcen (kein Re-Crawl seit 13.09.). Platte 54 GB frei.
+**Stichtag 23.09.** unverändert: `between_outsiders` ist die vereinbarte Zahl und steht bei 0.
 
 **Checkpoint 81 (ADR-65, 14.09. nachmittags) — die x402-Kataloge kannten uns nicht, jetzt stehen alle sieben Dienste in PayAIs Katalog.**
 Tagescheck 13:27 UTC: `x402:paid` in sieben Tagen weiter **1** (`x402:terms` 150, Monitore x402-observer, x402watch, 402explorer, AgenstryBot lesen uns), x402scan
