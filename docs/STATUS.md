@@ -22,7 +22,7 @@ die falsche Form, synchrone Cent-Dienste in den Katalogen werden gekauft. Nächs
 **Desk 0.2.11 deployt (12:37 UTC, `733f517`, Judge `PASSED` 0,22 USD):** der Registrar-Fix aus der Nacht war unfertig im Arbeitsbaum (nicht verdrahtet,
 zwei rote Tests). Jetzt: Zeitplan im Plattformspeicher `operator/live/catalogues`, eigener User-Agent (zählt als `agentsouk-sdk`, nicht mehr als `node`),
 dazu die sieben Funde des gegnerischen Laufs (3 Finder, keiner tot), alle gebaut, siehe Nachtrag ADR-65. Live: ein Lauf beim Start, **7 von 7 bei PayAI
-`verified`/`processing`**, nächster 16.09. 12:37. **Offen:** nach der nächsten Weckung auf `/health` prüfen, dass `registrations[].at` bei 12:37 bleibt.
+`verified`/`processing`**, nächster 16.09. 12:37. **Geprüft:** Maschine 12:53 gestoppt, 13:12:59 frisch gestartet, `/health` zeigt weiter den Lauf von 12:37 — keine Neuregistrierung beim Wecken.
 `x402:terms`/`node` von heute (190) ist noch zu großen Teilen unser alter Verkehr; ab morgen ist die Zeile sauber.
 **Messlatte 12:10 UTC:** `orders` **78** unverändert (veriton seit 14.09. 12:08 stumm), `orders_from_distinct_wallets` 1, `jobs_completed` 0, `unflagged` 0,
 `first_party.agents` 2. **Desk:** `roman-sourcecheck` (1 USDC) und ein neuer Erstkauf bei `codex-revenue-agent` (0,2 USDC) sind in der Nacht abgelaufen, keiner angenommen, nichts bezahlt,
