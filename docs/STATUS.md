@@ -2,7 +2,20 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 abends; API 0.5.19 = ADR-65, Agents 0.2.12; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 spätabends; API 0.5.20 = ADR-66, Agents 0.2.13; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 84 (15.09. spätabends, ADR-66): was der erste Wiederkauf offenlegte, ist zu und deployt.** Nick fragte, ob Weiterbauen Sinn hat. Antwort: ja, aber nur bei den synchronen
+x402-Diensten, die als Einziges von selbst Käufer finden. In den Marktplatz zwischen Fremden fließt nichts mehr, und der Stichtag 23.09. bleibt: `between_outsiders` steht bei 0.
+Gebaut, in zwei gegnerischen Läufen geprüft (19 Funde, alle von Hand nachgeprüft und gebaut) und deployt:
+(1) **LLM-Tagesdeckel übersteht Neustarts**: Zähler im Plattformspeicher unter `llm/live/daily-spend` bzw. `llm/test/daily-spend`. Der Speicher ist zwischen live und test geteilt, deshalb die Umgebung im Schlüssel.
+Jeder Aufruf reserviert vorher seinen Worst-Case. Eine bestandene Prüfung vor dem Annehmen hält ihren Schätzwert, bis der erste Modellaufruf ihn ablöst. Solange der Zähler ungelesen ist, gibt es keinen Modellaufruf, und Aufträge werden abgelehnt statt angenommen.
+Sandbox-Deckel 1 USD, getrennt von live 5 USD. (2) **x402 prüft vor jeder Arbeit, ob die Autorisierung abgewickelt werden kann**: Guthaben gegen `authorization.value` abzüglich laufender Käufe derselben Wallet,
+verbrauchte Nonce, gleichzeitige Wiederverwendung, `validAfter`/`validBefore` ≥ 60 s. Vorher bekam eine leere Wallet die Arbeit beliebig oft umsonst. (3) **Wiederholte Zahlungen eines Käufers** teilen sich ab der vierten eine Alarmzeile je 6-h-Slot,
+die 10 min wartet und mitzählt. **Live geprüft:** leere Wallet → `409 x402_insufficient_funds` nach 261 ms, kein Auftrag, kein Konto. Coinbase-Validator `valid`. Health: beide Speicher `restored`.
+**Offen / zu beobachten:** morgen früh `/health` → `llm.spend_store.last_saved_at` gesetzt, sobald ein LLM-Auftrag lief. Kauft Wallet 1 an einem anderen Tag wieder? Kommt eine dritte Wallet?
+Die Sammelzeile „keeps paying us" erscheint erst ab der vierten Zahlung. **Nicks Entscheidungen, unverändert:** Sandbox-Faucet trocken (0,99 USDC, Circle-Anforderung nie angekommen). Eine dauerhaft laufende
+Agents-Maschine (`min_machines_running = 1`, wenige Euro im Monat, spart Kaltstarts von 5–16 s beim ersten Kauf nach Leerlauf) wäre möglich, ist aber nicht umgesetzt. Die Coinbase-Einträge verfallen um den 15.10.
+**Platte:** 6,4 GB frei. Nick hat ein Spiel installiert, das ist die Ursache, kein Leck der Sitzungen.
 
 **Checkpoint 83 (15.09. abends, Tagescheck 18:32 UTC): der erste Wiederkauf. Wallet 1 kam zurück und kaufte 15-mal.**
 `x402-buyer-0x1ddf8165` (der Käufer von 03:14 UTC) hat zwischen 17:57 und 18:09 UTC **15 × `extract-structured` (0,03 USDC)** über x402 gekauft, alle 15 `completed`,
