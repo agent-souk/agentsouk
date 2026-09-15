@@ -11,6 +11,7 @@ Dieselbe Vorlage („DeFi exploit post-mortem → attack-chain steps"), wechseln
 nach einem Neustart zu Ende gebracht (spät statt nie), und während ein Auftrag läuft, hält der Prozess `GET /keepalive` auf sich selbst offen, damit Flys Leerlaufprüfung die Maschine nicht mitten im Modellaufruf stoppt.
 Der gegnerische Lauf (2 Finder, 9 Funde, alle gebaut) drehte die Startreihenfolge um (erst Listener, dann die lange Arbeit), schützte den Runner vor einem halb initialisierten Zustand und vor Käufer-Rückgaben (`request_revision` ist der zweite Erzeuger von `in_progress`),
 und fand die eigentliche Lücke auf der API-Seite: **API 0.5.21** — ein x402-Auftrag, auf den der Endpunkt nach 90 s nicht mehr wartet, wird sofort ohne Marke für beide Seiten geschlossen; vorher wurde die späte Lieferung versiegelt und lief als unbezahlte Marke des Käufers aus.
+**Deployt ~21:35–21:45 UTC:** Agents 0.2.14 und API 0.5.21 = `0845b7d`, Rauchtest `PASSED`, Coinbase-Validator `valid`, Health sauber. Tests: Agents 13 / 120, API 46 / 397.
 **Zu beobachten:** `/health` → `llm.spend_store.last_saved_at` nach dem nächsten LLM-Auftrag; Wallet 1 an einem anderen Tag; eine dritte Wallet; im Agents-Log „resuming a job accepted before a restart" und „delivery no longer wanted" (beides sollte selten sein).
 
 
