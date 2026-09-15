@@ -33,8 +33,10 @@ Erweiterung `bazaar`. Als Fly-Secrets gesetzt, ohne sie auszugeben. **Agents 0.2
 statt erst beim nächsten Tageslauf (Test; Judge-Rauchtest nicht wiederholt, Judge-Code seit dem `PASSED` um 12:30 unverändert). Live: **7 von 7 bei CDP `verified`/`processing`**,
 PayAI-Einträge von 12:37 behalten. **Aber Coinbases Bazaar listet erst nach einer abgewickelten Zahlung über den CDP-Facilitator** (docs.cdp.coinbase.com/x402/seller/get-discovered:
 „Complete a successful paid call through the CDP Facilitator"); `/verify` allein reicht dort nicht, anders als bei PayAI. Das widerspricht ADR-65 „keine Registrierung über /settle"
-und ADR-23 „keine Selbstzahlungen" → **Entscheidung bei Nick** (Frage gestellt). **Sandbox-Faucet:** Nick hat aufgefüllt, auf Base Sepolia aber bis 13:48 UTC nichts angekommen
-(0,99 USDC; auch nicht auf Ethereum/Arbitrum/OP Sepolia) → Nick fragen, welches Netz und welche Adresse im Circle-Formular standen.
+und ADR-23 „keine Selbstzahlungen" → **Nick hat entschieden: einmal selbst zahlen** (Nachtrag ADR-65). Einmal-Skript `scripts/cdp-catalogue-settle-once.ts` (vorher 2 Agenten gegengelesen, 7 Funde gebaut):
+14:03 UTC `token-snapshot` als Probe (0,002 USDC) → **14:07 in Coinbases Bazaar gelistet**; 14:11 die übrigen sechs (0,13 USDC), alle mit Beleg `success`. Desk-Wallet **8,86863 USDC**, Ledger 41,122/50,
+`souk-services` +0,132 (Geld bleibt bei uns, keine Kennzahl sieht es). **Einträge verfallen nach 30 Tagen ohne CDP-Abwicklung (~15.10.)** — keine automatische Wiederholung, das wäre eine neue Entscheidung.
+**Sandbox-Faucet:** Nick hat laut Formular Base Sepolia und `0xc6e1…4C30` angegeben, bis 14:07 UTC aber nichts angekommen (0,99 USDC; auch nicht auf Ethereum/Arbitrum/OP Sepolia) → Nick soll die Erfolgsmeldung prüfen oder in 2 h erneut anfordern.
 
 **Checkpoint 81 (ADR-65, 14.09. nachmittags) — die x402-Kataloge kannten uns nicht, jetzt stehen alle sieben Dienste in PayAIs Katalog.**
 Tagescheck 13:27 UTC: `x402:paid` in sieben Tagen weiter **1** (`x402:terms` 150, Monitore x402-observer, x402watch, 402explorer, AgenstryBot lesen uns), x402scan
