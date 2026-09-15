@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { describe, expect, it } from 'vitest'
-import { Llm, LlmBudgetExceeded, LlmDeclined, type MessagesApi } from '../llm.js'
+import { HOLD_MS, Llm, LlmBudgetExceeded, LlmDeclined, llmSpendKey, type DailySpend, type MessagesApi, type SpendStore } from '../llm.js'
 import { classify } from './classify.js'
 import { extractStructured, parseLooseJson } from './extract-structured.js'
 import { allServices } from './index.js'
@@ -53,11 +53,249 @@ describe('Llm guard rails', () => {
     expect(r.costUsd).toBeCloseTo(0.5 + 0.25, 6)
     expect(llm.spentTodayUsd()).toBeCloseTo(0.75, 6)
     expect(llm.canAfford(0.3)).toBe(false)
-    expect(llm.declineReason(0.3)).toContain('daily capacity')
+    expect(await llm.declineReason(0.3)).toContain('daily capacity')
     await expect(llm.complete({ system: 's', user: 'u', maxTokens: 20_000 })).rejects.toBeInstanceOf(LlmBudgetExceeded)
     t = Date.parse('2026-09-08T00:00:01Z')
     expect(llm.spentTodayUsd()).toBe(0)
     expect(llm.canAfford(0.3)).toBe(true)
+  })
+
+  describe('the day spend survives a restart', () => {
+    const T = Date.parse('2026-09-15T18:00:00Z')
+    /** a store like platform memory: one value, with scripted failures and a count of reads */
+    const kvStore = (initial: DailySpend | null = null) => {
+      const s = { value: initial, loads: 0, saves: [] as DailySpend[], failLoads: 0, failSaves: 0 }
+      const store: SpendStore = {
+        load: async () => {
+          s.loads++
+          if (s.failLoads > 0 && s.failLoads--) throw new Error('memory unavailable')
+          return s.value
+        },
+        save: async (v) => {
+          if (s.failSaves > 0 && s.failSaves--) throw new Error('memory unavailable')
+          s.value = { ...v }
+          s.saves.push({ ...v })
+        },
+      }
+      return { s, store }
+    }
+    const cost = { input_tokens: 100_000, output_tokens: 10_000 } // 0.75 USD
+
+    it('a fresh process starts from what the last one spent today, not from 0', async () => {
+      const { s, store } = kvStore()
+      const first = new Llm({ client: fakeClient([cost]).client, dailyBudgetUsd: 1, now: () => T, store })
+      await first.restore()
+      await first.complete({ system: 's', user: 'u', maxTokens: 100 })
+      expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 0.75 })
+      const second = new Llm({ client: fakeClient([cost]).client, dailyBudgetUsd: 1, now: () => T, store })
+      await second.restore()
+      expect(second.spentTodayUsd()).toBeCloseTo(0.75, 6)
+      expect(await second.declineReason(0.3)).toContain('daily capacity')
+      await expect(second.complete({ system: 's', user: 'u', maxTokens: 20_000 })).rejects.toBeInstanceOf(LlmBudgetExceeded)
+    })
+
+    it('complete() restores by itself when nobody called restore(), and yesterday does not count', async () => {
+      const today = kvStore({ day: '2026-09-15', spent_usd: 0.9 })
+      const llm = new Llm({ client: fakeClient([cost]).client, dailyBudgetUsd: 1, now: () => T, store: today.store })
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 20_000 })).rejects.toBeInstanceOf(LlmBudgetExceeded)
+      const yesterday = kvStore({ day: '2026-09-14', spent_usd: 0.9 })
+      const fresh = new Llm({ client: fakeClient([cost]).client, dailyBudgetUsd: 1, now: () => T, store: yesterday.store })
+      await fresh.complete({ system: 's', user: 'u', maxTokens: 100 })
+      expect(yesterday.s.value).toEqual({ day: '2026-09-15', spent_usd: 0.75 })
+    })
+
+    it('while the stored spend cannot be read, jobs are declined before acceptance and no model call runs', async () => {
+      const { s, store } = kvStore({ day: '2026-09-15', spent_usd: 4.9 })
+      s.failLoads = 2
+      const logged: string[] = []
+      const f = fakeClient([{ input_tokens: 20_000, output_tokens: 0 }]) // 0.1 USD a call
+      const llm = new Llm({ client: f.client, dailyBudgetUsd: 5, now: () => T, store, log: (m) => logged.push(m) })
+      await llm.restore() // read 1 fails at start
+      expect(await llm.declineReason(0.01)).toContain('cannot be checked') // read 2 fails: declined, not accepted against a counter of 0
+      expect(llm.status().spend_store).toEqual({ restored: false, last_saved_at: null, last_save_error: null })
+      expect(logged).toEqual(['llm spend could not be restored', 'llm spend could not be restored'])
+      expect(f.calls).toHaveLength(0)
+      expect(s.saves).toEqual([])
+      expect(await llm.declineReason(0.2)).toContain('used up') // read 3 works, and 4.9 + 0.2 is over
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 10 })).resolves.toMatchObject({ costUsd: 0.1 })
+      expect(s.loads).toBe(3)
+      expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 5 })
+    })
+
+    it('complete() throws without calling the model while the read keeps failing, and never overwrites the stored day', async () => {
+      const { s, store } = kvStore({ day: '2026-09-15', spent_usd: 4 })
+      s.failLoads = 99
+      const f = fakeClient([{ input_tokens: 20_000, output_tokens: 0 }])
+      const llm = new Llm({ client: f.client, dailyBudgetUsd: 5, now: () => T, store })
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 10 })).rejects.toThrow(/cannot be checked/)
+      expect(f.calls).toHaveLength(0)
+      expect(s.saves).toEqual([])
+      expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 4 })
+    })
+
+    /** a client whose calls wait until released, to hold calls in flight */
+    const gatedClient = (reply: { input_tokens: number; output_tokens: number }) => {
+      const gates: (() => void)[] = []
+      let started = 0
+      const client: MessagesApi = {
+        beta: {
+          messages: {
+            create: async () => {
+              started++
+              await new Promise<void>((r) => gates.push(r))
+              return { id: 'm', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: '{}', citations: null }], stop_reason: 'end_turn', stop_sequence: null, usage: { ...reply, cache_creation_input_tokens: null, cache_read_input_tokens: null, iterations: null } } as unknown as Anthropic.Beta.BetaMessage
+            },
+          },
+        },
+      }
+      return { client, release: () => gates.splice(0).forEach((g) => g()), started: () => started }
+    }
+    const tick = () => new Promise((r) => setTimeout(r, 5))
+
+    it('each call reserves its estimate first: concurrent calls cannot all pass against the same figure', async () => {
+      const { s, store } = kvStore({ day: '2026-09-15', spent_usd: 0.7 })
+      const g = gatedClient({ input_tokens: 2_000, output_tokens: 1_000 }) // 0.035 USD billed
+      const llm = new Llm({ client: g.client, dailyBudgetUsd: 1, now: () => T, store })
+      const estimate = Llm.estimateUsd(2, 8_000) // about 0.2 USD
+      const calls = [1, 2, 3].map(() => llm.complete({ system: 's', user: 'u', maxTokens: 8_000 }).then(() => 'ran', (e: Error) => e.message))
+      await tick()
+      expect(g.started()).toBe(1)
+      expect(llm.spentTodayUsd()).toBeCloseTo(0.7 + estimate, 6)
+      expect(s.value!.spent_usd).toBeCloseTo(0.7 + estimate, 6) // written before the call
+      expect(llm.status().running_calls).toBe(1)
+      g.release()
+      expect(await Promise.all(calls)).toEqual(['ran', expect.stringContaining('used up'), expect.stringContaining('used up')])
+      expect(s.value!.spent_usd).toBeCloseTo(0.735, 6)
+      expect(llm.status().running_calls).toBe(0)
+    })
+
+    it('a process stopped in the middle of a call leaves that call counted at its estimate', async () => {
+      const { store } = kvStore({ day: '2026-09-15', spent_usd: 0.5 })
+      const stuck = gatedClient({ input_tokens: 1, output_tokens: 1 })
+      const dying = new Llm({ client: stuck.client, dailyBudgetUsd: 5, now: () => T, store })
+      void dying.complete({ system: 's', user: 'u', maxTokens: 8_000 })
+      await tick() // the machine stops here: the call never returns
+      const next = new Llm({ client: fakeClient([]).client, dailyBudgetUsd: 5, now: () => T, store })
+      await next.restore()
+      expect(next.spentTodayUsd()).toBeCloseTo(0.5 + Llm.estimateUsd(2, 8_000), 6)
+    })
+
+    it('an error the API answered releases the reservation; a broken connection keeps the estimate', async () => {
+      const { s, store } = kvStore()
+      const answered = new Anthropic.InternalServerError(529, { type: 'error', error: { type: 'overloaded_error', message: 'overloaded' } }, 'overloaded', new Headers())
+      const broken = new Anthropic.APIConnectionError({ message: 'socket hang up' })
+      const llm = new Llm({ client: fakeClient([{ throw: answered }, { throw: broken }]).client, dailyBudgetUsd: 5, now: () => T, store })
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toBe(answered)
+      expect(llm.spentTodayUsd()).toBe(0)
+      expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 0 })
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toBe(broken)
+      expect(llm.spentTodayUsd()).toBeCloseTo(Llm.estimateUsd(2, 8_000), 6)
+      expect(s.value!.spent_usd).toBeCloseTo(Llm.estimateUsd(2, 8_000), 6)
+      expect(llm.status().running_calls).toBe(0)
+    })
+
+    it('a failed write is retried on a timer, so the last call before a stop still reaches the store', async () => {
+      const { s, store } = kvStore()
+      s.failSaves = 2 // the reservation write and the final write of the only call both fail
+      const logged: string[] = []
+      const llm = new Llm({ client: fakeClient([cost]).client, dailyBudgetUsd: 5, now: () => T, store, log: (m) => logged.push(m), saveRetryMs: 20 })
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 100 })).resolves.toMatchObject({ costUsd: 0.75 })
+      expect(s.value).toBeNull()
+      expect(llm.status().spend_store).toMatchObject({ restored: true, last_save_error: expect.stringContaining('memory unavailable') })
+      await new Promise((r) => setTimeout(r, 120))
+      expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 0.75 })
+      expect(llm.status().spend_store).toMatchObject({ last_save_error: null, last_saved_at: '2026-09-15T18:00:00.000Z' })
+      expect(logged.filter((m) => m === 'llm spend could not be saved')).toHaveLength(2)
+    })
+
+    it('writes never overlap: a slow first write cannot land after a later, larger one', async () => {
+      let active = 0
+      let maxActive = 0
+      let n = 0
+      const written: number[] = []
+      const store: SpendStore = {
+        load: async () => null,
+        save: async (v) => {
+          active++
+          maxActive = Math.max(maxActive, active)
+          await new Promise((r) => setTimeout(r, n++ === 0 ? 30 : 0))
+          written.push(v.spent_usd)
+          active--
+        },
+      }
+      const llm = new Llm({ client: fakeClient([{ input_tokens: 20_000, output_tokens: 0 }]).client, dailyBudgetUsd: 5, now: () => T, store })
+      await Promise.all([llm.complete({ system: 's', user: 'u', maxTokens: 10 }), tick().then(() => llm.complete({ system: 's', user: 'u', maxTokens: 10 }))])
+      expect(maxActive).toBe(1)
+      expect(written.at(-1)).toBeCloseTo(0.2, 6)
+    })
+
+    it('counts every model attempt of a call with a server-side fallback, not only the one that answered', () => {
+      const usage = { input_tokens: 1_000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, iterations: [
+        { type: 'message', model: 'claude-opus-5', input_tokens: 1_000, output_tokens: 3_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: null },
+        { type: 'fallback_message', model: 'claude-sonnet-5', input_tokens: 1_000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 200, cache_creation: null },
+      ] } as unknown as Anthropic.Beta.BetaUsage
+      expect(Llm.billedTokens(usage)).toEqual({ input: 2_200, output: 3_100 })
+      expect(Llm.billedTokens({ ...usage, iterations: null } as Anthropic.Beta.BetaUsage)).toEqual({ input: 1_000, output: 100 })
+      // declined before any output: reported, not billed
+      const early = { ...usage, iterations: [{ ...(usage.iterations as object[])[0], output_tokens: 0 }, (usage.iterations as object[])[1]] } as unknown as Anthropic.Beta.BetaUsage
+      expect(Llm.billedTokens(early)).toEqual({ input: 1_200, output: 100 })
+    })
+
+    it('live and sandbox keep their day spend under different keys of the one shared memory', async () => {
+      expect(llmSpendKey('live')).toBe('llm/live/daily-spend')
+      expect(llmSpendKey('test')).toBe('llm/test/daily-spend')
+      const kv = new Map<string, unknown>() // one identity's memory, as the platform keeps it for both environments
+      const storeFor = (env: 'live' | 'test'): SpendStore => ({ load: async () => (kv.get(llmSpendKey(env)) as DailySpend) ?? null, save: async (v) => void kv.set(llmSpendKey(env), v) })
+      const live = new Llm({ client: fakeClient([{ input_tokens: 300_000, output_tokens: 0 }]).client, dailyBudgetUsd: 5, now: () => T, store: storeFor('live') }) // 1.5 USD
+      const test = new Llm({ client: fakeClient([{ input_tokens: 1_500, output_tokens: 0 }]).client, dailyBudgetUsd: 1, now: () => T, store: storeFor('test') })
+      await live.complete({ system: 's', user: 'u', maxTokens: 10 })
+      await test.complete({ system: 's', user: 'u', maxTokens: 10 }) // written last
+      const liveAgain = new Llm({ client: fakeClient([]).client, dailyBudgetUsd: 5, now: () => T, store: storeFor('live') })
+      const testAgain = new Llm({ client: fakeClient([]).client, dailyBudgetUsd: 1, now: () => T, store: storeFor('test') })
+      await Promise.all([liveAgain.restore(), testAgain.restore()])
+      expect(liveAgain.spentTodayUsd()).toBeCloseTo(1.5, 6)
+      expect(testAgain.spentTodayUsd()).toBeCloseTo(0.0075, 6)
+      expect(await testAgain.declineReason(0.01)).toBeNull()
+    })
+
+    it('a job accepted after a budget check holds its estimate, so jobs checked together are not all accepted', async () => {
+      let now = T
+      const { store } = kvStore({ day: '2026-09-15', spent_usd: 4.7 })
+      const g = gatedClient({ input_tokens: 2_000, output_tokens: 0 })
+      const llm = new Llm({ client: g.client, dailyBudgetUsd: 5, now: () => now, store })
+      const verdicts = await Promise.all([1, 2, 3, 4, 5].map(() => llm.declineReason(0.2)))
+      expect(verdicts.filter((v) => v === null)).toHaveLength(1) // 4.7 + 0.2 fits once; the rest are declined, not accepted
+      expect(verdicts.filter((v) => v?.includes('used up'))).toHaveLength(4)
+      expect(llm.status().held_for_accepted_jobs_usd).toBeCloseTo(0.2, 6)
+      expect(llm.spentTodayUsd()).toBeCloseTo(4.7, 6) // a hold is not spend and is not written
+      // the accepted job's call takes the place of its hold instead of being refused by it
+      const call = llm.complete({ system: 's', user: 'u', maxTokens: 8_000, claimHold: true })
+      await tick()
+      expect(g.started()).toBe(1)
+      expect(llm.status().held_for_accepted_jobs_usd).toBe(0)
+      g.release()
+      await call
+      // a hold whose job never calls lapses
+      expect(await llm.declineReason(0.2)).toBeNull()
+      expect(await llm.declineReason(0.2)).toContain('used up')
+      now += HOLD_MS + 1
+      expect(await llm.declineReason(0.2)).toBeNull()
+    })
+
+    it('a read that throws before it returns a promise does not wedge the budget check for the life of the process', async () => {
+      let n = 0
+      const store: SpendStore = {
+        load: (() => {
+          if (n++ === 0) throw new Error('synchronous failure')
+          return Promise.resolve(null)
+        }) as SpendStore['load'],
+        save: async () => {},
+      }
+      const llm = new Llm({ client: fakeClient([]).client, dailyBudgetUsd: 5, now: () => T, store })
+      expect(await llm.declineReason(0.01)).toContain('cannot be checked')
+      expect(await llm.declineReason(0.01)).toBeNull()
+      expect(n).toBe(2)
+    })
   })
 
   it('turns refusals and truncation into LlmDeclined, and reports disabled state', async () => {
@@ -69,7 +307,7 @@ describe('Llm guard rails', () => {
     await expect(garbage.llm.completeJson({ system: 's', user: 'u', maxTokens: 10, jsonSchema: { type: 'object' } })).rejects.toThrow(/valid JSON/)
     const off = new Llm({})
     expect(off.enabled).toBe(false)
-    expect(off.declineReason(0)).toContain('disabled')
+    expect(await off.declineReason(0)).toContain('disabled')
     expect(allServices(off).map((s) => s.key)).toEqual(['extract-web', 'validate-json', 'token-snapshot'])
     expect(allServices(refused.llm).map((s) => s.key)).toEqual(['extract-web', 'validate-json', 'token-snapshot', 'translate', 'summarize', 'extract-structured', 'classify'])
     expect(off.status()).toMatchObject({ enabled: false, daily_budget_usd: 5, spent_today_usd: 0 })

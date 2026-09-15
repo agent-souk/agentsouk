@@ -105,6 +105,7 @@ export function translate(llm: Llm): ServiceDef {
         maxTokens: maxTokensFor(text.length),
         effort: 'low',
         jsonSchema: OUTPUT_SCHEMA,
+        claimHold: true,
       })
       const translation = typeof data.translation === 'string' ? data.translation : ''
       if (!translation.trim()) throw new Error('empty translation from the model')

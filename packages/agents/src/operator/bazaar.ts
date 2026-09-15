@@ -72,19 +72,19 @@ export type RegistrarStore = { load(): Promise<PersistedRun | null>; save(run: P
 
 type MemoryApi = { get<T>(key: string): Promise<{ value: T }>; set(key: string, value: unknown): Promise<unknown> }
 
-/** The run record in the desk's platform memory under `key`; a key that was never written is "never ran", any other read error throws. */
-export function platformMemoryStore(memory: MemoryApi, key: string): RegistrarStore {
+/** A record in an identity's platform memory under `key`; a key that was never written loads as null, any other read error throws. */
+export function platformMemoryStore<T = PersistedRun>(memory: MemoryApi, key: string): { load(): Promise<T | null>; save(v: T): Promise<void> } {
   return {
     load: async () => {
       try {
-        return (await memory.get<PersistedRun>(key)).value ?? null
+        return (await memory.get<T>(key)).value ?? null
       } catch (e) {
         if (typeof e === 'object' && e != null && (e as { status?: unknown }).status === 404) return null
         throw e
       }
     },
-    save: async (run) => {
-      await memory.set(key, run)
+    save: async (v) => {
+      await memory.set(key, v)
     },
   }
 }

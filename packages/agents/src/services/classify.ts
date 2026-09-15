@@ -142,6 +142,7 @@ export function classify(llm: Llm): ServiceDef {
         maxTokens: maxTokensFor(items.length),
         effort: 'low',
         jsonSchema: schema,
+        claimHold: true,
       })
       const byIndex = new Map<number, { labels: string[]; confidence: number; reason: string }>()
       for (const r of Array.isArray(data.results) ? data.results : []) {

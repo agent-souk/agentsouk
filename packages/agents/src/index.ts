@@ -11,7 +11,8 @@
  *   PORT                       default 8788
  *   POLL_INTERVAL_MS           default 60000 (inbox catch-up while the process is awake)
  *   ANTHROPIC_API_KEY          enables the LLM services (translate, summarize, extract-structured, classify) and the bounty judge; without it their listings are paused and no bounties are posted
- *   LLM_DAILY_BUDGET_USD       default 5; LLM jobs are declined once the day's model spend would exceed it
+ *   LLM_DAILY_BUDGET_USD       default 5; live LLM jobs are declined once the day's model spend would exceed it (the counter lives in the seller's platform memory, `llm/live/daily-spend`, so it survives restarts)
+ *   LLM_DAILY_BUDGET_USD_TEST  default 1; the same for the sandbox, counted separately so free sandbox jobs cannot use up the live budget
  *   OPERATOR_API_KEY_LIVE/TEST keys of the bounty desk identity (souk-bounties); optional
  *   OPERATOR_PRIVATE_KEY       0x... key of the wallet bound to that identity; without it the desk posts nothing
  *   OPERATOR_TOTAL_BUDGET_USDC default 50 (lifetime), OPERATOR_DAILY_CAP_USDC default 20, OPERATOR_MAX_TRANSFER_USDC default 15
@@ -25,7 +26,7 @@
  */
 import { serve } from '@hono/node-server'
 import { AgentSouk } from 'agentsouk'
-import { Llm } from './llm.js'
+import { Llm, llmSpendKey, type DailySpend } from './llm.js'
 import { CATALOG } from './operator/catalog.js'
 import { Judge } from './operator/judge.js'
 import { DEFAULT_FIRSTBUY, FirstBuyer } from './operator/firstbuy.js'
@@ -43,19 +44,34 @@ const secret = process.env.WEBHOOK_SECRET ?? ''
 const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, '')
 const port = Number(process.env.PORT ?? 8788)
 const pollMs = Math.max(10_000, Number(process.env.POLL_INTERVAL_MS ?? 60_000))
-const llm = new Llm({ apiKey: process.env.ANTHROPIC_API_KEY, dailyBudgetUsd: Number(process.env.LLM_DAILY_BUDGET_USD ?? 5) })
 if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const VERSION = '0.2.12'
+const VERSION = '0.2.13'
 const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: `agentsouk-agents/${VERSION}` })
+
+// One model budget per environment (ADR-66), each counted in the seller identity's platform memory under its own key
+// (memory is shared between live and test, so the environment is in the key).
+// The machine stops when idle, and a counter held only in the process started at 0 on every wake-up (15.09.: four
+// starts in 27 minutes), which made LLM_DAILY_BUDGET_USD a cap per wake-up. Separate, because sandbox jobs cost
+// nothing to order: with one shared day counter, free sandbox traffic could close the paid live services until midnight.
+const llms = {} as Record<Env, Llm>
+for (const env of ['live', 'test'] as Env[]) {
+  const key = process.env[`AGENTSOUK_API_KEY_${env.toUpperCase()}`]
+  llms[env] = new Llm({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    dailyBudgetUsd: Number((env === 'live' ? process.env.LLM_DAILY_BUDGET_USD : process.env.LLM_DAILY_BUDGET_USD_TEST) ?? (env === 'live' ? 5 : 1)),
+    store: key ? platformMemoryStore<DailySpend>(clientFor(key).memory, llmSpendKey(env)) : undefined,
+    log: (msg, extra) => log(msg, { env, ...extra }),
+  })
+}
 
 const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
   const key = process.env[`AGENTSOUK_API_KEY_${env.toUpperCase()}`]
   if (!key) continue
-  runtimes[env] = new SellerRuntime(clientFor(key), allServices(llm), env, log)
+  runtimes[env] = new SellerRuntime(clientFor(key), allServices(llms[env]), env, log)
 }
 
 const usdc = (v: string | undefined, dflt: bigint) => (v && Number.isFinite(Number(v)) ? BigInt(Math.round(Number(v) * 1e6)) : dflt)
@@ -65,8 +81,8 @@ const operatorConfig = { ...DEFAULT_CONFIG, totalBudget: usdc(process.env.OPERAT
 for (const env of ['live', 'test'] as Env[]) {
   const key = process.env[`OPERATOR_API_KEY_${env.toUpperCase()}`]
   if (!key) continue
-  const wallet = operatorKey && llm.enabled ? new UsdcWallet(operatorKey, CHAINS[env], { maxPerTransfer: usdc(process.env.OPERATOR_MAX_TRANSFER_USDC, 15_000_000n), log }) : null
-  const judge = new Judge(llm)
+  const wallet = operatorKey && llms[env].enabled ? new UsdcWallet(operatorKey, CHAINS[env], { maxPerTransfer: usdc(process.env.OPERATOR_MAX_TRANSFER_USDC, 15_000_000n), log }) : null
+  const judge = new Judge(llms[env])
   const op = new OperatorRuntime(clientFor(key), wallet, judge, CATALOG, env, log, operatorConfig)
   if (wallet && operatorKey && process.env.FIRSTBUY_ENABLED !== 'false') {
     const E = env.toUpperCase()
@@ -126,6 +142,9 @@ if (!Object.keys(runtimes).length && !Object.keys(operators).length) {
   process.exit(1)
 }
 
+// Read before the first job; a read that fails here is retried by every budget check, which declines until it succeeds.
+await Promise.all(Object.values(llms).map((l) => l.restore()))
+
 for (const [env, rt] of Object.entries(runtimes) as [Env, SellerRuntime][]) {
   try {
     await rt.init()
@@ -161,5 +180,7 @@ setInterval(() => {
   }
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: VERSION, llm: () => llm.status(), operators: operators as Operators, faucet })
-serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))
+// the top level stays the live budget, as /health has always shown it; the sandbox budget sits beside it
+const llmStatus = () => ({ ...llms.live.status(), test: llms.test.status() })
+const server = createServer(runtimes, secret, log, { version: VERSION, llm: llmStatus, operators: operators as Operators, faucet })
+serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llmStatus() }))

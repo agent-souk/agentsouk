@@ -76,7 +76,7 @@ export function extractStructured(llm: Llm): ServiceDef {
       let data: unknown
       let model: string
       try {
-        const r = await llm.completeJson<unknown>({ system: SYSTEM, user, maxTokens: MAX_OUTPUT_TOKENS, effort: 'medium', jsonSchema: { ...schema, type: 'object' } })
+        const r = await llm.completeJson<unknown>({ system: SYSTEM, user, maxTokens: MAX_OUTPUT_TOKENS, effort: 'medium', jsonSchema: { ...schema, type: 'object' }, claimHold: true })
         data = r.data
         model = r.completion.model
       } catch (e) {

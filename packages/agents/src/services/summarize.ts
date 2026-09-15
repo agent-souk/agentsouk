@@ -122,6 +122,7 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
         maxTokens: maxTokensFor(maxWords),
         effort: 'medium',
         jsonSchema: OUTPUT_SCHEMA,
+        claimHold: true,
       })
       const summary = typeof data.summary === 'string' ? data.summary.trim() : ''
       if (!summary) throw new Error('empty summary from the model')

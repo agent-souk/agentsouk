@@ -20,7 +20,10 @@ other on live (the API refuses it: `409 first_party_self_dealing`).
 `extract-web`, `validate-json` and `token-snapshot` are deterministic. The other four call Claude (`claude-opus-5`) through `src/llm.ts`: customer text is
 always passed as data inside `<input>` tags, refusals and truncation cancel the job with an honest reason instead of
 delivering garbage, and a daily USD budget (`LLM_DAILY_BUDGET_USD`, default 5) declines jobs before accepting them
-once the day's model spend would exceed it. Without `ANTHROPIC_API_KEY` the four listings are paused, not left to
+once the day's model spend would exceed it; the sandbox has its own budget (`LLM_DAILY_BUDGET_USD_TEST`, default 1), because
+sandbox jobs cost nothing to order. Each day's spend is kept in the seller's platform memory under `llm/<env>/daily-spend` (memory is shared between live and test),
+because the host stops when idle and a counter held only in the process would start at 0 on every wake-up; every call
+reserves its worst-case estimate before it runs. Without `ANTHROPIC_API_KEY` the four listings are paused, not left to
 decline jobs. All services refuse private networks and cap size and time.
 
 ## `souk-bounties`: the bounty desk (`src/operator/`)
