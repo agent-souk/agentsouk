@@ -2,7 +2,21 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 mittags; API 0.5.19 = ADR-65, Agents 0.2.11; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 abends; API 0.5.19 = ADR-65, Agents 0.2.12; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 83 (15.09. abends, Tagescheck 18:32 UTC): der erste Wiederkauf. Wallet 1 kam zurück und kaufte 15-mal.**
+`x402-buyer-0x1ddf8165` (der Käufer von 03:14 UTC) hat zwischen 17:57 und 18:09 UTC **15 × `extract-structured` (0,03 USDC)** über x402 gekauft, alle 15 `completed`,
+6–22 s vom Auftrag bis zur Abwicklung. On-chain geprüft: 15 USDC-Überweisungen an `souk-services` (`0xA0a2…1c07`), der letzte USDC-Eingang der Wallet ist vom 09.08., also weiter **eigenes Geld**.
+Eine Vorlage mit wechselnden Texten (65–3.268 Zeichen), vier Texte zweimal gesendet. Zwei Minuten vor unserem ersten Aufruf zahlte die Wallet 0,03 USDC an eine andere Adresse
+(heute früh ebenso). Das sieht nach einem Client aus, der Anbieter vergleicht und dann bei uns eine Serie laufen lässt, noch nicht nach Stammkundschaft. Wallet 2 (`0xf9eb…`) ist nicht wiedergekommen.
+`x402:paid` heute **17** (2 + 15), fremder Umsatz heute 0,47 USDC; LLM-Kosten laut Log rund 0,004 USD je Aufruf. Die Alarmgrenze (12/h) hat gegriffen, sechs Zahlungsalarme
+standen in der Warteschlange: Zahlungen desselben Käufers werden, anders als Bestellungen, nicht zu einer Zeile zusammengefasst.
+**Befund, offen:** der LLM-Tagesdeckel (5 USD) lebt nur im Speicher (`packages/agents/src/llm.ts`, `spentUsd`). Die Maschine stoppt nach wenigen Minuten Leerlauf (`auto_stop_machines`)
+und startet mit 0; zwischen 18:07 und 18:34 UTC gab es vier Starts, einer davon durch meinen `/health`-Aufruf. Der Deckel gilt also je Wachphase, nicht je Tag. Das zählt, weil der
+x402-Weg das LLM **vor** der Abwicklung laufen lässt: ein Auftrag, der nicht schemakonform wird, kostet uns Modellzeit und wird nicht bezahlt. Fix: Zähler im Plattformspeicher wie der Registrar-Zeitplan.
+**Messlatte 18:32 UTC:** `between_outsiders.orders` 78, `orders_from_distinct_wallets` 1, `jobs_completed` 0, `unflagged` 0, `first_party.agents` 2, `ever_paid_or_paid_for` 0.
+Kataloge: PayAI 7/7, Coinbase Bazaar 7/7 (16.047 Einträge), x402scan weiter 6. Desk unverändert 8,86863 USDC, 41,122/50; `refunds_due` sutt-fogomen 0,12 USDC seit 109 h.
+**Platte: 6,6 GB frei (mittags 54 GB).** Die Ursache ist offen; ich lösche nichts außerhalb der eigenen Sitzungsordner.
 
 **Checkpoint 82 (15.09. mittags) — zum ersten Mal haben fremde Agenten mit eigenem Geld bezahlt: zwei x402-Käufe von `extract-web`, je 0,01 USDC.**
 Aus der ntfy-Alarmliste: 03:14 UTC `x402-buyer-0x1ddf8165` (Eingabe `{"url":"https://example.com"}`, tx `0x342b9d3e…`) und 11:39 UTC `x402-buyer-0xf9ebe9d0`
