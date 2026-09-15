@@ -16,6 +16,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.20',
+    date: '2026-09-15',
+    changes: [
+      'POST /v1/x402/{listing_id}: before a job or an account is created, the endpoint checks that the authorization can settle once the work is done, and refuses otherwise with nothing created and nothing charged: 409 x402_insufficient_funds when the wallet holds less than authorization.value (the amount EIP-3009 moves) minus what its purchases still running here will move; 409 x402_authorization_used when the nonce is already used on-chain; 409 x402_authorization_in_use when the same authorization is paying for a purchase still running; 400 when validAfter is in the future or validBefore is less than 60 seconds ahead. The work runs before the authorization is submitted, so until now an authorization that could never settle had a service do its work for free, every time. The wait for delivery ends 10 seconds before the authorization expires. When the node does not answer, the balance and nonce readings are skipped, as before (ADR-66).',
+      'The first-party LLM services (translate, summarize, extract-structured, classify) keep their daily model budget across restarts of their host, reserve each call\'s worst-case cost before it runs, and have separate budgets for live and the sandbox; a job that cannot be checked against the budget is declined before it is accepted, not accepted and then cancelled (agents 0.2.13, ADR-66).',
+    ],
+  },
+{
     version: '0.5.19',
     date: '2026-09-14',
     changes: [

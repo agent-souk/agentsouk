@@ -18,6 +18,7 @@ import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyDigestSignature } from '../payments/evm-signature.js'
 import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
+import { authorizationUsed, usdcBalance } from '../payments/chain.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
 
 /**
@@ -56,6 +57,19 @@ const HEX_64 = /^0x[0-9a-fA-F]{64}$/
 
 /** Both generations of the payment headers, so a browser-based client can read them across origins. */
 const EXPOSED_HEADERS = 'Content-Type,PAYMENT-REQUIRED,PAYMENT-RESPONSE,X-PAYMENT-RESPONSE'
+
+/**
+ * ADR-66: how long an authorization must still be valid when a purchase starts (the work comes first), and how much
+ * of its window the wait for delivery leaves for submitting it. Clients sign for the 402's maxTimeoutSeconds (900).
+ */
+export const X402_MIN_VALIDITY_MS = 60_000
+export const X402_SETTLE_MARGIN_MS = 10_000
+/**
+ * ADR-66: the value each wallet's purchases still running here will move, and the authorizations they carry. The API
+ * is one process (fly.toml), so memory is the whole truth; a restart ends the requests these entries belong to.
+ */
+const x402ValueRunning = new Map<string, number>()
+const x402AuthorizationsRunning = new Set<string>()
 
 
 export function parsePaymentHeader(header: string): PaymentPayload {
@@ -437,66 +451,108 @@ export function x402Routes() {
       }
       assertNotSanctioned(auth.from, 'The paying wallet address')
       assertNotSanctioned(payTo, 'The seller wallet address')
-
-      const { agent: buyer, credentials, created, recovered } = await buyerForWallet(auth.from)
-      const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
-      const state = await waitForDelivery(job.id, 90_000)
-      if (state !== 'delivered') {
-        // The seller's own words, if it gave any (ADR-61): a wallet-only buyer has no key to read the thread, and
-        // this response is the only thing it sees. decline() keeps the reason in the job's event log.
-        // decline() flips the status one statement before it logs the reason; the poller can land in between, so a
-        // declined job without its row yet is read again, briefly.
-        let declined = null
-        for (let look = 0; state === 'gone' && look < 4 && !declined; look++) {
-          // a seller that accepted and then could not do the work cancels; its reason is worth the same (ADR-64 audit)
-          declined = (await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), inArray(jobEvents.type, ['declined', 'cancelled'])), orderBy: [desc(jobEvents.id)] })) ?? null
-          if (!declined) {
-            const now = await db().query.jobs.findFirst({ where: eq(jobs.id, job.id), columns: { status: true } })
-            if (now?.status !== 'declined' && now?.status !== 'cancelled') break
-            await new Promise((r) => setTimeout(r, 250))
-          }
-        }
-        const reason = typeof (declined?.data as { reason?: unknown } | null)?.reason === 'string' ? (declined!.data as { reason: string }).reason.trim().slice(0, 300) : ''
+      // ADR-66: the work runs before the authorization is submitted, so an authorization that cannot settle bought
+      // model time on our account for free, every time, until the daily budget closed the paid services for everyone.
+      // Before any work: it must be valid now and long enough for the work, unused on-chain, not already paying for a
+      // purchase still running here, and covered by what the wallet holds minus what its running purchases will take
+      // (EIP-3009 moves the signed value, not the price). Read fresh, not from the minute-long cache. A node that does
+      // not answer is not the buyer's fault: then those two readings are skipped, as before.
+      const nowMs = Date.now()
+      const value = Number(auth.value)
+      if (Number(auth.validAfter) * 1000 > nowMs) throw errors.validation('authorization.validAfter is in the future; the authorization must be valid when the work is done.', 'X-PAYMENT')
+      if (Number(auth.validBefore) * 1000 < nowMs + X402_MIN_VALIDITY_MS) {
+        throw errors.validation(`authorization.validBefore must be at least ${X402_MIN_VALIDITY_MS / 1000} seconds ahead: the work is done before the authorization is submitted (the 402 allows ${requirements.maxTimeoutSeconds}).`, 'X-PAYMENT')
+      }
+      const payerKey = `${env}:${auth.from.toLowerCase()}`
+      const authKey = `${payerKey}:${auth.nonce.toLowerCase()}`
+      if (x402AuthorizationsRunning.has(authKey)) {
+        recordX402('refused', c.req.header('user-agent'))
+        throw errors.state('x402_authorization_in_use', 'This authorization is already paying for a purchase that is still running.', 'Sign a new authorization with a fresh nonce for another purchase.')
+      }
+      const [held, used] = await Promise.all([usdcBalance(env, auth.from, nowMs, 0), authorizationUsed(env, auth.from, auth.nonce)])
+      if (used) {
+        recordX402('refused', c.req.header('user-agent'))
+        throw errors.state('x402_authorization_used', 'This authorization has already been used on-chain and cannot pay again.', 'Nothing was charged and no job was created. Sign a new authorization with a fresh nonce.')
+      }
+      const committed = x402ValueRunning.get(payerKey) ?? 0
+      if (held != null && held - committed < value) {
+        recordX402('refused', c.req.header('user-agent'))
         throw errors.state(
-          state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',
-          state === 'gone' ? `The seller did not deliver this job${declined ? ` and ${declined.type === 'cancelled' ? 'cancelled' : 'declined'} it${reason ? `: "${reason}"` : ''}` : ''}.` : 'The seller had not delivered within 90 seconds.',
-          `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}; if a delivery arrives later you can still pay it the ordinary way (GET ${base()}/v1/jobs/${job.id}).`,
+          'x402_insufficient_funds',
+          `${auth.from} holds ${formatUsdc(held)} on ${networkFor(env)}${committed ? `, ${formatUsdc(committed)} of it committed to purchases still running here` : ''}; this authorization moves ${formatUsdc(value)}.`,
+          'Nothing was charged and no job was created. Fund the wallet with USDC on that network, or wait for the running purchases, and retry with a fresh authorization.',
         )
       }
+      x402ValueRunning.set(payerKey, committed + value)
+      x402AuthorizationsRunning.add(authKey)
+      try {
+        const { agent: buyer, credentials, created, recovered } = await buyerForWallet(auth.from)
+        const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
+        // never wait past the point where the authorization could still be submitted
+        const waitMs = Math.min(90_000, Number(auth.validBefore) * 1000 - Date.now() - X402_SETTLE_MARGIN_MS)
+        const state = await waitForDelivery(job.id, waitMs)
+        if (state !== 'delivered') {
+          // The seller's own words, if it gave any (ADR-61): a wallet-only buyer has no key to read the thread, and
+          // this response is the only thing it sees. decline() keeps the reason in the job's event log.
+          // decline() flips the status one statement before it logs the reason; the poller can land in between, so a
+          // declined job without its row yet is read again, briefly.
+          let declined = null
+          for (let look = 0; state === 'gone' && look < 4 && !declined; look++) {
+            // a seller that accepted and then could not do the work cancels; its reason is worth the same (ADR-64 audit)
+            declined = (await db().query.jobEvents.findFirst({ where: and(eq(jobEvents.jobId, job.id), inArray(jobEvents.type, ['declined', 'cancelled'])), orderBy: [desc(jobEvents.id)] })) ?? null
+            if (!declined) {
+              const now = await db().query.jobs.findFirst({ where: eq(jobs.id, job.id), columns: { status: true } })
+              if (now?.status !== 'declined' && now?.status !== 'cancelled') break
+              await new Promise((r) => setTimeout(r, 250))
+            }
+          }
+          const reason = typeof (declined?.data as { reason?: unknown } | null)?.reason === 'string' ? (declined!.data as { reason: string }).reason.trim().slice(0, 300) : ''
+          throw errors.state(
+            state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',
+            state === 'gone' ? `The seller did not deliver this job${declined ? ` and ${declined.type === 'cancelled' ? 'cancelled' : 'declined'} it${reason ? `: "${reason}"` : ''}` : ''}.` : `The seller had not delivered within ${Math.round(waitMs / 1000)} seconds.`,
+            `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}; if a delivery arrives later you can still pay it the ordinary way (GET ${base()}/v1/jobs/${job.id}).`,
+          )
+        }
 
-      const transaction = await settleAtFacilitator(env, requirements, terms.x402.resource, payment, bazaarExtension(listing), c.req.header('user-agent'))
-      const paid = await payUntilMined(env, buyer, job.id, transaction)
-      // The buyer is holding the result in this very response, so leaving the job open for a review window it will
-      // never come back for would only make the seller wait. Accepting closes it and writes both public records.
-      await acceptDelivery(env, buyer, job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not close the job after payment'))
-      recordX402('paid', c.req.header('user-agent'))
-      // ADR-49: this is the event the operator cannot usefully read about later. A failure to alert must never
-      // cost the buyer the answer it has already paid for, so it is best-effort and never in the way.
-      await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: created }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
-      // The marker that makes "shown once" true: written only for a response that actually carries the credentials.
-      if (credentials) await saveX402Account(buyer.id, { ...((await x402Account(buyer.id)) ?? { created_at: new Date().toISOString(), shown_at: null }), shown_at: new Date().toISOString(), job_id: job.id }).catch((err) => log.warn({ err, job: job.id }, 'x402: could not mark the credentials as shown'))
-      return c.json(
-        {
-          object: 'x402_result' as const,
-          job_id: job.id,
-          listing_id: listing.id,
-          output: paid.job.output,
-          paid: { amount: price, display: formatUsdc(price), transaction, network: terms.network, payer: auth.from, pay_to: payTo },
-          receipt_url: `${base()}/v1/jobs/${job.id}/receipt`,
-          account: recovered
-            ? { note: `This wallet's account (${buyer.handle}) existed from an earlier purchase that failed after the account was created, so its keys had never reached you. They have been replaced and are shown here once: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on.`, ...credentials }
-            : credentials
-            ? { note: 'Paying created an account bound to your wallet (ADR-48). These credentials are shown once and never again: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on. Lose them and the account still exists, but nothing proves it is yours.', ...credentials }
-            : { note: `This wallet already has an account here (${buyer.handle}); its credentials were shown when it was created and are never shown again. Use the key you were given to fetch receipt_url.`, agent_id: buyer.id, handle: buyer.handle },
-        },
-        200,
-        {
-          // v2 names it PAYMENT-RESPONSE, v1 named it X-PAYMENT-RESPONSE; both carry the same base64 receipt.
-          'PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
-          'X-PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
-          'Access-Control-Expose-Headers': EXPOSED_HEADERS,
-        },
-      )
+        const transaction = await settleAtFacilitator(env, requirements, terms.x402.resource, payment, bazaarExtension(listing), c.req.header('user-agent'))
+        const paid = await payUntilMined(env, buyer, job.id, transaction)
+        // The buyer is holding the result in this very response, so leaving the job open for a review window it will
+        // never come back for would only make the seller wait. Accepting closes it and writes both public records.
+        await acceptDelivery(env, buyer, job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not close the job after payment'))
+        recordX402('paid', c.req.header('user-agent'))
+        // ADR-49: this is the event the operator cannot usefully read about later. A failure to alert must never
+        // cost the buyer the answer it has already paid for, so it is best-effort and never in the way.
+        await raiseX402Purchase({ env, jobId: job.id, listingTitle: listing.title, amount: price, payer: auth.from, transaction, firstBuy: created }).catch((err) => log.warn({ err, job: job.id }, 'x402: operator alert failed'))
+        // The marker that makes "shown once" true: written only for a response that actually carries the credentials.
+        if (credentials) await saveX402Account(buyer.id, { ...((await x402Account(buyer.id)) ?? { created_at: new Date().toISOString(), shown_at: null }), shown_at: new Date().toISOString(), job_id: job.id }).catch((err) => log.warn({ err, job: job.id }, 'x402: could not mark the credentials as shown'))
+        return c.json(
+          {
+            object: 'x402_result' as const,
+            job_id: job.id,
+            listing_id: listing.id,
+            output: paid.job.output,
+            paid: { amount: price, display: formatUsdc(price), transaction, network: terms.network, payer: auth.from, pay_to: payTo },
+            receipt_url: `${base()}/v1/jobs/${job.id}/receipt`,
+            account: recovered
+              ? { note: `This wallet's account (${buyer.handle}) existed from an earlier purchase that failed after the account was created, so its keys had never reached you. They have been replaced and are shown here once: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on.`, ...credentials }
+              : credentials
+              ? { note: 'Paying created an account bound to your wallet (ADR-48). These credentials are shown once and never again: keep them and you own the record of this purchase, its signed receipt, and everything you buy here from now on. Lose them and the account still exists, but nothing proves it is yours.', ...credentials }
+              : { note: `This wallet already has an account here (${buyer.handle}); its credentials were shown when it was created and are never shown again. Use the key you were given to fetch receipt_url.`, agent_id: buyer.id, handle: buyer.handle },
+          },
+          200,
+          {
+            // v2 names it PAYMENT-RESPONSE, v1 named it X-PAYMENT-RESPONSE; both carry the same base64 receipt.
+            'PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
+            'X-PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, transaction, network: terms.network })).toString('base64'),
+            'Access-Control-Expose-Headers': EXPOSED_HEADERS,
+          },
+        )
+      } finally {
+        const left = (x402ValueRunning.get(payerKey) ?? value) - value
+        if (left > 0) x402ValueRunning.set(payerKey, left)
+        else x402ValueRunning.delete(payerKey)
+        x402AuthorizationsRunning.delete(authKey)
+      }
     },
   )
 

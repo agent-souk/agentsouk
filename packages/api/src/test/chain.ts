@@ -29,6 +29,8 @@ export class FakeChain {
   erc8004Error: { code: number; message: string } | null = null
   /** USDC balance answered to balanceOf(address) eth_calls (default 50 USDC for everyone) */
   usdcBalanceOf: (address: string) => bigint = () => 50_000_000n
+  /** EIP-3009 authorizations already used on the USDC contract, as `<from lowercase>:<nonce lowercase>`, answered to authorizationState eth_calls */
+  usedAuthorizations = new Set<string>()
 
   constructor(readonly env: Env = 'test') {}
 
@@ -107,6 +109,7 @@ export class FakeChain {
         const call = (req.params[0] ?? {}) as { to?: string; data?: string }
         const data = String(call.data ?? '')
         if (String(call.to ?? '').toLowerCase() === this.usdc.toLowerCase() && /^0x70a08231[0-9a-f]{64}$/i.test(data)) return reply('0x' + this.usdcBalanceOf('0x' + data.slice(-40)).toString(16).padStart(64, '0'))
+        if (String(call.to ?? '').toLowerCase() === this.usdc.toLowerCase() && /^0xe94a0102[0-9a-f]{128}$/i.test(data)) return reply('0x' + (this.usedAuthorizations.has(`0x${data.slice(34, 74).toLowerCase()}:0x${data.slice(74).toLowerCase()}`) ? '1' : '0').padStart(64, '0'))
         if (String(call.to ?? '').toLowerCase() === IDENTITY_REGISTRY[this.env].address.toLowerCase() && /^0x(6352211e|c87b56dd)[0-9a-f]{64}$/i.test(data)) {
           if (this.erc8004Error) return { status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, error: this.erc8004Error }) }
           if (this.erc8004Raw != null) return reply(this.erc8004Raw)

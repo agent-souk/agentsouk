@@ -239,10 +239,10 @@ const BALANCE_TIMEOUT_MS = 2_500
  * cannot complete: on 2026-09-09 about thirty sealed deliveries had expired unpaid, most of them in the sandbox
  * where the money is free.
  */
-export async function usdcBalance(env: Env, address: string, now = Date.now()): Promise<number | null> {
+export async function usdcBalance(env: Env, address: string, now = Date.now(), maxAgeMs = BALANCE_CACHE_MS): Promise<number | null> {
   const key = `${env}:${address.toLowerCase()}`
   const hit = balanceCache.get(key)
-  if (hit && now - hit.at < BALANCE_CACHE_MS) return hit.value
+  if (hit && now - hit.at < maxAgeMs) return hit.value
   let value: number | null = null
   try {
     const data = BALANCE_OF + address.toLowerCase().replace(/^0x/, '').padStart(64, '0')
@@ -260,6 +260,28 @@ export async function usdcBalance(env: Env, address: string, now = Date.now()): 
   }
   balanceCache.set(key, { at: now, value })
   return value
+}
+
+/** keccak256("authorizationState(address,bytes32)")[0..4] (EIP-3009) */
+const AUTHORIZATION_STATE = '0xe94a0102'
+
+/**
+ * Whether an EIP-3009 authorization nonce of `from` is already used (or cancelled) on the USDC contract (ADR-66).
+ * Read-only; null when the node does not answer or answers something that is not a word, so the caller can go ahead
+ * rather than refuse a buyer for our node's trouble.
+ */
+export async function authorizationUsed(env: Env, from: string, nonce: string): Promise<boolean | null> {
+  try {
+    const data = AUTHORIZATION_STATE + from.toLowerCase().replace(/^0x/, '').padStart(64, '0') + nonce.toLowerCase().replace(/^0x/, '').padStart(64, '0')
+    const raw = await Promise.race([
+      rpc<string>(env, 'eth_call', [{ to: chainFor(env).usdc, data }, 'latest']),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('authorization state read timed out')), BALANCE_TIMEOUT_MS).unref?.()),
+    ])
+    if (typeof raw !== 'string' || !/^0x[0-9a-f]{64}$/i.test(raw)) return null
+    return BigInt(raw) !== 0n
+  } catch {
+    return null
+  }
 }
 
 /** Test hook: forget cached balances. */

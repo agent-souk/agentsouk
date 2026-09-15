@@ -82,6 +82,10 @@ export type AlertDraft = {
   body: string
   url?: string | null
   data?: Record<string, unknown>
+  /** raise() may replace a row with this key that has not gone out yet (never stored) */
+  upgrade?: boolean
+  /** a new row waits this long before its first delivery, so later facts can still bring it up to date (never stored) */
+  holdMs?: number
 }
 
 type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ status: number; text?: () => Promise<string> }>
@@ -125,7 +129,7 @@ export async function raise(draft: AlertDraft, now = Date.now(), opts: { upgrade
     flooded = (delivered[0]?.n ?? 0) >= capFor(draft, cap)
   }
   // Held back, not dropped: the row stays pending and comes round again when the rolling hour has room.
-  const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now)
+  const id = await insert(draft, 'pending', now, flooded ? `held back: more than ${cap} alerts delivered in the last hour` : null, flooded ? now + ALERT_DEFER_MS : now + (draft.holdMs ?? 0))
   if (!id && opts.upgrade) return upgradePending(draft, now)
   // Only for a row that was actually written and held back: the second emission of the same fact (every job event
   // is emitted once per party) collides on the key and is not queued, so it must not be named as "held back".
@@ -264,6 +268,57 @@ export function classifyPayment(f: JobFacts): AlertDraft | null {
   return null
 }
 
+/** After this many payments to us from one outside buyer in 24 hours, its further payments share one line per six-hour slot (ADR-66). */
+export const PAYMENT_ALERTS_PER_BUYER_PER_DAY = 3
+/** How long the slot line waits before it goes out: a burst is one message with its count, not a message with the fourth payment's (ADR-66 audit). */
+export const REPEAT_PAYMENT_HOLD_MS = 10 * 60_000
+
+/**
+ * ADR-66: a buyer that comes back and pays again and again is one fact per slot, not one alert per payment. On
+ * 2026-09-15 one wallet paid for fifteen extractions in twelve minutes: fifteen notable alerts, and the hourly cap
+ * held six of them - and everything behind them - back. A buyer's first payments of a day still alert one by one,
+ * because a new buyer paying is the news; from the fourth on, one line per six-hour slot names how many and how much,
+ * waits ten minutes and is brought up to date meanwhile, and carries every payer wallet of the day, so the our-money check
+ * at delivery sees all of them. Only payments to US: a payment between two outsiders is the figure and alerts each time.
+ */
+async function repeatPayment(f: JobFacts, via: 'x402' | null): Promise<AlertDraft | null> {
+  if (f.job.firstPartyInvolved === false || !f.job.paidAt || !(f.seller?.firstParty && !f.buyer?.firstParty)) return null
+  // Window and slot hang on the payment itself, not on the moment it is classified: job.paid is emitted once per party
+  // and the x402 endpoint raises again later, and all of them must arrive at the same count and the same row.
+  const at = f.job.paidAt
+  const inWindow = and(eq(jobs.env, f.job.env), eq(jobs.buyerAgentId, f.job.buyerAgentId), eq(jobs.firstPartyInvolved, true), gte(jobs.paidAt, at - 24 * 3_600_000), lte(jobs.paidAt, at))
+  const [earlier] = await db()
+    .select({ n: sql<number>`count(*)` })
+    .from(jobs)
+    .where(and(inWindow, or(lt(jobs.paidAt, f.job.paidAt), and(eq(jobs.paidAt, f.job.paidAt), lt(jobs.id, f.job.id)))))
+  const nth = (earlier?.n ?? 0) + 1
+  if (nth <= PAYMENT_ALERTS_PER_BUYER_PER_DAY) return null
+  const pays = await db()
+    .select({ payer: settlements.payerAddress, amount: settlements.amount })
+    .from(settlements)
+    .innerJoin(jobs, eq(settlements.jobId, jobs.id))
+    .where(and(inWindow, eq(settlements.kind, 'payment'), eq(settlements.status, 'settled')))
+  const payers = [...new Set([...pays.map((p) => p.payer.toLowerCase()), ...f.payers])]
+  const total = pays.reduce((sum, p) => sum + p.amount, 0)
+  const who = f.buyer?.handle ?? f.job.buyerAgentId
+  return {
+    env: f.job.env,
+    tier: 'notable',
+    key: `paid-again:${f.job.env}:${f.job.buyerAgentId}:${Math.floor(at / ORDER_ALERT_SLOT_MS)}`,
+    title: `${who} keeps paying us: ${nth} payments in 24 h, ${formatUsdc(total)} (${f.job.env})`,
+    body: [
+      jobLine(f),
+      '',
+      `After ${PAYMENT_ALERTS_PER_BUYER_PER_DAY} payments from one buyer in a day its further payments share one line per six-hour slot. The line waits ${Math.round(REPEAT_PAYMENT_HOLD_MS / 60_000)} minutes before it goes out and counts what came in meanwhile; payments after that stay on GET ${base()}/v1/admin/overview until the next slot. The first payments of every buyer still alert one by one.${via === 'x402' ? ' Paid through POST /v1/x402 without an account.' : ''}`,
+      `payer wallets: ${payers.join(', ')}`,
+    ].join('\n'),
+    url: explorerTxUrl(networkFor(f.job.env), f.transaction) ?? `${base()}/v1/jobs/${f.job.id}`,
+    data: { job_id: f.job.id, env: f.job.env, buyer: f.buyer?.handle, seller: f.seller?.handle, payments_24h: nth, amount_24h: total, payers, transaction: f.transaction, first_party_involved: f.job.firstPartyInvolved, ...(via ? { via } : {}) },
+    upgrade: true,
+    holdMs: REPEAT_PAYMENT_HOLD_MS,
+  }
+}
+
 /** After this many orders from one buyer in 24 hours, its further orders share one line per six-hour slot (ADR-63). */
 export const ORDER_ALERTS_PER_BUYER_PER_DAY = 3
 export const ORDER_ALERT_SLOT_MS = 6 * 3_600_000
@@ -393,7 +448,8 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
   const jobId = (e.data as { job_id?: unknown })?.job_id
   if (e.type === 'job.paid' && typeof jobId === 'string') {
     const f = await factsFor(jobId, true)
-    return f ? classifyPayment(f) : null
+    const draft = f ? classifyPayment(f) : null
+    return draft && f ? ((await repeatPayment(f, null)) ?? draft) : draft
   }
   if (e.type === 'job.created' && typeof jobId === 'string') {
     const f = await factsFor(jobId, false)
@@ -487,6 +543,10 @@ export async function classify(e: EventRecord): Promise<AlertDraft | null> {
  * transaction happens inside one HTTP request and its point is precisely that somebody outside paid.
  */
 export async function raiseX402Purchase(input: { env: Env; jobId: string; listingTitle: string; amount: number; payer: string; transaction: string; firstBuy: boolean }, now = Date.now()): Promise<string | null> {
+  // ADR-66: a buyer's fourth payment of the day goes into the slot line the classifier just wrote, not into a row of its own
+  const facts = await factsFor(input.jobId, true)
+  const again = facts ? await repeatPayment(facts, 'x402') : null
+  if (again) return raise(again, now, { upgrade: true })
   const tx = explorerTxUrl(networkFor(input.env), input.transaction)
   // The SAME key the classifier used for this payment, so the two paths produce one alert and not two: the
   // payment already went through payJob, which emitted job.paid, which wrote `paid:<job>`. This upgrades that
@@ -656,7 +716,7 @@ export async function alertsStatus(now = Date.now()) {
 onEvent(async (e) => {
   try {
     const draft = await classify(e)
-    if (draft) await raise(draft, e.createdAt)
+    if (draft) await raise(draft, e.createdAt, { upgrade: draft.upgrade })
   } catch (err) {
     log.warn({ err, type: e.type }, 'operator alert classification failed')
   }

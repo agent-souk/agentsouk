@@ -60,8 +60,8 @@ const pkOf = (digit: string) => '0x' + ('0' + digit).repeat(32)
 const addr = (pk: string) => privateKeyToAddress(pk)
 
 /** The x402 payment payload a buyer builds after reading the 402, base64 as the header carries it - signed by `pk`. */
-const paymentHeader = (pk: string, to: string, value: number, validForSeconds = 900, opts: { from?: string; signWith?: string } = {}) => {
-  const authorization = { from: opts.from ?? addr(pk), to, value: String(value), validAfter: '0', validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: '0x' + '11'.repeat(32) }
+const paymentHeader = (pk: string, to: string, value: number, validForSeconds = 900, opts: { from?: string; signWith?: string; validAfter?: number; nonce?: string } = {}) => {
+  const authorization = { from: opts.from ?? addr(pk), to, value: String(value), validAfter: String(opts.validAfter ?? 0), validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: opts.nonce ?? '0x' + '11'.repeat(32) }
   const sig = secp256k1.sign(transferAuthorizationDigest('test', authorization), hexToBytes((opts.signWith ?? pk).slice(2)), { prehash: false, format: 'recovered', lowS: true })
   const signature = '0x' + bytesToHex(concatBytes(sig.slice(1, 65), Uint8Array.of(27 + sig[0]!)))
   return Buffer.from(JSON.stringify({ x402Version: 2, scheme: 'exact', payload: { signature, authorization } })).toString('base64')
@@ -228,6 +228,116 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     const expired = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, -10))
     expect(expired.status).toBe(400)
     expect(String(expired.body.error.message)).toContain('expired')
+  })
+
+  it('refuses a wallet that cannot pay before any work is ordered or any account created (ADR-66)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('9')
+    const wallet = addr(pk)
+    let settleCalls = 0
+    _setSettleFetchForTests(async () => {
+      settleCalls += 1
+      return { ok: false, status: 400, text: async () => JSON.stringify({ success: false, errorReason: 'insufficient_funds' }) }
+    })
+    chain.usdcBalanceOf = (a) => (a.toLowerCase() === wallet.toLowerCase() ? BigInt(PRICE - 1) : 50_000_000n)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    expect(r.status, JSON.stringify(r.body)).toBe(409)
+    expect(r.body.error.code).toBe('x402_insufficient_funds')
+    expect(r.body.error.message).toContain('0.249999 USDC')
+    expect(r.body.error.hint).toContain('Nothing was charged and no job was created')
+    expect(await db().query.jobs.findFirst({ where: eq(jobs.listingId, listingId) })).toBeUndefined()
+    expect(await db().query.agents.findFirst({ where: eq(agents.walletAddress, wallet) })).toBeUndefined()
+    expect(settleCalls).toBe(0)
+
+    // read fresh on every purchase: a wallet topped up a moment later buys at once, not a minute later
+    chain.usdcBalanceOf = () => 50_000_000n
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const ok = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+  })
+
+  it('refuses every authorization that could not settle once the work is done, before any work (ADR-66 audit)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('b')
+    const wallet = addr(pk)
+    let settleCalls = 0
+    _setSettleFetchForTests(async () => {
+      settleCalls += 1
+      return { ok: false, status: 400, text: async () => '{}' }
+    })
+    // holds exactly the price, signs for more: EIP-3009 moves the signed value, which the wallet cannot cover
+    chain.usdcBalanceOf = (a) => (a.toLowerCase() === wallet.toLowerCase() ? BigInt(PRICE) : 50_000_000n)
+    const tooMuch = await buy(listingId, paymentHeader(pk, seller.wallet_address!, 1_000_000_000))
+    expect(tooMuch.status, JSON.stringify(tooMuch.body)).toBe(409)
+    expect(tooMuch.body.error.code).toBe('x402_insufficient_funds')
+    expect(tooMuch.body.error.message).toContain('moves 1000.000000 USDC')
+    chain.usdcBalanceOf = () => 50_000_000n
+
+    const notYet = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { validAfter: Math.floor(Date.now() / 1000) + 600 }))
+    expect(notYet.status).toBe(400)
+    expect(String(notYet.body.error.message)).toContain('validAfter is in the future')
+
+    const tooShort = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 20))
+    expect(tooShort.status).toBe(400)
+    expect(String(tooShort.body.error.message)).toContain('at least 60 seconds ahead')
+
+    const nonce = '0x' + 'ab'.repeat(32)
+    chain.usedAuthorizations.add(`${wallet.toLowerCase()}:${nonce}`)
+    const replayed = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce }))
+    expect(replayed.status).toBe(409)
+    expect(replayed.body.error.code).toBe('x402_authorization_used')
+
+    expect(await db().query.jobs.findFirst({ where: eq(jobs.listingId, listingId) })).toBeUndefined()
+    expect(settleCalls).toBe(0)
+  })
+
+  it('counts what a wallet\'s purchases still running will move, and refuses the same authorization twice at once', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('c')
+    const wallet = addr(pk)
+    chain.usdcBalanceOf = (a) => (a.toLowerCase() === wallet.toLowerCase() ? BigInt(PRICE) : 50_000_000n) // one purchase's worth
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const first = buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce: '0x' + '01'.repeat(32) }))
+    let open = null
+    for (let i = 0; i < 80 && !open; i++) {
+      open = (await db().query.jobs.findFirst({ where: and(eq(jobs.listingId, listingId), eq(jobs.status, 'open')) })) ?? null
+      if (!open) await new Promise((r) => setTimeout(r, 25))
+    }
+    expect(open).not.toBeNull()
+    // the first purchase is waiting for its delivery: a second from the same wallet sees its value as committed
+    const second = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce: '0x' + '02'.repeat(32) }))
+    expect(second.status, JSON.stringify(second.body)).toBe(409)
+    expect(second.body.error.code).toBe('x402_insufficient_funds')
+    expect(second.body.error.message).toContain('committed to purchases still running here')
+    chain.usdcBalanceOf = () => 50_000_000n
+    const same = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce: '0x' + '01'.repeat(32) }))
+    expect(same.status).toBe(409)
+    expect(same.body.error.code).toBe('x402_authorization_in_use')
+    await call(app, 'POST', `/v1/jobs/${open!.id}/accept`, { key: seller.api_keys.test, body: {} })
+    await call(app, 'POST', `/v1/jobs/${open!.id}/deliver`, { key: seller.api_keys.test, body: { output: { text: 'Hallo' } } })
+    const done = await first
+    expect(done.status, JSON.stringify(done.body)).toBe(200)
+    // released: the wallet can buy again
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const again = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce: '0x' + '03'.repeat(32) }))
+    await runtime.done
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+  })
+
+  it('goes ahead as before when the node cannot say what the wallet holds', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('a')
+    const wallet = addr(pk)
+    chain.usdcBalanceOf = () => {
+      throw new Error('node unavailable')
+    }
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
   })
 
   it('refuses a free listing and a quote listing rather than putting a meaningless price in a 402', async () => {
@@ -468,6 +578,35 @@ describe('an x402 purchase raises exactly one operator alert (ADR-49)', () => {
     expect(paid[0]!.title).toContain('x402')
     expect((paid[0]!.data as Record<string, unknown>).via).toBe('x402')
     expect((paid[0]!.data as Record<string, unknown>).first_buy).toBe(true)
+  })
+
+  it('a buyer paying again and again gets one line per slot from its fourth payment, kept up to date (ADR-66)', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: 'https://ntfy.sh/agentsouk-x402-test', OPERATOR_ALERT_MIN_TIER: 'quiet' })
+    _setAlertFetchForTests(async () => ({ status: 200, text: async () => 'ok' }))
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('6')
+    const wallet = addr(pk)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const { deliverAlerts } = await import('../../ops/alerts.js')
+    for (let i = 0; i < 5; i++) {
+      const runtime = deliverWhenOrdered(seller, listingId)
+      const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+      await runtime.done
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      await deliverAlerts(Date.now()) // the sweep runs every 15 s in production: the slot line must not go out with the fourth payment
+    }
+    const rows = await db().query.operatorAlerts.findMany()
+    expect(rows.filter((a) => a.key.startsWith('paid:'))).toHaveLength(3)
+    const again = rows.filter((a) => a.key.startsWith('paid-again:'))
+    expect(again).toHaveLength(1)
+    expect(again[0]!.status).toBe('pending')
+    expect(again[0]!.title).toContain('keeps paying us: 5 payments in 24 h, 1.250000 USDC')
+    expect(again[0]!.data).toMatchObject({ payments_24h: 5, amount_24h: 5 * PRICE, payers: [wallet.toLowerCase()], via: 'x402' })
+    expect(again[0]!.tier).toBe('notable')
+    await deliverAlerts(Date.now() + 11 * 60_000)
+    const out = await db().query.operatorAlerts.findFirst({ where: eq(operatorAlerts.id, again[0]!.id) })
+    expect(out!.status).toBe('sent')
+    expect(out!.title).toContain('5 payments')
   })
 })
 
