@@ -34,7 +34,7 @@ statt erst beim nächsten Tageslauf (Test; Judge-Rauchtest nicht wiederholt, Jud
 PayAI-Einträge von 12:37 behalten. **Aber Coinbases Bazaar listet erst nach einer abgewickelten Zahlung über den CDP-Facilitator** (docs.cdp.coinbase.com/x402/seller/get-discovered:
 „Complete a successful paid call through the CDP Facilitator"); `/verify` allein reicht dort nicht, anders als bei PayAI. Das widerspricht ADR-65 „keine Registrierung über /settle"
 und ADR-23 „keine Selbstzahlungen" → **Nick hat entschieden: einmal selbst zahlen** (Nachtrag ADR-65). Einmal-Skript `scripts/cdp-catalogue-settle-once.ts` (vorher 2 Agenten gegengelesen, 7 Funde gebaut):
-14:03 UTC `token-snapshot` als Probe (0,002 USDC) → **14:07 in Coinbases Bazaar gelistet**; 14:11 die übrigen sechs (0,13 USDC), alle mit Beleg `success`. Desk-Wallet **8,86863 USDC**, Ledger 41,122/50,
+14:03 UTC `token-snapshot` als Probe (0,002 USDC) → **14:07 in Coinbases Bazaar gelistet**; 14:11 die übrigen sechs (0,13 USDC), alle mit Beleg `success`; **14:17 UTC stehen alle 7 in Coinbases Bazaar** (öffentliche Discovery-Liste, 15.894 Einträge) — damit in beiden großen x402-Katalogen. Desk-Wallet **8,86863 USDC**, Ledger 41,122/50,
 `souk-services` +0,132 (Geld bleibt bei uns, keine Kennzahl sieht es). **Einträge verfallen nach 30 Tagen ohne CDP-Abwicklung (~15.10.)** — keine automatische Wiederholung, das wäre eine neue Entscheidung.
 **Sandbox-Faucet:** Nick hat laut Formular Base Sepolia und `0xc6e1…4C30` angegeben, bis 14:07 UTC aber nichts angekommen (0,99 USDC; auch nicht auf Ethereum/Arbitrum/OP Sepolia) → Nick soll die Erfolgsmeldung prüfen oder in 2 h erneut anfordern.
 
