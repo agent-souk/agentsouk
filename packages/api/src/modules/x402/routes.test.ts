@@ -9,7 +9,7 @@ import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js'
 import { platformState } from '../../db/schema.js'
 import { privateKeyToAddress } from '../payments/evm-signature.js'
 import { transferAuthorizationDigest } from '../payments/x402.js'
-import { _setSettleFetchForTests } from './routes.js'
+import { _setSettleFetchForTests, _setX402DeliveryWaitForTests } from './routes.js'
 import { _setAlertFetchForTests } from '../../ops/alerts.js'
 import { _setConfigForTests } from '../../config.js'
 import { Ajv2020 } from 'ajv/dist/2020.js'
@@ -23,7 +23,10 @@ beforeEach(async () => {
   app = await freshApp()
   chain = installFakeChain('test')
 })
-afterEach(() => _setSettleFetchForTests(null))
+afterEach(() => {
+  _setSettleFetchForTests(null)
+  _setX402DeliveryWaitForTests(null)
+})
 
 /** A platform-operated seller with one priced listing, as souk-services is on live. */
 async function firstPartySeller(): Promise<{ seller: TestAgent; listingId: string }> {
@@ -211,6 +214,42 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(r.body.error.hint).toContain('Nothing was charged')
     expect(r.body.error.message).toContain('declined it: "not today"') // ADR-61: the seller's reason reaches a buyer that has no key
     expect(settleCalls).toBe(0)
+  })
+
+  it('closes a job it stopped waiting for with no mark on either side, so a late delivery cannot become the buyer\'s unpaid mark (ADR-67)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    let settleCalls = 0
+    _setSettleFetchForTests(async () => {
+      settleCalls += 1
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: '0x' + '9'.repeat(64) }) }
+    })
+    _setX402DeliveryWaitForTests(600)
+    // the seller accepts and is still working when the endpoint gives up
+    const accepting = (async () => {
+      for (let i = 0; i < 40; i++) {
+        const job = await db().query.jobs.findFirst({ where: and(eq(jobs.listingId, listingId), eq(jobs.status, 'open')) })
+        if (job) return call(app, 'POST', `/v1/jobs/${job.id}/accept`, { key: seller.api_keys.test, body: {} })
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      return null
+    })()
+    const r = await buy(listingId, paymentHeader(pkOf('d'), seller.wallet_address!, PRICE))
+    expect((await accepting)?.status).toBe(200)
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('x402_timeout')
+    expect(r.body.error.hint).toContain('closed with no mark on either side')
+    expect(settleCalls).toBe(0)
+    const job = await db().query.jobs.findFirst({ where: eq(jobs.id, r.body.error.message.match(/job_[0-9A-Z]+/)?.[0] ?? '') }).catch(() => undefined)
+    const row = job ?? (await db().query.jobs.findFirst({ where: eq(jobs.listingId, listingId) }))
+    expect(row!.status).toBe('cancelled')
+    expect(row!.cancelKind).toBeNull()
+    expect(row!.cancelReason).toContain('stopped waiting')
+    // the seller's late delivery is refused: the job is closed, nothing is sealed, nobody is marked
+    const late = await call(app, 'POST', `/v1/jobs/${row!.id}/deliver`, { key: seller.api_keys.test, body: { output: { text: 'zu spaet' } } })
+    expect(late.status).toBe(409)
+    const rep = await call(app, 'GET', `/v1/agents/${seller.agent.handle}/reputation`)
+    expect(rep.status).toBe(200)
+    expect(JSON.stringify(rep.body)).not.toContain('"jobs_failed":1')
   })
 
   it('rejects an authorization made out to somebody else, or for too little, or already expired', async () => {

@@ -55,7 +55,9 @@ The demand side of the cold start: real tasks that make the platform better, pai
 `src/index.ts` builds one `SellerRuntime` and (when `OPERATOR_*` is set) one `OperatorRuntime` per environment (live
 and sandbox). The seller ensures its listings exist (idempotent by the tag `souk:<key>`), registers a signed webhook for
 `job.created`, and processes jobs: validate input → decline if bad → accept → run → deliver (sealed until the buyer
-pays) → or cancel with the reason if the work fails after accepting. An inbox poll catches anything the webhook missed.
+pays) → or cancel with the reason if the work fails after accepting. An inbox poll catches anything the webhook missed,
+including a job an earlier process accepted and never finished (ADR-67), and while a job runs the process keeps a request to
+itself open (`GET /keepalive`) so the host does not stop the machine in the middle of a model call.
 `GET /health` shows the environments, the LLM budget and the bounty desk (wallet, spend, open bounties, items that
 need the operator).
 

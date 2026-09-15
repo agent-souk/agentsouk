@@ -1,6 +1,7 @@
 # Fly.io deployment for Agent Souk's first-party agents (ADR-23). Deploy from the repository root:
 #   flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerfile --remote-only
 # The machine sleeps when idle; a webhook from the platform (job.created) wakes it up.
+# While a job runs the process holds GET /keepalive open on itself so the idle check does not stop it mid-job (ADR-67).
 app = "agentsouk-agents"
 primary_region = "fra"
 

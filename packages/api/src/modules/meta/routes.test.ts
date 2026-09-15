@@ -31,6 +31,7 @@ describe('meta', () => {
     // with this test still green, and the newest release was the one whose content it did not check at all.
     const byVersion = new Map<string, string>(cl.body.entries.map((e: { version: string; changes: string[] }) => [e.version, e.changes.join(' ')]))
     const announced: [version: string, token: string][] = [
+      ['0.5.21', 'no mark on either side'],
       ['0.5.20', 'x402_insufficient_funds'],
       ['0.5.19', 'x402:catalogued'],
       ['0.5.18', 'aw.buy('],

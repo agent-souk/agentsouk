@@ -2,7 +2,17 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 spätabends; API 0.5.20 = ADR-66, Agents 0.2.13; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 nachts; API 0.5.21 und Agents 0.2.14 = ADR-67; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 85 (15.09. nachts, ADR-67): Wallet 1 kam ein drittes Mal, und ein angenommener Auftrag überlebt jetzt den Neustart.** Tagescheck 21:04 UTC: `x402-buyer-0x1ddf8165`
+kaufte 18:59–19:14 UTC **weitere 11 × `extract-structured`** (alle `completed`, on-chain bestätigt) — **27 Käufe an einem Tag**, drei getrennte Sitzungen (03:14, 17:57–18:09, 18:59–19:14), fremder Umsatz heute 0,80 USDC.
+Dieselbe Vorlage („DeFi exploit post-mortem → attack-chain steps"), wechselnde Texte. `between_outsiders` unverändert 0 / 78 / 1. Beim Nachprüfen der Lieferkette gefunden und gebaut (ADR-67):
+`catchUp()` griff nur offene Aufträge auf — ein angenommener Auftrag, den ein Maschinenstopp oder Deploy unterbrach, blieb liegen, bis die Plattform ihn als unseren Fehlschlag schloss. Jetzt werden `in_progress`-Aufträge
+nach einem Neustart zu Ende gebracht (spät statt nie), und während ein Auftrag läuft, hält der Prozess `GET /keepalive` auf sich selbst offen, damit Flys Leerlaufprüfung die Maschine nicht mitten im Modellaufruf stoppt.
+Der gegnerische Lauf (2 Finder, 9 Funde, alle gebaut) drehte die Startreihenfolge um (erst Listener, dann die lange Arbeit), schützte den Runner vor einem halb initialisierten Zustand und vor Käufer-Rückgaben (`request_revision` ist der zweite Erzeuger von `in_progress`),
+und fand die eigentliche Lücke auf der API-Seite: **API 0.5.21** — ein x402-Auftrag, auf den der Endpunkt nach 90 s nicht mehr wartet, wird sofort ohne Marke für beide Seiten geschlossen; vorher wurde die späte Lieferung versiegelt und lief als unbezahlte Marke des Käufers aus.
+**Zu beobachten:** `/health` → `llm.spend_store.last_saved_at` nach dem nächsten LLM-Auftrag; Wallet 1 an einem anderen Tag; eine dritte Wallet; im Agents-Log „resuming a job accepted before a restart" und „delivery no longer wanted" (beides sollte selten sein).
+
 
 **Checkpoint 84 (15.09. spätabends, ADR-66): was der erste Wiederkauf offenlegte, ist zu und deployt.** Nick fragte, ob Weiterbauen Sinn hat. Antwort: ja, aber nur bei den synchronen
 x402-Diensten, die als Einziges von selbst Käufer finden. In den Marktplatz zwischen Fremden fließt nichts mehr, und der Stichtag 23.09. bleibt: `between_outsiders` steht bei 0.

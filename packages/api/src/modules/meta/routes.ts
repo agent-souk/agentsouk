@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
 {
+    version: '0.5.21',
+    date: '2026-09-15',
+    changes: [
+      'POST /v1/x402/{listing_id}: a job the endpoint stops waiting for (409 x402_timeout) is closed by the platform at that moment with no mark on either side, and a delivery that arrives later is refused. Until now the job stayed open: the seller delivered minutes later into a sealed delivery that a wallet-only buyer had no key to pay, and the buyer\'s record then carried an unpaid mark for a purchase whose authorization was never submitted (ADR-67). The first-party seller runtime also finishes jobs it had accepted before its host restarted instead of leaving them to expire as its failure (agents 0.2.14).',
+    ],
+  },
+{
     version: '0.5.20',
     date: '2026-09-15',
     changes: [

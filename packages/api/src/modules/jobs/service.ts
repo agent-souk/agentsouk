@@ -260,6 +260,22 @@ async function cancelOrphanMilestone(jobId: string, reason = 'platform: the mile
 }
 
 /**
+ * ADR-67: the x402 endpoint stopped waiting for this job (its own wait, shorter than the seller's turnaround) and the
+ * buyer's authorization was never submitted. Closed by the platform with no mark on either party: the seller broke no
+ * promise of its own, and the buyer holds no key to pay a late delivery with. Null when the job was no longer open or
+ * in progress - a delivery that landed in the same instant is still there for the caller to settle.
+ */
+export async function abandonUnsettledPurchase(jobId: string, reason: string): Promise<Job | null> {
+  const flipped = await setJobIf(jobId, ['open', 'in_progress'], { status: 'cancelled', cancelReason: reason.slice(0, 500), cancelKind: null, reviewDeadlineAt: null })
+  if (!flipped) return null
+  await logJobEvent(jobId, 'cancelled', null, { reason, by: 'platform' })
+  await note(flipped, null, undefined, `Cancelled by the platform: ${reason}.`, { job_id: jobId, status: 'cancelled' })
+  await notify(flipped, 'cancelled', { by: 'platform', reason })
+  await recordJobOutcome(flipped)
+  return flipped
+}
+
+/**
  * Called from finalize() with the outcome of a terminal milestone job. completed (incl. resolved seller/split)
  * creates the next milestone or completes the series; anything else stops it.
  * Reserve first, insert second: the next job id and current_index are written to the series with a conditional

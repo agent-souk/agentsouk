@@ -86,6 +86,69 @@ describe('SellerRuntime', () => {
     expect(await rt.handleEvent({ type: 'job.created', data: { job_id: j.id, seller_id: seller.agent.id } })).toBe('skipped')
   })
 
+  it('finishes a job an earlier process accepted and never delivered, and counts its work while it runs (ADR-67)', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const slow: ServiceDef = {
+      key: 'slow',
+      listing: { ...boom.listing, title: 'Slow but sure', description: 'A service that waits until the test lets it finish.' },
+      validate: () => null,
+      run: async () => {
+        await gate
+        return { output: { ok: true }, preview: { ok: true }, message: 'done' }
+      },
+    }
+    const rt = new SellerRuntime(client(seller.api_keys.test), [validateJson, boom, slow], 'test')
+    await rt.init()
+    const b = client(buyer.api_keys.test)
+    const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
+    const byTag = (tag: string) => mine.body.data.find((l: any) => l.tags.includes(tag)).id as string
+    // the process that accepted these two was stopped before it delivered: the platform shows them in_progress
+    const left = await b.jobs.create({ listing_id: byTag('souk:validate-json'), input: { schema: { type: 'object' }, data: {} } })
+    const broken = await b.jobs.create({ listing_id: byTag('souk:boom'), input: {} })
+    await call(app, 'POST', `/v1/jobs/${left.id}/accept`, { key: seller.api_keys.test, body: {} })
+    await call(app, 'POST', `/v1/jobs/${broken.id}/accept`, { key: seller.api_keys.test, body: {} })
+    expect((await b.jobs.get(left.id)).status).toBe('in_progress')
+    expect(await rt.catchUp()).toBe(2)
+    expect((await b.jobs.get(left.id)).status).toBe('delivered') // late, not never
+    expect((await b.jobs.get(broken.id)).status).toBe('cancelled') // a resumed job that fails is still an honest failure
+    expect(await rt.catchUp()).toBe(0)
+    // a job accepted and delivered is nothing to resume
+    expect(await rt.processJob(left.id)).toBe('skipped')
+
+    // while a job runs, the runtime says so - that is what keeps the host from stopping the machine
+    const job = await b.jobs.create({ listing_id: byTag('souk:slow'), input: {} })
+    expect(rt.working).toBe(0)
+    const running = rt.processJob(job.id)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(rt.working).toBe(1)
+    release()
+    expect(await running).toBe('delivered')
+    expect(rt.working).toBe(0)
+
+    // a buyer sending the delivery back is the other way a job is in_progress: same output again, with a note,
+    // no model call - never mistaken for a restart
+    await b.jobs.requestRevision(job.id, 'please add more fields') // the free job: a priced one is sealed until paid
+    expect((await b.jobs.get(job.id)).status).toBe('in_progress')
+    expect(await rt.catchUp()).toBe(1)
+    const again = await b.jobs.get(job.id)
+    expect(again.status).toBe('delivered')
+    expect(again.revision_count).toBe(1)
+    expect(again.output).toEqual({ ok: true })
+    const thread = await call(app, 'GET', `/v1/threads/${again.thread_id}/messages`, { key: buyer.api_keys.test })
+    expect(JSON.stringify(thread.body)).toContain('Delivered again unchanged')
+
+    // a runtime that has not initialised touches nothing, and one that does not serve the listing leaves an
+    // accepted job to the platform instead of failing it
+    const other = await b.jobs.create({ listing_id: byTag('souk:boom'), input: {} })
+    await call(app, 'POST', `/v1/jobs/${other.id}/accept`, { key: seller.api_keys.test, body: {} })
+    const cold = new SellerRuntime(client(seller.api_keys.test), [validateJson], 'test')
+    expect(await cold.catchUp()).toBe(0)
+    await cold.init()
+    expect(await cold.catchUp()).toBe(0)
+    expect((await b.jobs.get(other.id)).status).toBe('in_progress')
+  })
+
   it('registers its webhook once', async () => {
     const rt = new SellerRuntime(client(seller.api_keys.test), [], 'test')
     await rt.init()

@@ -16,7 +16,7 @@ import { rateLimit } from '../../middleware/ratelimit.js'
 import { createAgent, recoverKeys } from '../agents/service.js'
 import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyDigestSignature } from '../payments/evm-signature.js'
-import { acceptDelivery, createJob, payJob } from '../jobs/service.js'
+import { abandonUnsettledPurchase, acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import { authorizationUsed, usdcBalance } from '../payments/chain.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
@@ -70,6 +70,11 @@ export const X402_SETTLE_MARGIN_MS = 10_000
  */
 const x402ValueRunning = new Map<string, number>()
 const x402AuthorizationsRunning = new Set<string>()
+/** How long the endpoint waits for the seller's delivery before it gives up (tests shorten it). */
+let deliveryWaitMs = 90_000
+export function _setX402DeliveryWaitForTests(ms: number | null) {
+  deliveryWaitMs = ms ?? 90_000
+}
 
 
 export function parsePaymentHeader(header: string): PaymentPayload {
@@ -489,8 +494,15 @@ export function x402Routes() {
         const { agent: buyer, credentials, created, recovered } = await buyerForWallet(auth.from)
         const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
         // never wait past the point where the authorization could still be submitted
-        const waitMs = Math.min(90_000, Number(auth.validBefore) * 1000 - Date.now() - X402_SETTLE_MARGIN_MS)
-        const state = await waitForDelivery(job.id, waitMs)
+        const waitMs = Math.min(deliveryWaitMs, Number(auth.validBefore) * 1000 - Date.now() - X402_SETTLE_MARGIN_MS)
+        let state = await waitForDelivery(job.id, waitMs)
+        if (state === null) {
+          // ADR-67: a job this endpoint stops waiting for is closed now, with no mark on either party. Left open, the
+          // seller delivered it minutes later into a sealed delivery the wallet-only buyer could never pay, which then
+          // expired as the BUYER's unpaid mark. A delivery landing in this very instant wins and is settled below.
+          const closed = await abandonUnsettledPurchase(job.id, `platform: the x402 buyer stopped waiting after ${Math.round(waitMs / 1000)} seconds; its authorization was never submitted`)
+          if (!closed) state = await waitForDelivery(job.id, 0)
+        }
         if (state !== 'delivered') {
           // The seller's own words, if it gave any (ADR-61): a wallet-only buyer has no key to read the thread, and
           // this response is the only thing it sees. decline() keeps the reason in the job's event log.
@@ -510,7 +522,9 @@ export function x402Routes() {
           throw errors.state(
             state === 'gone' ? 'x402_not_delivered' : 'x402_timeout',
             state === 'gone' ? `The seller did not deliver this job${declined ? ` and ${declined.type === 'cancelled' ? 'cancelled' : 'declined'} it${reason ? `: "${reason}"` : ''}` : ''}.` : `The seller had not delivered within ${Math.round(waitMs / 1000)} seconds.`,
-            `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}; if a delivery arrives later you can still pay it the ordinary way (GET ${base()}/v1/jobs/${job.id}).`,
+            state === 'gone'
+              ? `Nothing was charged: your authorization was never submitted, and it expires on its own. The job is ${job.id}.`
+              : `Nothing was charged: your authorization was never submitted, and it expires on its own. The job (${job.id}) was closed with no mark on either side; order again with a fresh authorization.`,
           )
         }
 

@@ -23,7 +23,8 @@ export class LlmDeclined extends Error {
   }
 }
 export class LlmBudgetExceeded extends Error {
-  constructor(message: string) {
+  /** true when the budget could not be checked at all (store unread) and the same call may well pass in a minute */
+  constructor(message: string, readonly retryLater = false) {
     super(message)
     this.name = 'LlmBudgetExceeded'
   }
@@ -295,7 +296,7 @@ export class Llm {
   async complete(input: CompleteInput): Promise<Completion> {
     if (!this.client) throw new LlmDeclined('this service is temporarily disabled (no model access)')
     await this.restore()
-    if (!this.restored) throw new LlmBudgetExceeded(CHECK_LATER)
+    if (!this.restored) throw new LlmBudgetExceeded(CHECK_LATER, true)
     const estimate = Llm.estimateUsd(input.system.length + input.user.length, input.maxTokens)
     if (input.claimHold) this.liveHolds().shift() // this call takes the place of the estimate its job's check held
     if (!this.canAfford(estimate)) throw new LlmBudgetExceeded(USED_UP)

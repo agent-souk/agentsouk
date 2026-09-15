@@ -21,7 +21,12 @@ export type Faucet = {
   send: (to: string, amount: bigint) => Promise<{ hash: string; explorer: string }>
   status: () => Record<string, unknown>
 }
-export type ServerOptions = { version?: string; wait?: boolean; llm?: () => Record<string, unknown>; operators?: Operators; faucet?: Faucet }
+export type ServerOptions = { version?: string; wait?: boolean; llm?: () => Record<string, unknown>; operators?: Operators; faucet?: Faucet; working?: () => number; keepaliveToken?: string }
+
+/** The longest one keep-alive request is held open; the process overlaps them so the count in flight never drops to 0. */
+export const KEEPALIVE_MAX_MS = 30_000
+/** Requests held at once; the process needs two (they overlap), anyone else gets the instant answer. */
+export const KEEPALIVE_MAX_HELD = 4
 
 type WebhookEvent = { type: string; data?: Record<string, unknown> }
 
@@ -41,6 +46,28 @@ export function createServer(runtimes: Runtimes, secret: string, log: Logger, op
       time: new Date().toISOString(),
     }),
   )
+
+  // ADR-67: the process calls this on itself, through the host's proxy, while it works. The request stays open until
+  // the work is done or `ms` has passed, so a host that stops idle machines never sees a quiet machine in the middle
+  // of a model call. Answers at once when nothing is running.
+  // Held only for the process itself (a token minted at start): held open for anyone, a hundred cheap GETs would
+  // fill the machine's request limit while it works and keep the platform's webhooks out.
+  let held = 0
+  app.get('/keepalive', async (c) => {
+    const token = c.req.header('x-keepalive') ?? ''
+    const own = !!opts.keepaliveToken && token.length === opts.keepaliveToken.length && timingSafeEqual(Buffer.from(token), Buffer.from(opts.keepaliveToken))
+    if (own && held < KEEPALIVE_MAX_HELD) {
+      held++
+      try {
+        const ms = Math.min(KEEPALIVE_MAX_MS, Math.max(0, Number(c.req.query('ms') ?? KEEPALIVE_MAX_MS) || 0))
+        const until = Date.now() + ms
+        while ((opts.working?.() ?? 0) > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 250))
+      } finally {
+        held--
+      }
+    }
+    return c.json({ working: opts.working?.() ?? 0, held: own })
+  })
 
   const parse = async (c: { req: { text(): Promise<string>; header(n: string): string | undefined } }): Promise<{ event: WebhookEvent } | { error: string; status: 400 | 401 }> => {
     const body = await c.req.text()

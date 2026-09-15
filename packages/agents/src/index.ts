@@ -25,6 +25,7 @@
  *                              x402 catalogue (the "Bazaar") once a day, next to PayAI's, which needs no key. Registration signs with the operator wallet and settles nothing.
  */
 import { serve } from '@hono/node-server'
+import { randomBytes } from 'node:crypto'
 import { AgentSouk } from 'agentsouk'
 import { Llm, llmSpendKey, type DailySpend } from './llm.js'
 import { CATALOG } from './operator/catalog.js'
@@ -34,7 +35,7 @@ import { DEFAULT_CONFIG, OperatorRuntime } from './operator/runtime.js'
 import { CHAINS, typedDataSigner, UsdcWallet } from './operator/usdc.js'
 import { CatalogRegistrar, cdpFacilitator, platformMemoryStore, type Facilitator } from './operator/bazaar.js'
 import { SellerRuntime, type Env } from './runner.js'
-import { createServer, type Operators, type Runtimes } from './server.js'
+import { createServer, KEEPALIVE_MAX_MS, type Operators, type Runtimes } from './server.js'
 import { allServices } from './services/index.js'
 
 const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ time: new Date().toISOString(), msg, ...extra }))
@@ -48,7 +49,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const VERSION = '0.2.13'
+const VERSION = '0.2.14'
 const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: `agentsouk-agents/${VERSION}` })
 
 // One model budget per environment (ADR-66), each counted in the seller identity's platform memory under its own key
@@ -145,24 +146,28 @@ if (!Object.keys(runtimes).length && !Object.keys(operators).length) {
 // Read before the first job; a read that fails here is retried by every budget check, which declines until it succeeds.
 await Promise.all(Object.values(llms).map((l) => l.restore()))
 
+// Identities and hooks first, then the listener, and only then the work that may take minutes (ADR-67 audit): the
+// startup catch-up now resumes the long job that outlived the last process, and while it ran nothing listened - the
+// webhook that woke the machine failed and the keep-alive below had nothing to call.
+const ready: SellerRuntime[] = []
 for (const [env, rt] of Object.entries(runtimes) as [Env, SellerRuntime][]) {
   try {
     await rt.init()
     log('runtime ready', { env, agent: rt.me?.handle, listings: rt.listingIds() })
     if (publicUrl) await rt.ensureWebhook(`${publicUrl}/webhooks/agentsouk/${env}`, secret)
-    const n = await rt.catchUp()
-    if (n) log('catch-up processed jobs', { env, jobs: n })
+    ready.push(rt)
   } catch (e) {
     log('runtime init failed', { env, error: String(e) })
   }
 }
 
+const readyOps: OperatorRuntime[] = []
 for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) {
   try {
     await op.init()
     log('operator ready', { env, agent: op.me?.handle, payments_enabled: op.paymentsEnabled, wallet: op.wallet?.address ?? null })
     if (publicUrl) await op.ensureWakeups(publicUrl, secret)
-    await op.tick()
+    readyOps.push(op)
   } catch (e) {
     log('operator init failed', { env, error: String(e) })
   }
@@ -180,7 +185,37 @@ setInterval(() => {
   }
 }, Math.max(pollMs * 10, 600_000)).unref()
 
+// ADR-67: while a job runs, the process keeps requests to itself open through the host's proxy (fly.toml stops the
+// machine when it sees no traffic for a few minutes, and a long translation can run longer than that). The webhook
+// that brought the job was answered at once, so without this the machine looks idle while it works. Two holds
+// overlap (a new one every KEEPALIVE_OVERLAP_MS, each up to KEEPALIVE_MAX_MS), so the count in flight never drops to 0
+// between them; a hold that gets no answer is cut after KEEPALIVE_MAX_MS + 10 s so one stuck request cannot silence
+// the loop for undici's five-minute default.
+const working = () => Object.values(runtimes).reduce((n, rt) => n + rt.working, 0)
+const keepaliveToken = randomBytes(24).toString('hex')
+const KEEPALIVE_OVERLAP_MS = 15_000
+if (publicUrl) {
+  let holds = 0
+  let lastStart = 0
+  setInterval(() => {
+    if (working() === 0 || holds >= 2 || Date.now() - lastStart < KEEPALIVE_OVERLAP_MS) return
+    holds++
+    lastStart = Date.now()
+    fetch(`${publicUrl}/keepalive?ms=${KEEPALIVE_MAX_MS}`, { headers: { 'user-agent': `agentsouk-agents/${VERSION} keepalive`, 'x-keepalive': keepaliveToken }, signal: AbortSignal.timeout(KEEPALIVE_MAX_MS + 10_000) })
+      .then((res) => res.arrayBuffer())
+      .catch((e: unknown) => log('keepalive failed', { error: String(e) }))
+      .finally(() => {
+        holds--
+      })
+  }, 1_000).unref()
+}
+
 // the top level stays the live budget, as /health has always shown it; the sandbox budget sits beside it
 const llmStatus = () => ({ ...llms.live.status(), test: llms.test.status() })
-const server = createServer(runtimes, secret, log, { version: VERSION, llm: llmStatus, operators: operators as Operators, faucet })
-serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llmStatus() }))
+const server = createServer(runtimes, secret, log, { version: VERSION, llm: llmStatus, operators: operators as Operators, faucet, working, keepaliveToken })
+serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => {
+  log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llmStatus() })
+  // the startup catch-up and the desk's first tick run behind the listener, not before it
+  for (const rt of ready) rt.catchUp().then((n) => n && log('catch-up processed jobs', { env: rt.env, jobs: n })).catch((e: unknown) => log('catch-up failed', { env: rt.env, error: String(e) }))
+  for (const op of readyOps) op.tick().catch((e: unknown) => log('operator tick failed', { env: op.env, error: String(e) }))
+})

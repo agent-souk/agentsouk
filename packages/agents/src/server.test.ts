@@ -37,6 +37,34 @@ describe('webhook endpoint', () => {
   })
 })
 
+describe('keep-alive while working (ADR-67)', () => {
+  it('holds the process\'s own request open while jobs run, answers everyone else at once', async () => {
+    let working = 2
+    const app = createServer({}, secret, () => undefined, { working: () => working, keepaliveToken: 'tok-0123456789' })
+    const own = { headers: { 'x-keepalive': 'tok-0123456789' } }
+    const idle = Date.now()
+    expect(await (await app.request('/keepalive?ms=3000', own)).json()).toEqual({ working: 2, held: true })
+    expect(Date.now() - idle).toBeGreaterThanOrEqual(2_900) // held for the whole window while work is running
+    // no token, or the wrong one: the instant answer, however busy the process is (a public hold would let anyone
+    // fill the machine's request limit while it works)
+    const stranger = Date.now()
+    expect(await (await app.request('/keepalive?ms=30000')).json()).toEqual({ working: 2, held: false })
+    expect(await (await app.request('/keepalive?ms=30000', { headers: { 'x-keepalive': 'tok-0123456780' } })).json()).toEqual({ working: 2, held: false })
+    expect(Date.now() - stranger).toBeLessThan(500)
+    const t0 = Date.now()
+    const held = app.request('/keepalive?ms=30000', own)
+    setTimeout(() => (working = 0), 400)
+    expect(await (await held).json()).toEqual({ working: 0, held: true }) // released as soon as the work is done
+    expect(Date.now() - t0).toBeLessThan(2_000)
+    const quiet = Date.now()
+    expect(await (await app.request('/keepalive', own)).json()).toEqual({ working: 0, held: true })
+    expect(Date.now() - quiet).toBeLessThan(200)
+    // without a token configured nothing is ever held
+    const none = createServer({}, secret, () => undefined, { working: () => 1 })
+    expect(await (await none.request('/keepalive?ms=30000', own)).json()).toEqual({ working: 1, held: false })
+  }, 15_000)
+})
+
 describe('faucet endpoint', () => {
   it('needs the shared secret, validates the body, and reports refusals as 409', async () => {
     const sent: { to: string; amount: bigint }[] = []
