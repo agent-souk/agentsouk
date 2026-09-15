@@ -31,7 +31,7 @@ import { Judge } from './operator/judge.js'
 import { DEFAULT_FIRSTBUY, FirstBuyer } from './operator/firstbuy.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './operator/runtime.js'
 import { CHAINS, typedDataSigner, UsdcWallet } from './operator/usdc.js'
-import { CatalogRegistrar, cdpFacilitator, type Facilitator } from './operator/bazaar.js'
+import { CatalogRegistrar, cdpFacilitator, platformMemoryStore, type Facilitator } from './operator/bazaar.js'
 import { SellerRuntime, type Env } from './runner.js'
 import { createServer, type Operators, type Runtimes } from './server.js'
 import { allServices } from './services/index.js'
@@ -48,7 +48,8 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: 'agentsouk-agents/0.2.10' })
+const VERSION = '0.2.11'
+const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: `agentsouk-agents/${VERSION}` })
 
 const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
@@ -80,7 +81,9 @@ for (const env of ['live', 'test'] as Env[]) {
   if (operatorKey && env === 'live') {
     const facilitators: Facilitator[] = CHAINS.live.facilitator ? [{ name: 'payai', url: CHAINS.live.facilitator }] : []
     if (process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET) facilitators.push(cdpFacilitator(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET))
-    op.registrar = new CatalogRegistrar({ baseUrl, env, chain: CHAINS.live, privateKey: operatorKey, facilitators, log })
+    // the schedule lives in platform memory (the machine sleeps and every webhook starts a fresh process), and every
+    // request names us, so the discovery statistic does not count our own reads of the 402s as outside reach
+    op.registrar = new CatalogRegistrar({ baseUrl, env, chain: CHAINS.live, privateKey: operatorKey, facilitators, log, store: platformMemoryStore(op.client.memory, `operator/${env}/catalogues`), userAgent: `agentsouk-agents/${VERSION} catalogue-registrar` })
   }
   operators[env] = op
 }
@@ -158,5 +161,5 @@ setInterval(() => {
   }
 }, Math.max(pollMs * 10, 600_000)).unref()
 
-const server = createServer(runtimes, secret, log, { version: '0.2.10', llm: () => llm.status(), operators: operators as Operators, faucet })
+const server = createServer(runtimes, secret, log, { version: VERSION, llm: () => llm.status(), operators: operators as Operators, faucet })
 serve({ fetch: server.fetch, port, hostname: '0.0.0.0' }, (info) => log('agentsouk-agents listening', { port: info.port, base_url: baseUrl, public_url: publicUrl ?? null, envs: Object.keys(runtimes), operator_envs: Object.keys(operators), llm: llm.status() }))
