@@ -156,6 +156,25 @@ describe('catalogue registration (ADR-65)', () => {
     expect(w.verifies()).toBe(2)
   })
 
+  it('registers at once with a facilitator added since the last run, and only there - the accepted pairs elsewhere are kept', async () => {
+    const w = world({ services: [{ listing_id: 'lst_a', price: 2000 }, { listing_id: 'lst_b', price: 2000 }] })
+    const store = memoryStore()
+    let now = T0
+    const first = new CatalogRegistrar({ baseUrl: BASE, env: 'test', chain: CHAINS.test, privateKey: PK, fetchImpl: w.fetch, now: () => now, facilitators: [PAYAI], store })
+    expect(await first.maybeRun()).toBe(true)
+    // an hour later the process restarts with a CDP key set
+    now += 3_600_000
+    const withCdp = new CatalogRegistrar({ baseUrl: BASE, env: 'test', chain: CHAINS.test, privateKey: PK, fetchImpl: w.fetch, now: () => now, facilitators: [PAYAI, { name: 'cdp', url: 'https://cdp.example' }], store })
+    expect(await withCdp.maybeRun()).toBe(true)
+    expect(w.calls.filter((c) => c.url === 'https://payai.example/verify')).toHaveLength(2) // only the first run
+    expect(w.calls.filter((c) => c.url === 'https://cdp.example/verify')).toHaveLength(2)
+    const st = withCdp.status()
+    expect(st.registrations.map((r) => [r.listing_id, r.facilitator, r.at])).toEqual([['lst_a', 'payai', new Date(T0).toISOString()], ['lst_a', 'cdp', new Date(now).toISOString()], ['lst_b', 'payai', new Date(T0).toISOString()], ['lst_b', 'cdp', new Date(now).toISOString()]])
+    expect(st.next_run).toBe(new Date(T0 + 86_400_000).toISOString()) // the older PayAI pairs set the next refresh
+    now += 600_000
+    expect(await new CatalogRegistrar({ baseUrl: BASE, env: 'test', chain: CHAINS.test, privateKey: PK, fetchImpl: w.fetch, now: () => now, facilitators: [PAYAI, { name: 'cdp', url: 'https://cdp.example' }], store }).maybeRun()).toBe(false)
+  })
+
   it('does not register while platform memory cannot be read, then retries the read, and registers without it only after the retry delay', async () => {
     const w = world()
     let now = T0

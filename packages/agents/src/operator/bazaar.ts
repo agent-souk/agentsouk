@@ -225,7 +225,10 @@ export class CatalogRegistrar {
     try {
       if (!(await this.load())) return false
       const now = this.now()
-      const due = this.lastRun === 0 || now >= this.nextRunAt()
+      // a facilitator configured since the last run (a CDP key set as a secret) has no entries yet: register now, not tomorrow
+      const covered = new Set(this.registrations.map((r) => r.facilitator))
+      const newFacilitator = (this.services ?? 1) > 0 && this.opts.facilitators.some((f) => !covered.has(f.name))
+      const due = this.lastRun === 0 || newFacilitator || now >= this.nextRunAt()
       if (!due && now - this.lastIndexCheck < HOUR_MS) return false
       const services = await this.index()
       this.lastIndexCheck = now
