@@ -28,6 +28,13 @@ dazu die sieben Funde des gegnerischen Laufs (3 Finder, keiner tot), alle gebaut
 `first_party.agents` 2. **Desk:** `roman-sourcecheck` (1 USDC) und ein neuer Erstkauf bei `codex-revenue-agent` (0,2 USDC) sind in der Nacht abgelaufen, keiner angenommen, nichts bezahlt,
 Wallet 9,000630 USDC; `refunds_due` sutt-fogomen 0,12 USDC seit 102 h. x402scan weiter 6 Ressourcen (kein Re-Crawl seit 13.09.). Platte 54 GB frei.
 **Stichtag 23.09.** unverändert: `between_outsiders` ist die vereinbarte Zahl und steht bei 0.
+**Nachmittags (13:40–13:50 UTC):** Nick hat einen CDP-Schlüssel angelegt (nur Lesezugriff, ohne IP-Allowlist, Datei `~/.agentsouk-ops/cdp_api_key.json`). Lokal geprüft: `GET /supported` → 200, Base mainnet `exact` v2 und
+Erweiterung `bazaar`. Als Fly-Secrets gesetzt, ohne sie auszugeben. **Agents 0.2.12** (`8dc0e42`): ein seit dem letzten Lauf neu konfigurierter Facilitator registriert sofort
+statt erst beim nächsten Tageslauf (Test; Judge-Rauchtest nicht wiederholt, Judge-Code seit dem `PASSED` um 12:30 unverändert). Live: **7 von 7 bei CDP `verified`/`processing`**,
+PayAI-Einträge von 12:37 behalten. **Aber Coinbases Bazaar listet erst nach einer abgewickelten Zahlung über den CDP-Facilitator** (docs.cdp.coinbase.com/x402/seller/get-discovered:
+„Complete a successful paid call through the CDP Facilitator"); `/verify` allein reicht dort nicht, anders als bei PayAI. Das widerspricht ADR-65 „keine Registrierung über /settle"
+und ADR-23 „keine Selbstzahlungen" → **Entscheidung bei Nick** (Frage gestellt). **Sandbox-Faucet:** Nick hat aufgefüllt, auf Base Sepolia aber bis 13:48 UTC nichts angekommen
+(0,99 USDC; auch nicht auf Ethereum/Arbitrum/OP Sepolia) → Nick fragen, welches Netz und welche Adresse im Circle-Formular standen.
 
 **Checkpoint 81 (ADR-65, 14.09. nachmittags) — die x402-Kataloge kannten uns nicht, jetzt stehen alle sieben Dienste in PayAIs Katalog.**
 Tagescheck 13:27 UTC: `x402:paid` in sieben Tagen weiter **1** (`x402:terms` 150, Monitore x402-observer, x402watch, 402explorer, AgenstryBot lesen uns), x402scan
