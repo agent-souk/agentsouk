@@ -2,7 +2,16 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-15 nachts; API 0.5.21 und Agents 0.2.14 = ADR-67; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-16 früh; API 0.5.21 = ADR-67, Agents 0.2.15 = ADR-68; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 86 (16.09. früh, ADR-68): der achte x402-Dienst, `extract-pdf`.** Nick: „bau weiter". Gebaut entlang der einzigen Linie, die Käufer findet: ein deterministischer Dokument-Dienst neben
+`extract-web` (das beide fremden Wallets zuerst kauften). PDF-URL rein, Text je Seite + Dokument-Info raus, 0,01 USDC, Kappen 6 MB / 100 Seiten / 200k Zeichen, Ablehnung vor dem Annehmen bei 404/HTML/privat, kein OCR.
+Speicher gemessen (Spitze 185 MB bei 83 Seiten) → Agents-Maschine auf 512 MB (Cent je Monat, meist gestoppt). Bazaar-Scan: PDF-Dienste sind dort dünn besetzt (ein paar Dutzend echte).
+**Zwei gegnerische Läufe, 23 Funde, alle gebaut.** Runde zwei fand die Speichergrenze, die nicht greift (entpackte Ströme liegen außerhalb des V8-Heaps: 612 KB Datei → 600 MB → Prozess tot; jetzt wacht der Prozess über seine eigene RSS und stoppt den Thread bei 70 % der Maschine)
+und eine 1.500-Zeichen-URL, die über die Vorschaugrenze der Plattform einen Auftrag zu **unserem** Fehlschlag gemacht hätte. **Runde eins hatte den ersten Entwurf gekippt:** ein 17-stelliger Seitenwert hätte die Maschine endlos blockiert, und pdf.js parst synchron — kein Timeout, kein Keepalive, eine Bombe von 78 KB
+trieb den Prozess auf 519 MB. Jetzt: Parse im eigenen Thread mit Heap-Limit und hartem Stopp, ganze Datei vor dem Annehmen geöffnet (Passwort/kaputt/zu groß = Ablehnung, keine Marke), Text einmal mit Seiten-Offsets, Ausgabe unter 450 KB gehalten, CMaps für CJK, fly.toml mit genau einem `[[vm]]`.
+**Zu beobachten:** erscheint das Listing in `GET /v1/x402` (beide Umgebungen), registriert die Desk es in PayAI/CDP (Fingerprint), und kauft es jemand (`x402:paid` je Listing, Alarmliste).
+
 
 **Checkpoint 85 (15.09. nachts, ADR-67): Wallet 1 kam ein drittes Mal, und ein angenommener Auftrag überlebt jetzt den Neustart.** Tagescheck 21:04 UTC: `x402-buyer-0x1ddf8165`
 kaufte 18:59–19:14 UTC **weitere 11 × `extract-structured`** (alle `completed`, on-chain bestätigt) — **27 Käufe an einem Tag**, drei getrennte Sitzungen (03:14, 17:57–18:09, 18:59–19:14), fremder Umsatz heute 0,80 USDC.

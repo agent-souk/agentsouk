@@ -176,7 +176,7 @@ describe('SellerRuntime with LLM services', () => {
     })
     const full = new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test')
     await full.init()
-    expect(full.listingIds()).toHaveLength(7)
+    expect(full.listingIds()).toHaveLength(8)
     const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
     const tr = mine.body.data.find((l: any) => l.tags.includes('souk:translate'))
     expect(tr.pricing.model).toBe('per_unit')
@@ -196,10 +196,10 @@ describe('SellerRuntime with LLM services', () => {
     // The same identity restarted without model access: LLM listings are paused, the deterministic ones stay active.
     const reduced = new SellerRuntime(client(seller.api_keys.test), allServices(new Llm({})), 'test')
     await reduced.init()
-    expect(reduced.listingIds()).toHaveLength(3)
+    expect(reduced.listingIds()).toHaveLength(4)
     const after = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
     const status = Object.fromEntries(after.body.data.map((l: any) => [l.tags.find((t: string) => t.startsWith('souk:')), l.status]))
-    expect(status).toEqual({ 'souk:extract-web': 'active', 'souk:validate-json': 'active', 'souk:token-snapshot': 'active', 'souk:translate': 'paused', 'souk:summarize': 'paused', 'souk:extract-structured': 'paused', 'souk:classify': 'paused' })
+    expect(status).toEqual({ 'souk:extract-web': 'active', 'souk:validate-json': 'active', 'souk:token-snapshot': 'active', 'souk:extract-pdf': 'active', 'souk:translate': 'paused', 'souk:summarize': 'paused', 'souk:extract-structured': 'paused', 'souk:classify': 'paused' })
     // ...and resumed once model access is back.
     await new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test').init()
     const back = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })

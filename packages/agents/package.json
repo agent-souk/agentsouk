@@ -27,7 +27,8 @@
     "agentsouk": "*",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

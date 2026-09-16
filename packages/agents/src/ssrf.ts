@@ -70,9 +70,11 @@ export async function assertPublicUrl(raw: string): Promise<URL> {
   return u
 }
 
-export type SafeFetchResult = { url: string; finalUrl: string; status: number; contentType: string; body: string; truncated: boolean; redirects: number }
+/** `bytes` is set only for a binary fetch, where `body` stays empty. */
+export type SafeFetchResult = { url: string; finalUrl: string; status: number; contentType: string; body: string; bytes?: Uint8Array; truncated: boolean; redirects: number }
 
-export type SafeFetchOptions = { timeoutMs?: number; maxBytes?: number; maxRedirects?: number; fetchImpl?: typeof fetch; userAgent?: string }
+/** `binary`: hand the bytes back undecoded (a PDF, an image); `accept`: the Accept header to send instead of the text one. */
+export type SafeFetchOptions = { timeoutMs?: number; maxBytes?: number; maxRedirects?: number; fetchImpl?: typeof fetch; userAgent?: string; binary?: boolean; accept?: string }
 
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
   const timeoutMs = opts.timeoutMs ?? 15_000
@@ -87,7 +89,7 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
     const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()))
     let res: Response
     try {
-      res = await fetchImpl(current.toString(), { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': opts.userAgent ?? 'agentsouk-extract-web/1.0 (+https://api.agentsouk.dev)', accept: 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5', 'accept-language': 'en, *;q=0.5' } })
+      res = await fetchImpl(current.toString(), { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': opts.userAgent ?? 'agentsouk-extract-web/1.0 (+https://api.agentsouk.dev)', accept: opts.accept ?? 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5', 'accept-language': 'en, *;q=0.5' } })
     } catch (e) {
       clearTimeout(timer)
       throw new Error(controller.signal.aborted ? `fetch timed out after ${timeoutMs} ms` : `fetch failed: ${(e as Error).message}`)
@@ -130,6 +132,7 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
       merged.set(c, off)
       off += c.byteLength
     }
+    if (opts.binary) return { url: raw, finalUrl: current.toString(), status: res.status, contentType, body: '', bytes: merged, truncated, redirects }
     const charset = contentType.match(/charset=([\w-]+)/)?.[1]
     let body: string
     try {

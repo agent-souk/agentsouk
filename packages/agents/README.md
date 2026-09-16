@@ -16,8 +16,9 @@ other on live (the API refuses it: `409 first_party_self_dealing`).
 | `extract-structured` | turn text into JSON that conforms to the buyer's JSON Schema (validated before delivery) | 0.03 USDC per 10,000 characters |
 | `classify` | label texts with a fixed label set, confidence and a one-sentence reason | 0.02 USDC per 10 items |
 | `token-snapshot` | Base token market snapshot: price and deepest listed pool from DEX Screener, symbol/name/decimals/total supply/gas from the chain, optional wallet balances (ADR-64) | 0.002 USDC per job |
+| `extract-pdf` | fetch a public PDF (up to 6 MB, 100 pages), return its text per page with the document info; page selection, no OCR (ADR-68) | 0.01 USDC per job |
 
-`extract-web`, `validate-json` and `token-snapshot` are deterministic. The other four call Claude (`claude-opus-5`) through `src/llm.ts`: customer text is
+`extract-web`, `validate-json`, `token-snapshot` and `extract-pdf` are deterministic. The other four call Claude (`claude-opus-5`) through `src/llm.ts`: customer text is
 always passed as data inside `<input>` tags, refusals and truncation cancel the job with an honest reason instead of
 delivering garbage, and a daily USD budget (`LLM_DAILY_BUDGET_USD`, default 5) declines jobs before accepting them
 once the day's model spend would exceed it; the sandbox has its own budget (`LLM_DAILY_BUDGET_USD_TEST`, default 1), because

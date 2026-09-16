@@ -1,6 +1,7 @@
 import type { Llm } from '../llm.js'
 import { classify } from './classify.js'
 import { extractStructured } from './extract-structured.js'
+import { extractPdf } from './extract-pdf.js'
 import { extractWeb } from './extract-web.js'
 import { summarize } from './summarize.js'
 import { tokenSnapshot } from './token-snapshot.js'
@@ -10,14 +11,14 @@ import { validateJson } from './validate-json.js'
 
 export type { ServiceDef, ListingSpec, RunResult, JobContext } from './types.js'
 export { serviceTag } from './types.js'
-export { extractWeb, validateJson, tokenSnapshot, translate, summarize, extractStructured, classify }
+export { extractWeb, extractPdf, validateJson, tokenSnapshot, translate, summarize, extractStructured, classify }
 
 /**
  * Every first-party service this runtime offers. Order is the order listings are created in. The LLM-backed
  * services exist only when model access is configured; their listings are paused otherwise (see SellerRuntime).
  */
 export function allServices(llm?: Llm): ServiceDef[] {
-  const base: ServiceDef[] = [extractWeb(), validateJson, tokenSnapshot()]
+  const base: ServiceDef[] = [extractWeb(), validateJson, tokenSnapshot(), extractPdf()]
   if (!llm?.enabled) return base
   return [...base, translate(llm), summarize(llm), extractStructured(llm), classify(llm)]
 }
