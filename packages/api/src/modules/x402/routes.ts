@@ -10,6 +10,7 @@ import { errorResponses } from '../../lib/http.js'
 import { log } from '../../lib/log.js'
 import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
+import { noteX402Failure } from './failures.js'
 import { bazaarExtension, serviceMetadata } from './bazaar.js'
 import { ownershipProofs } from '../../discovery/ownership.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
@@ -443,8 +444,15 @@ export function x402Routes() {
         return c.json(paymentRequiredV1(terms, error), 402)
       }
 
+      // From here on a wallet is trying to pay. Whatever stops it - a refused authorization, an input the platform
+      // or the seller will not take, a seller that does not deliver, a bug of ours - is recorded with its reason
+      // and raised, then answered as before. The buyer's answer never waits for the record.
+      let payer: string | null = null
+      let jobId: string | null = null
+      try {
       const payment = parsePaymentHeader(header)
       const auth = payment.payload.authorization
+      payer = auth.from
       const requirements = terms.x402.accepts[0]!
       if (auth.to.toLowerCase() !== payTo.toLowerCase()) throw errors.validation(`authorization.to must be the seller wallet ${payTo}.`, 'X-PAYMENT')
       if (Number(auth.value) < price) throw errors.validation(`authorization.value must be at least ${price} (${formatUsdc(price)}).`, 'X-PAYMENT')
@@ -471,17 +479,14 @@ export function x402Routes() {
       const payerKey = `${env}:${auth.from.toLowerCase()}`
       const authKey = `${payerKey}:${auth.nonce.toLowerCase()}`
       if (x402AuthorizationsRunning.has(authKey)) {
-        recordX402('refused', c.req.header('user-agent'))
         throw errors.state('x402_authorization_in_use', 'This authorization is already paying for a purchase that is still running.', 'Sign a new authorization with a fresh nonce for another purchase.')
       }
       const [held, used] = await Promise.all([usdcBalance(env, auth.from, nowMs, 0), authorizationUsed(env, auth.from, auth.nonce)])
       if (used) {
-        recordX402('refused', c.req.header('user-agent'))
         throw errors.state('x402_authorization_used', 'This authorization has already been used on-chain and cannot pay again.', 'Nothing was charged and no job was created. Sign a new authorization with a fresh nonce.')
       }
       const committed = x402ValueRunning.get(payerKey) ?? 0
       if (held != null && held - committed < value) {
-        recordX402('refused', c.req.header('user-agent'))
         throw errors.state(
           'x402_insufficient_funds',
           `${auth.from} holds ${formatUsdc(held)} on ${networkFor(env)}${committed ? `, ${formatUsdc(committed)} of it committed to purchases still running here` : ''}; this authorization moves ${formatUsdc(value)}.`,
@@ -493,6 +498,7 @@ export function x402Routes() {
       try {
         const { agent: buyer, credentials, created, recovered } = await buyerForWallet(auth.from)
         const job = await createJob(env, buyer, { listing_id: listing.id, input, units })
+        jobId = job.id
         // never wait past the point where the authorization could still be submitted
         const waitMs = Math.min(deliveryWaitMs, Number(auth.validBefore) * 1000 - Date.now() - X402_SETTLE_MARGIN_MS)
         let state = await waitForDelivery(job.id, waitMs)
@@ -566,6 +572,23 @@ export function x402Routes() {
         if (left > 0) x402ValueRunning.set(payerKey, left)
         else x402ValueRunning.delete(payerKey)
         x402AuthorizationsRunning.delete(authKey)
+      }
+      } catch (e) {
+        recordX402('refused', c.req.header('user-agent'))
+        const known = e instanceof ApiError
+        await noteX402Failure({
+          at: new Date().toISOString(),
+          env,
+          listing_id: listing.id,
+          listing_title: listing.title,
+          payer,
+          job_id: jobId,
+          code: known ? e.code : 'internal',
+          status: known ? e.status : 500,
+          message: (e instanceof Error ? e.message : String(e)).slice(0, 500),
+          ua: c.req.header('user-agent')?.slice(0, 200) ?? null,
+        }).catch((err) => log.warn({ err, listing: listing.id }, 'x402: could not record the failed purchase'))
+        throw e
       }
     },
   )

@@ -297,6 +297,52 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200)
   })
 
+  it('records every failed purchase attempt with its reason, shows it to the operator and raises one alert per wallet and hour', async () => {
+    _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: 'https://ntfy.sh/agentsouk-x402-test', OPERATOR_ALERT_MIN_TIER: 'quiet' })
+    _setAlertFetchForTests(async () => ({ status: 200, text: async () => 'ok' }))
+    try {
+      const { seller, listingId } = await firstPartySeller()
+      const pk = pkOf('8')
+      const wallet = addr(pk)
+      chain.usdcBalanceOf = (a) => (a.toLowerCase() === wallet.toLowerCase() ? BigInt(PRICE - 1) : 50_000_000n)
+      const refused = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+      expect(refused.status).toBe(409)
+      // tried again a moment later, still broke: the same wallet in the same hour is one alert, kept up to date
+      const again = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+      expect(again.status).toBe(409)
+
+      const { recentX402Failures } = await import('./failures.js')
+      const failures = await recentX402Failures()
+      expect(failures).toHaveLength(2)
+      expect(failures[0]).toMatchObject({ env: 'test', listing_id: listingId, payer: wallet, job_id: null, code: 'x402_insufficient_funds', status: 409 })
+      expect(failures[0]!.message).toContain('0.249999 USDC')
+      const { adminOverview } = await import('../world/service.js')
+      const overview = await adminOverview()
+      expect(overview.x402_failures).toHaveLength(2)
+      expect(overview.x402_failures[0]!.code).toBe('x402_insufficient_funds')
+
+      const alerts = (await db().query.operatorAlerts.findMany()).filter((a) => a.key.startsWith('x402-failed:'))
+      expect(alerts).toHaveLength(1)
+      expect(alerts[0]!.title).toContain('x402_insufficient_funds')
+      expect(alerts[0]!.body).toContain(wallet)
+      expect((alerts[0]!.data as Record<string, unknown>).payers).toEqual([wallet.toLowerCase()])
+
+      // a seller that never delivers is a failed purchase too, and the record names the job
+      chain.usdcBalanceOf = () => 50_000_000n
+      _setX402DeliveryWaitForTests(50)
+      const gone = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+      expect([409, 504]).toContain(gone.status)
+      const later = await recentX402Failures()
+      expect(later).toHaveLength(3)
+      expect(later[0]!.job_id).toMatch(/^job_/)
+      expect(['x402_not_delivered', 'x402_timeout']).toContain(later[0]!.code)
+    } finally {
+      _setAlertFetchForTests(null)
+      _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: undefined, OPERATOR_ALERT_MIN_TIER: 'notable' })
+      _setX402DeliveryWaitForTests(null)
+    }
+  })
+
   it('refuses every authorization that could not settle once the work is done, before any work (ADR-66 audit)', async () => {
     const { seller, listingId } = await firstPartySeller()
     const pk = pkOf('b')

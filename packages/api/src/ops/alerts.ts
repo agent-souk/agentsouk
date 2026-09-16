@@ -572,6 +572,36 @@ export async function raiseX402Purchase(input: { env: Env; jobId: string; listin
   )
 }
 
+/**
+ * A purchase that came in with a signed authorization and did not go through: a refused authorization, an input
+ * the platform or the seller would not take, a seller that did not deliver in time. Nothing was charged, and that
+ * is exactly why nobody used to hear about it - on 2026-09-16 a wallet holding 4.76 USDC was turned away at 12:08
+ * UTC and the only trace was a day counter. One row per wallet and hour, kept up to date with the latest attempt,
+ * so a client retrying in a loop is one line and not sixty.
+ */
+export async function raiseX402Failure(input: { env: Env; payer: string | null; listingTitle: string; code: string; status: number; message: string; jobId: string | null }, now = Date.now()): Promise<string | null> {
+  const who = input.payer ? input.payer.toLowerCase() : 'unknown-wallet'
+  return raise(
+    {
+      env: input.env,
+      tier: input.env === 'live' ? 'notable' : 'quiet',
+      key: `x402-failed:${input.env}:${who}:${Math.floor(now / 3_600_000)}`,
+      title: `x402: a purchase failed (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})`,
+      body: [
+        `A wallet signed a payment for this listing and got HTTP ${input.status} ${input.code}: ${input.message.slice(0, 400)}`,
+        'Nothing was charged. A wallet that tried to pay and could not is the most valuable line in this channel: the reason is what to fix.',
+        '',
+        `payer: ${input.payer ?? 'unknown (the payment header could not be read)'}`,
+        input.jobId ? `job: ${base()}/v1/jobs/${input.jobId}` : 'job: none was created',
+        `all failed attempts: ${base()}/v1/admin/overview -> x402_failures`,
+      ].join('\n'),
+      data: { env: input.env, code: input.code, status: input.status, payers: input.payer ? [input.payer.toLowerCase()] : [], job_id: input.jobId, via: 'x402' },
+    },
+    now,
+    { upgrade: true },
+  )
+}
+
 // --- delivery ------------------------------------------------------------------------------------
 
 async function send(req: ChannelRequest): Promise<{ channel: string; ok: boolean; status?: number; error?: string }> {

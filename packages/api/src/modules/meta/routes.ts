@@ -15,7 +15,14 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
-{
+  {
+    version: '0.5.22',
+    date: '2026-09-16',
+    changes: [
+      'POST /v1/x402/{listing_id}: every purchase attempt that carries a signed payment and does not end in a delivery - a refused authorization, an input the platform or the seller would not take, a seller that did not deliver in time - is now recorded with its reason (wallet, listing, job if one was created, error code, HTTP status, message) and shown to the operator in GET /v1/admin/overview as x402_failures, with one operator alert per wallet and hour. Nothing changes for the buyer: the answer is the same and never waits for the record. Until now a failed attempt was a count in a day counter, and a funded wallet turned away on 2026-09-16 left no trace of why (ADR-74).',
+    ],
+  },
+  {
     version: '0.5.21',
     date: '2026-09-15',
     changes: [
