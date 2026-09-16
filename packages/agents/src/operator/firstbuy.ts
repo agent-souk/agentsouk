@@ -298,7 +298,13 @@ export class FirstBuyer {
       // the value this process actually runs with - the document points here and said so before all of them were.
       per_receiving_wallet: this.config.perSeller,
       new_sellers_per_day: this.config.newSellersPerDay,
+      // This is the CAP, and it keeps that name because /v1/commitments promises this cap under exactly this name
+      // (ADR-61). It reads like a count, though, and when the live budget went to 0 (ADR-71) the question was
+      // precisely "does the desk still owe anybody money?" - to which it answered "3" while `open` below was empty.
+      // So the count and the amount still owed stand next to it, under names that cannot be misread.
       open_purchases: this.config.maxOpen,
+      open_purchases_now: st.purchases.filter((p) => !p.outcome).length,
+      open_unpaid_usdc: formatUsdc(st.purchases.filter((p) => !p.outcome && !p.pay_hash).reduce((s, p) => s + BigInt(p.price), 0n)),
       listing_age_days: this.config.lookbackDays,
       seller_cooldown_hours: this.config.sellerCooldownMs / 3600_000,
       screen: this.config.screen,
