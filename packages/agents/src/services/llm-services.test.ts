@@ -387,13 +387,16 @@ describe('summarize', () => {
     expect(await s.validate({}, { units: 1 })).toContain('exactly one')
     expect(await s.validate({ text: 'a', url: 'https://example.com/' }, { units: 1 })).toContain('exactly one')
     expect(await s.validate({ url: 'http://127.0.0.1/' }, { units: 1 })).toMatch(/private|loopback|public/i)
-    expect(await s.validate({ text: 'x'.repeat(25_000) }, { units: 2 })).toBe('order 3 units for 25000 characters (1 unit = 10000 characters)')
+    expect(await s.validate({ text: 'x'.repeat(25_000) }, { units: 2 })).toBe('order 5 units for 25000 characters (1 unit = 5000 characters)')
+    // ADR-72: a short text with a long summary costs what the output costs
+    expect(await s.validate({ text: 'hello', max_words: 600 }, { units: 1 })).toBe('order 4 units for 5 characters (1 unit = 5000 characters)')
+    expect(await s.validate({ text: 'hello', max_words: 600 }, { units: 4 })).toBeNull()
     expect(await s.validate({ text: 'hello', max_words: 5 }, { units: 1 })).toContain('max_words')
     expect(await s.validate({ text: 'hello', style: 'haiku' }, { units: 1 })).toContain('style')
     expect(await s.validate({ text: 'hello' }, { units: 1 })).toBeNull()
   })
 
-  it('summarises text and fetched pages, reading a page up to units × 10,000 characters', async () => {
+  it('summarises text and fetched pages, reading a page up to units × 5,000 characters', async () => {
     const reply = { text: JSON.stringify({ summary: '- one\n- two', key_points: ['one', 'two'], language: 'en' }) }
     const { llm, calls } = llmWith([reply])
     const page = '<html><head><title>Big Page</title></head><body><main><p>' + 'word '.repeat(6000) + '</p></main></body></html>'
@@ -405,7 +408,7 @@ describe('summarize', () => {
     expect(calls[0]!.messages[0]!.content).toContain('Focus on: numbers.')
     expect(calls[0]!.messages[0]!.content).toContain('Write the summary in de.')
     const u = await s.run({ url: 'http://93.184.216.34/' }, { units: 2 })
-    expect(u.output).toMatchObject({ source: { kind: 'url', title: 'Big Page', clipped: true, chars: 20_000 } })
+    expect(u.output).toMatchObject({ source: { kind: 'url', title: 'Big Page', clipped: true, chars: 10_000 } })
     expect(calls[1]!.messages[0]!.content).toContain('Title: Big Page')
   })
 })
@@ -418,7 +421,7 @@ describe('extract-structured', () => {
     const s = extractStructured(llm)
     expect(await s.validate({ text: 'x', schema: { type: 'array' } }, { units: 1 })).toContain('object')
     expect(await s.validate({ text: 'x', schema: { type: 'object', properties: { a: { type: 'nope' } } } }, { units: 1 })).toContain('does not compile')
-    expect(await s.validate({ text: 'x'.repeat(10_001), schema }, { units: 1 })).toContain('order 2 units')
+    expect(await s.validate({ text: 'x'.repeat(10_001), schema }, { units: 1 })).toContain('order 11 units')
     expect(await s.validate({ text: 'Invoice from Acme, total 12.50', schema }, { units: 1 })).toBeNull()
     const r = await s.run({ text: 'Invoice from Acme, total 12.50', schema, instructions: 'amounts as numbers' }, { units: 1 })
     expect(r.output).toMatchObject({ data: { vendor: 'Acme', total: 12.5 }, schema_valid: true, chars: 30 })

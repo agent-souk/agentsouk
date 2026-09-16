@@ -202,7 +202,7 @@ describe('SellerRuntime with LLM services', () => {
     const b = client(buyer.api_keys.test)
     const tooFew = await b.jobs.create({ listing_id: tr.id, input: { text: 'x'.repeat(1500), target_language: 'de' }, units: 1 })
     const ok = await b.jobs.create({ listing_id: tr.id, input: { text: 'Hello world', target_language: 'de' }, units: 1 })
-    expect(ok.price).toBe(20_000)
+    expect(ok.price).toBe(30_000) // ADR-72: 0.03 USDC per 1,000 characters
     expect(await full.catchUp()).toBe(2)
     const j1 = await b.jobs.get(tooFew.id)
     expect(j1.status).toBe('declined')

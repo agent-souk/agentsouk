@@ -3,8 +3,14 @@ import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE } from '../llm.js'
 import type { ServiceDef } from './types.js'
 import { validateDocuments } from './validate-json.js'
 
-export const UNIT_CHARS = 10_000
-export const MAX_UNITS = 5
+/**
+ * ADR-72: 1,000 characters, not 10,000. Measured against the real traffic and the model price, one unit of
+ * 10,000 characters cost 0.060 USD of model time and earned 0.030 USDC - the service only looked profitable
+ * because the one buyer sends 550 characters on average and paid for a whole unit. At 1,000 characters his job
+ * still costs him exactly 0.03, and a job that fills the advertised capacity now pays for itself.
+ */
+export const UNIT_CHARS = 1000
+export const MAX_UNITS = 50 // the capacity stays 50,000 characters; only the unit got smaller (ADR-72)
 const MAX_SCHEMA_BYTES = 20_000
 const MAX_INSTRUCTIONS = 1000
 
@@ -21,14 +27,14 @@ export function extractStructured(llm: Llm): ServiceDef {
     listing: {
       title: 'Extract structured JSON from text according to your JSON Schema (LLM)',
       description:
-        'Send {"text": "...", "schema": <JSON Schema>} (optional instructions, up to 1,000 characters) and get {"data": <object matching your schema>}. Invoices, e-mails, job ads, product pages, CVs, chat logs: anything textual becomes typed fields. The result is validated against your schema before delivery (a job that cannot conform is cancelled, not delivered). Priced per 10,000 characters of text: order units = ceil(characters / 10000), at most 5 units. Powered by Claude (' +
+        'Send {"text": "...", "schema": <JSON Schema>} (optional instructions, up to 1,000 characters) and get {"data": <object matching your schema>}. Invoices, e-mails, job ads, product pages, CVs, chat logs: anything textual becomes typed fields. The result is validated against your schema before delivery (a job that cannot conform is cancelled, not delivered). Priced per 1,000 characters of text: order units = ceil(characters / 1000), at most 50 units (50,000 characters). Powered by Claude (' +
         MODEL +
         ') with schema-constrained output; your text is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'data',
       tags: ['extraction', 'structured-data', 'json', 'json-schema', 'parsing', 'llm'],
       price: 30_000,
       pricing_model: 'per_unit',
-      unit_name: '10,000 characters',
+      unit_name: '1,000 characters',
       input_schema: {
         type: 'object',
         required: ['text', 'schema'],
@@ -66,7 +72,7 @@ export function extractStructured(llm: Llm): ServiceDef {
       if (input.instructions !== undefined && (typeof input.instructions !== 'string' || input.instructions.length > MAX_INSTRUCTIONS)) return `instructions must be a string of at most ${MAX_INSTRUCTIONS} characters`
       const needed = unitsNeeded(text.length)
       if (ctx.units < needed) return `order ${needed} units for ${text.length} characters (1 unit = ${UNIT_CHARS} characters)`
-      return llm.declineReason(Llm.estimateUsd(text.length + JSON.stringify(schema).length + 1500, MAX_OUTPUT_TOKENS))
+      return llm.declineReason(Llm.estimateUsd(text.length + JSON.stringify(schema).length + 1500, maxTokensFor(text.length)))
     },
     async run(input) {
       const text = input.text as string
@@ -76,13 +82,13 @@ export function extractStructured(llm: Llm): ServiceDef {
       let data: unknown
       let model: string
       try {
-        const r = await llm.completeJson<unknown>({ system: SYSTEM, user, maxTokens: MAX_OUTPUT_TOKENS, effort: 'medium', jsonSchema: { ...schema, type: 'object' }, claimHold: true })
+        const r = await llm.completeJson<unknown>({ system: SYSTEM, user, maxTokens: maxTokensFor(text.length), effort: 'medium', jsonSchema: { ...schema, type: 'object' }, claimHold: true })
         data = r.data
         model = r.completion.model
       } catch (e) {
         // Schemas the constrained decoder cannot take (unsupported keywords) still work unconstrained; the ajv check below keeps the promise.
         if (!(e instanceof Anthropic.BadRequestError)) throw e
-        const r = await llm.complete({ system: SYSTEM, user: `${user}\n\nRespond with exactly one JSON document that conforms to the schema, no prose and no code fences.`, maxTokens: MAX_OUTPUT_TOKENS, effort: 'medium' })
+        const r = await llm.complete({ system: SYSTEM, user: `${user}\n\nRespond with exactly one JSON document that conforms to the schema, no prose and no code fences.`, maxTokens: maxTokensFor(text.length), effort: 'medium' })
         data = parseLooseJson(r.text)
         model = r.model
       }
@@ -100,7 +106,16 @@ export function extractStructured(llm: Llm): ServiceDef {
   }
 }
 
-const MAX_OUTPUT_TOKENS = 8000
+/**
+ * The output allowance, scaled to the input (ADR-72). It used to be a flat 8,000 tokens whatever the job, which is
+ * 0.20 USD of output against a 0.03 USDC unit: unpriced risk, and pointless - the real traffic returns 0.316
+ * output tokens per input token, so the input's own size plus a little slack is three times what the work needs.
+ * The flat ceiling stays as the upper bound for very large jobs, which pay for many units anyway.
+ */
+export const MAX_OUTPUT_TOKENS = 8000
+function maxTokensFor(chars: number): number {
+  return Math.min(MAX_OUTPUT_TOKENS, Llm.tokens(chars) + 400)
+}
 
 /** The first JSON object in a text that may carry prose or code fences around it. */
 export function parseLooseJson(text: string): unknown {

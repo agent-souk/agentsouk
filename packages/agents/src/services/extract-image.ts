@@ -42,12 +42,17 @@ export const MAX_SCHEMA_BYTES = 20_000
  * thinking - and the whole answer still has to arrive inside the 90 s the x402 endpoint waits for a delivery
  * (`deliveryWaitMs`, packages/api). Measured on rendered pages of dense 105-character lines (ADR-70 addendum):
  * 7,940 characters came back complete in 29.9 s, and an 8,000-token allowance was exhausted by roughly 16,000
- * characters after 78.3 s - too close to the window, and 0.13 USD spent on a job that then cancels. 6,000 tokens
- * is about 60 s of worst-case generation, which leaves room for the fetch.
+ * characters after 78.3 s - too close to the window, and 0.13 USD spent on a job that then cancels.
+ *
+ * ADR-72 cut it again, from 6,000 to 2,500: the price has to cover the worst case, not the average one. An image
+ * costs up to 4,784 input tokens (0.024 USD) before a single character is transcribed, so 6,000 output tokens on
+ * top came to 0.174 USD against a 0.05 USDC price. At 2,500 tokens the worst case is 0.087 USD against 0.10 USDC
+ * - and about 25 s of generation, comfortably inside the window. The price of that honesty is capacity: pages
+ * denser than ~5,000 characters are now cancelled with the advice to crop them, where 7,940 used to go through.
  */
-export const MAX_OUTPUT_TOKENS = 6000
+export const MAX_OUTPUT_TOKENS = 2500
 /** The capacity the listing advertises, below the hard ceiling above: a page past the ceiling is cancelled, never half-delivered as if whole. */
-export const MAX_TEXT_CHARS = 10_000
+export const MAX_TEXT_CHARS = 5_000
 /**
  * Measured on the same pages, all three complete and identical (7,940 characters, 75 of 75 lines): low 29.4 s,
  * medium 29.9 s, high 48.9 s. Medium costs nothing over low and keeps the reasoning the vision guidance says a
@@ -365,7 +370,10 @@ export function extractImage(llm: Llm, opts: ExtractImageOptions = {}): ServiceD
         ',000 characters of text per image fit. Every delivery carries complete: whether the model reports having reached all of the visible text - when it is false, the text is what it did reach and the answer to a denser page is to crop it and send the halves; a page so dense that the answer is cut off mid-JSON is cancelled with that advice and costs you nothing. Private and link-local addresses are refused before the request and on every redirect hop; a URL that is not an image, too large or too small is declined before the job is accepted. The answer normally arrives in 10-40 s; an x402 buyer gets it inside the 90 s the endpoint waits. Operated by Agent Souk (first_party).',
       category: 'documents',
       tags: ['ocr', 'image', 'vision', 'screenshot', 'receipt', 'extraction', 'llm'],
-      price: 50_000,
+      // ADR-72: 0.10, not 0.05. Measured: the image alone costs up to 0.024 USD of input tokens, and the output
+      // allowance on top made a text-heavy page cost 0.174 USD against 0.05 USDC. With the allowance below, the
+      // worst case is 0.087 USD - profitable at every size instead of only for small images.
+      price: 100_000,
       // Every limit the code enforces is declared here: a buyer that satisfies this schema is not turned away for
       // a rule it could not read, which on the x402 path costs it a fresh authorization and a round of latency.
       input_schema: {

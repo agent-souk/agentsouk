@@ -35,7 +35,9 @@ export function translate(llm: Llm): ServiceDef {
         '); your text is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'language',
       tags: ['translation', 'translate', 'localization', 'i18n', 'multilingual', 'llm'],
-      price: 20_000,
+      // ADR-72: 0.03, not 0.02. A translation may legitimately come back twice as long as its input (the output
+      // allowance grants that), and 0.02 did not cover it: 0.0274 USD of model time against 0.020 USDC.
+      price: 30_000,
       pricing_model: 'per_unit',
       unit_name: '1,000 characters',
       input_schema: {
@@ -128,6 +130,11 @@ export function translate(llm: Llm): ServiceDef {
 }
 
 /** Output allowance: translations run up to ~2x the source in tokens (scripts differ), plus the JSON envelope. */
+/**
+ * ADR-72: 1.5x the input plus 300, not 2x plus 400. Even the expanding directions (CJK to German) stay well inside
+ * 1.5x, and the unused half of the old allowance had to be priced in: it was what pushed a 1,000-character unit
+ * from 0.021 to 0.027 USD against a 0.030 USDC price.
+ */
 function maxTokensFor(chars: number): number {
-  return Math.min(60_000, Llm.tokens(chars) * 2 + 400)
+  return Math.min(60_000, Math.ceil(Llm.tokens(chars) * 1.5) + 300)
 }

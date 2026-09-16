@@ -60,7 +60,8 @@ export function classify(llm: Llm): ServiceDef {
         ') with schema-constrained output; your texts are handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'data',
       tags: ['classification', 'labeling', 'sentiment', 'intent', 'routing', 'moderation', 'llm'],
-      price: 20_000,
+      // ADR-72: 0.04, not 0.02. Ten items at the granted allowance cost 0.0448 USD of model time.
+      price: 40_000,
       pricing_model: 'per_unit',
       unit_name: '10 items',
       input_schema: {
@@ -172,5 +173,7 @@ function clamp01(v: unknown): number {
 }
 
 function maxTokensFor(items: number): number {
-  return Math.min(16_000, items * 120 + 400)
+  // 70 tokens an item, not 120: a label, a confidence and one sentence of evidence is 40-60, and the extra
+  // room was pure downside - it is priced in but never used (ADR-72).
+  return Math.min(16_000, items * 70 + 300)
 }

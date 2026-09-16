@@ -3,8 +3,9 @@ import { assertPublicUrl, UnsafeUrlError } from '../ssrf.js'
 import { extract, type ExtractOptions } from './extract-web.js'
 import type { ServiceDef } from './types.js'
 
-export const UNIT_CHARS = 10_000
-export const MAX_UNITS = 10
+/** ADR-72: 5,000 characters, not 10,000: one 10,000-character unit cost 0.029-0.052 USD against 0.040 USDC. */
+export const UNIT_CHARS = 5_000
+export const MAX_UNITS = 20 // the capacity stays 100,000 source characters (ADR-72)
 const STYLES = ['paragraph', 'bullets'] as const
 const MIN_WORDS = 20
 const MAX_WORDS = 600
@@ -24,8 +25,15 @@ const OUTPUT_SCHEMA = {
   additionalProperties: false,
 }
 
-export function unitsNeeded(chars: number): number {
-  return Math.max(1, Math.ceil(chars / UNIT_CHARS))
+/**
+ * Units are the larger of the two things a summary costs: the source it has to read, and the summary it has to
+ * write (ADR-72). Only the source used to count, so 5,000 characters summarised into 600 words - the most this
+ * service allows - cost 0.085 USD of model time and earned 0.040 USDC. Output tokens are five times the price of
+ * input tokens; a job that asks for four times the default length pays for it.
+ */
+export const UNIT_WORDS = 150
+export function unitsNeeded(chars: number, words: number = UNIT_WORDS): number {
+  return Math.max(1, Math.ceil(chars / UNIT_CHARS), Math.ceil(words / UNIT_WORDS))
 }
 
 export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
@@ -34,14 +42,14 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
     listing: {
       title: 'Summarize a text or a web page (LLM, word limit, key points)',
       description:
-        'Send {"text": "..."} or {"url": "https://..."} with optional max_words (20-600, default 150), style: paragraph|bullets, focus (a question or aspect to concentrate on) and language (output language, ISO code or name). You get a faithful summary, 3-7 key points and the detected language; a URL is fetched and read like the extract-web service (public pages only). Priced per 10,000 source characters: order units = ceil(characters / 10000), at most 10 units; a URL is read up to units × 10,000 characters. Powered by Claude (' +
+        'Send {"text": "..."} or {"url": "https://..."} with optional max_words (20-600, default 150), style: paragraph|bullets, focus (a question or aspect to concentrate on) and language (output language, ISO code or name). You get a faithful summary, 3-7 key points and the detected language; a URL is fetched and read like the extract-web service (public pages only). Priced per 5,000 source characters OR per 150 summary words, whichever is more: order units = max(ceil(characters / 5000), ceil(max_words / 150)), at most 20 units (100,000 characters); a URL is read up to units × 5,000 characters. Powered by Claude (' +
         MODEL +
         '); the input is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'language',
       tags: ['summary', 'summarization', 'tldr', 'reading', 'web', 'llm'],
       price: 40_000,
       pricing_model: 'per_unit',
-      unit_name: '10,000 characters',
+      unit_name: '5,000 characters',
       input_schema: {
         type: 'object',
         properties: {
@@ -80,7 +88,7 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
         if (typeof input.text !== 'string' || !input.text.trim()) return 'text must be a non-empty string'
         if (input.text.length > UNIT_CHARS * MAX_UNITS) return `text is limited to ${UNIT_CHARS * MAX_UNITS} characters per job`
         chars = input.text.length
-        const needed = unitsNeeded(chars)
+        const needed = unitsNeeded(chars, Number(input.max_words ?? DEFAULT_WORDS))
         if (ctx.units < needed) return `order ${needed} units for ${chars} characters (1 unit = ${UNIT_CHARS} characters)`
       } else {
         if (typeof input.url !== 'string') return 'url must be a string'
@@ -138,6 +146,11 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
 }
 
 /** Output allowance: the summary plus key points and the JSON envelope. */
+/**
+ * ADR-72: two tokens a word plus 300, not three plus 700. A 150-word summary with its 3-7 key points is about 400
+ * tokens; the old allowance granted 1,150 and, at 25 USD per million output tokens, that slack alone was 0.019 USD
+ * against a 0.040 USDC unit - the difference between a service that pays for itself and one that does not.
+ */
 function maxTokensFor(maxWords: number): number {
-  return Math.min(6000, maxWords * 3 + 700)
+  return Math.min(6000, maxWords * 2 + 300)
 }
