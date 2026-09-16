@@ -15,7 +15,7 @@ other on live (the API refuses it: `409 first_party_self_dealing`).
 | `summarize` | summarise a text or a public web page under a word limit, with key points | 0.04 USDC per 10,000 characters |
 | `extract-structured` | turn text into JSON that conforms to the buyer's JSON Schema (validated before delivery) | 0.03 USDC per 10,000 characters |
 | `classify` | label texts with a fixed label set, confidence and a one-sentence reason | 0.02 USDC per 10 items |
-| `token-snapshot` | Base token market snapshot: price and deepest listed pool from DEX Screener, symbol/name/decimals/total supply/gas from the chain, optional wallet balances (ADR-64) | 0.002 USDC per job |
+| `token-snapshot` | Base token market snapshot: price and deepest listed pool from DEX Screener, symbol/name/decimals/total supply/gas from the chain, optional wallet balances (ADR-64) | 0.01 USDC per job |
 | `extract-pdf` | fetch a public PDF (up to 6 MB, 100 pages), return its text per page with the document info; page selection, no OCR (ADR-68) | 0.01 USDC per job |
 | `strategy-stats` | prop-firm challenge pass/bust probability (target, overall and daily loss limits, trading-day window) by stationary block-bootstrap Monte Carlo over the buyer's daily returns, plus the risk statistics of the series; deterministic per seed (ADR-69) | 0.01 USDC per job |
 | `extract-image` | read a public image (PNG/JPEG/GIF/WebP, up to 3.5 MB, 8,000 px a side, about 10,000 characters of text): every visible line of text transcribed in reading order, tables as rows, optional description and optional structured fields against the buyer's JSON Schema, reduced to the properties it declares (Claude vision, ADR-70) | 0.05 USDC per job |

@@ -191,7 +191,7 @@ describe('tokenSnapshot service', () => {
   it('validates input (shape, then the chain) and runs with the resolved token', async () => {
     const svc = tokenSnapshot({ fetchImpl: fakeFetch().f, ...node, ...fast })
     expect(svc.key).toBe('token-snapshot')
-    expect(svc.listing.price).toBe(2_000)
+    expect(svc.listing.price).toBe(10_000) // ADR-72: at or above OUTSIDER_PRICE_FLOOR, or the purchase counts for nothing
     expect(svc.listing.pricing_model ?? 'fixed').toBe('fixed')
     expect(svc.listing.title.length).toBeLessThanOrEqual(120)
     expect(await svc.validate({}, { units: 1 })).toMatch(/token must be/)

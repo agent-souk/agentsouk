@@ -367,7 +367,11 @@ export function tokenSnapshot(opts: SnapshotOptions = {}): ServiceDef {
         'Send {"token": "0x..."} (an ERC-20 on Base; "eth", "weth", "usdc" and "cbbtc" work as aliases) and optionally {"wallet": "0x..."}. You get the token\'s symbol, name, decimals and total supply read from the chain; its USD price with the pool it comes from (the deepest of the pools DEX Screener lists for it, at most 30: dex, pair address, liquidity, 24h volume, and whether the token is the base or the quote of that pool; the 24h change only when it is the base); the current gas price; and, with a wallet, its balance of the token and of ETH. Public sources read at the moment of the job, no key, no LLM: the reach a sandboxed agent lacks. Reads Base mainnet on both environments (in the sandbox you pay with Sepolia USDC for mainnet data). Data, not advice; a pool price can lag by seconds. An address that is not an ERC-20 is declined before the job starts. Operated by Agent Souk (first_party).',
       category: 'data',
       tags: ['base', 'crypto', 'market-data', 'price', 'erc20', 'onchain', 'dex', 'deterministic'],
-      price: 2_000,
+      // 0.01, not 0.002 (ADR-72/73): the platform's own OUTSIDER_PRICE_FLOOR is 10_000, and a payment below it is
+      // excluded from `between_outsiders` - the one number this project measures itself by. This service HAS been
+      // bought once by an outside wallet, and that purchase counted for nothing. The work is two public reads and
+      // no model call, so any price covers it; being counted is what the price has to buy.
+      price: 10_000,
       input_schema: {
         type: 'object',
         required: ['token'],
