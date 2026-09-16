@@ -11,8 +11,10 @@ export const MODEL = 'claude-opus-5'
 export const PRICE_PER_MTOK = { input: 5, output: 25 }
 
 export type Effort = 'low' | 'medium' | 'high'
+/** An image that goes in front of the user text, base64 as the API takes it; `tokens` is the caller's estimate of what the model bills for it (ADR-70). */
+export type ImageInput = { mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string; tokens: number }
 /** `claimHold`: this call is the one a job's budget check held an estimate for; the oldest hold is released as the call reserves its own. */
-export type CompleteInput = { system: string; user: string; maxTokens: number; effort?: Effort; jsonSchema?: Record<string, unknown>; claimHold?: boolean }
+export type CompleteInput = { system: string; user: string; maxTokens: number; effort?: Effort; jsonSchema?: Record<string, unknown>; claimHold?: boolean; images?: ImageInput[] }
 export type Completion = { text: string; inputTokens: number; outputTokens: number; costUsd: number; stopReason: string | null; model: string }
 
 /** The model would not or could not produce a usable result; the job is cancelled with this message. */
@@ -223,9 +225,9 @@ export class Llm {
     return (inputTokens * PRICE_PER_MTOK.input + outputTokens * PRICE_PER_MTOK.output) / 1e6
   }
 
-  /** Worst-case cost of one call: every input token billed plus the full output allowance. */
-  static estimateUsd(inputChars: number, maxOutputTokens: number): number {
-    return Llm.costUsd(Llm.tokens(inputChars) + 400, maxOutputTokens)
+  /** Worst-case cost of one call: every input token billed (text plus any images) plus the full output allowance. */
+  static estimateUsd(inputChars: number, maxOutputTokens: number, imageTokens = 0): number {
+    return Llm.costUsd(Llm.tokens(inputChars) + 400 + imageTokens, maxOutputTokens)
   }
 
   /** Today's billed spend plus the estimates of calls still running. */
@@ -297,7 +299,8 @@ export class Llm {
     if (!this.client) throw new LlmDeclined('this service is temporarily disabled (no model access)')
     await this.restore()
     if (!this.restored) throw new LlmBudgetExceeded(CHECK_LATER, true)
-    const estimate = Llm.estimateUsd(input.system.length + input.user.length, input.maxTokens)
+    const imageTokens = (input.images ?? []).reduce((n, i) => n + i.tokens, 0)
+    const estimate = Llm.estimateUsd(input.system.length + input.user.length, input.maxTokens, imageTokens)
     if (input.claimHold) this.liveHolds().shift() // this call takes the place of the estimate its job's check held
     if (!this.canAfford(estimate)) throw new LlmBudgetExceeded(USED_UP)
     // Reserved before the call and written, so concurrent calls cannot all pass the check against the same figure,
@@ -309,7 +312,8 @@ export class Llm {
       model: MODEL,
       max_tokens: input.maxTokens,
       system: input.system,
-      messages: [{ role: 'user', content: input.user }],
+      // images first, then the text, as the vision docs recommend; the text names them as customer data
+      messages: [{ role: 'user', content: input.images?.length ? [...input.images.map((i) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: i.mediaType, data: i.data } })), { type: 'text' as const, text: input.user }] : input.user }],
       output_config: { effort: input.effort ?? 'medium', ...(input.jsonSchema ? { format: { type: 'json_schema' as const, schema: schemaForConstrainedOutput(input.jsonSchema) as Record<string, unknown> } } : {}) },
       // A policy decline is re-run server-side on a fallback model chosen by refusal category, so a job is
       // cancelled only when the whole chain declines.
