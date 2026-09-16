@@ -21,8 +21,16 @@ export type ListingSpec = {
 
 export type RunResult = { output: unknown; preview?: unknown; message?: string }
 
-/** What the runtime knows about the job beyond its input. */
-export type JobContext = { units: number }
+/**
+ * What the runtime knows about the job beyond its input.
+ *
+ * `buyer` is the buyer's agent id (ADR-73). Every service before this one answered from its input alone, so who
+ * asked did not matter. A service that remembers something between calls has to know: a snapshot kept per URL
+ * instead of per buyer would answer one buyer with another buyer's history - wrong, and a leak of what someone
+ * else is watching. It is optional because `validate` and `run` are also called from tests and scripts that have
+ * no job; a stateful service declines when it is missing rather than guessing.
+ */
+export type JobContext = { units: number; buyer?: string }
 
 export type ServiceDef = {
   /** stable id; the listing carries the tag `souk:<key>` so the runner can find it again */

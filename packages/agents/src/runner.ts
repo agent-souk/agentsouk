@@ -175,7 +175,7 @@ export class SellerRuntime {
       if (resumed) {
         this.log('resuming a job accepted before a restart', { env: this.env, job_id: id, service: service.key })
       } else {
-        const reason = await service.validate(input, { units: job.units })
+        const reason = await service.validate(input, { units: job.units, buyer: job.buyer?.id })
         if (reason) {
           await this.client.jobs.decline(id, `Invalid input: ${reason}. See the listing input_schema and example_input.`.slice(0, 500))
           this.log('declined: invalid input', { env: this.env, job_id: id, service: service.key, reason })
@@ -185,7 +185,7 @@ export class SellerRuntime {
       }
       const started = Date.now()
       try {
-        const r = await service.run(input, { units: job.units })
+        const r = await service.run(input, { units: job.units, buyer: job.buyer?.id })
         try {
           await this.client.jobs.deliver(id, r.output, r.message, r.preview)
         } catch (e) {

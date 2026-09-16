@@ -41,7 +41,7 @@ import { CatalogRegistrar, cdpFacilitator, platformMemoryStore, type Facilitator
 import { runDailyDigest, type DigestSnapshot } from './operator/digest.js'
 import { SellerRuntime, type Env } from './runner.js'
 import { createServer, KEEPALIVE_MAX_MS, type Operators, type Runtimes } from './server.js'
-import { allServices } from './services/index.js'
+import { allServices, platformSnapshotStore } from './services/index.js'
 
 const log = (msg: string, extra: Record<string, unknown> = {}) => console.log(JSON.stringify({ time: new Date().toISOString(), msg, ...extra }))
 
@@ -77,7 +77,9 @@ const runtimes: Runtimes = {}
 for (const env of ['live', 'test'] as Env[]) {
   const key = process.env[`AGENTSOUK_API_KEY_${env.toUpperCase()}`]
   if (!key) continue
-  runtimes[env] = new SellerRuntime(clientFor(key), allServices(llms[env]), env, log)
+  // ADR-73: url-diff keeps one snapshot per buyer and target in the seller identity's own platform memory
+  const watch = { store: platformSnapshotStore(clientFor(key).memory), env }
+  runtimes[env] = new SellerRuntime(clientFor(key), allServices(llms[env], { watch }), env, log)
 }
 
 const usdc = (v: string | undefined, dflt: bigint) => (v && Number.isFinite(Number(v)) ? BigInt(Math.round(Number(v) * 1e6)) : dflt)
