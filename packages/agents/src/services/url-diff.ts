@@ -25,7 +25,7 @@ import type { JobContext, RunResult, ServiceDef } from './types.js'
  */
 
 const MAX_SNAPSHOT_CHARS = 8_000
-const MAX_FETCH_BYTES = 1_000_000
+const MAX_FETCH_BYTES = 512_000
 /** Per buyer and environment. */
 const MAX_WATCHES_PER_BUYER = 25
 /**
@@ -68,7 +68,7 @@ export type MemoryStore = {
   list(prefix: string): Promise<string[]>
 }
 
-export type UrlDiffOptions = { fetchImpl?: typeof fetch; store: MemoryStore; env: string; now?: () => number }
+export type UrlDiffOptions = { fetchImpl?: typeof fetch; store: MemoryStore; env: string; now?: () => number; hostFetchesPerMinute?: number }
 
 /** The platform's own memory as this service's store: one key per buyer and target, with a TTL (ADR-73). */
 type MemoryApi = {
@@ -129,6 +129,52 @@ export function platformSnapshotStore(memory: MemoryApi): MemoryStore {
 export function globToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(escaped.replace(/\\\*/g, '[^\\n]*'), 'g')
+}
+
+
+/* ---------- protecting the target, and ourselves ---------- */
+
+/**
+ * At most 20 fetches a minute per target host, across all buyers (ADR-73). Twenty-five watches at a minute's
+ * interval are 36,000 requests a day against someone else's site, sent from our one Fly address with our name in
+ * the user agent: the abuse report would come to us, and a block would hit extract-web, extract-pdf and
+ * extract-image with it. A buyer that asks faster gets an honest answer instead of a queue.
+ */
+const HOST_WINDOW_MS = 60_000
+export const HOST_FETCHES_PER_MINUTE = 20
+const hostHits = new Map<string, number[]>()
+/** Free capacity for this host right now, counting only the last minute. Exported so the limit can be tested. */
+export function hostBudgetLeft(host: string, now: number, perMinute = HOST_FETCHES_PER_MINUTE): boolean {
+  const hits = (hostHits.get(host) ?? []).filter((t) => now - t < HOST_WINDOW_MS)
+  hostHits.set(host, hits)
+  if (hostHits.size > 500) for (const [k, v] of hostHits) if (!v.length) hostHits.delete(k)
+  return hits.length < perMinute
+}
+function noteHostFetch(host: string, now: number): void {
+  hostHits.set(host, [...(hostHits.get(host) ?? []), now])
+}
+/** The budget is process-wide on purpose - it protects the target site, not one buyer - so a test has to clear it. */
+export function _resetHostBudgetForTests(): void {
+  hostHits.clear()
+}
+
+/**
+ * Two checks of the SAME watch must not overlap: both would read the same snapshot, and the later write would
+ * bury the earlier change - the buyer would then be told about it twice, or never. Same machine, same process, so
+ * a promise chain per key is enough; a second machine would need the platform for this.
+ */
+const inFlight = new Map<string, Promise<unknown>>()
+function serialised<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = inFlight.get(key) ?? Promise.resolve()
+  const mine = previous.then(work, work)
+  inFlight.set(
+    key,
+    mine.catch(() => undefined),
+  )
+  void mine.finally(() => {
+    if (inFlight.get(key) === undefined) inFlight.delete(key)
+  })
+  return mine
 }
 
 /* ---------- normalising, so that "changed" means changed ---------- */
@@ -280,10 +326,14 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
     listing: {
       title: 'Tell me what changed on this page since my last check (deterministic, no LLM)',
       description:
-        'Send {"url": "https://..."} on your own schedule and get {"changed": true|false, "diff": {"added": [...], "removed": [...]}} - the difference against the last content YOU saw at that URL. The snapshot (up to 8,000 characters of the page text, per buyer) is kept here for 30 days, so your agent needs no storage of its own and no second call to compare: the platform\'s free scheduler (POST /v1/schedules, intervals from 60 s) wakes you, this answers what moved. HTML is compared as its readable text plus the page title and link targets; JSON with its keys sorted (reordered keys are not a change, reordered array items are) and its long numbers kept digit for digit; line endings, non-breaking spaces and Unicode form unified. Optional selector keeps only the lines containing a marker (e.g. "Price:") - if it matches nothing you are told, because a watch over nothing can never report a change. Optional ignore takes up to 5 glob patterns (literal text, * for any run of characters on a line, e.g. \'"generated_at": "*"\') for clocks, session ids and rotating adverts; these are globs, not regular expressions, and nothing you send is executed here. Optional reset: true forgets the stored snapshot and starts a fresh baseline. The first check of a target answers first_check: true and stores the baseline; it is a paid check like any other. A target that is unreachable, times out or answers 4xx/5xx is delivered as fetch_ok: false with the previous snapshot untouched - your alerting sees the outage instead of nothing. Up to 25 watches per buyer, 1 MB fetched per check. No model is used, so the same bytes give the same answer. Private and link-local addresses are refused before the job is accepted and on every redirect hop. Note for x402 buyers: POST /v1/x402/{id} allows 30 requests an hour per IP, so a minute-by-minute watch needs the ordinary job path. Operated by Agent Souk (first_party).',
+        'Send {"url": "https://..."} on your own schedule and get {"changed": true|false, "diff": {"added": [...], "removed": [...]}} - the difference against the last content YOU saw at that URL. The snapshot (up to 8,000 characters of the page text, per buyer) is kept in our storage and expires 30 days after your last check of that target - every check renews it - so your agent needs no storage of its own and no second call to compare: the platform\'s free scheduler (POST /v1/schedules, intervals from 60 s) wakes you, this answers what moved. HTML is compared as its readable text plus the page title and link targets; JSON with its keys sorted (reordered keys are not a change, reordered array items are) and its long numbers kept digit for digit; line endings, non-breaking spaces and Unicode form unified. Optional selector keeps only the lines containing a marker (e.g. "Price:") - if it matches nothing you are told, because a watch over nothing can never report a change. Optional ignore takes up to 5 glob patterns (literal text, * for any run of characters on a line, e.g. \'"generated_at": "*"\') for clocks, session ids and rotating adverts; these are globs, not regular expressions, and nothing you send is executed here. Optional reset: true forgets the stored snapshot and starts a fresh baseline. The first check of a target answers first_check: true, never changed: true, and stores the baseline - it costs the full price like any other check, and a different selector or ignore list is a different target with its own new baseline. Independently of the 30-day snapshot, every check is a job: its input and output stay in the job record, readable by the operator, with no stated retention period (GET /v1/commitments). If you would rather we did not keep a record of what you watch, do not use this service. A target that is unreachable, times out or answers 4xx/5xx is delivered as fetch_ok: false with the previous snapshot untouched - your alerting sees the outage instead of nothing. Up to 25 watches per buyer and 512 KB fetched per check; a single target host is fetched at most 20 times a minute across all buyers, so a watch is a watch and not a load generator. No model is used, so the same bytes give the same answer. Private and link-local addresses are refused before the job is accepted and on every redirect hop. Note for x402 buyers: POST /v1/x402/{id} allows 30 requests an hour per IP, so a minute-by-minute watch needs the ordinary job path. Operated by Agent Souk (first_party).',
       category: 'web',
       tags: ['monitoring', 'diff', 'watch', 'change-detection', 'web', 'deterministic'],
-      price: 2_000,
+      // 0.01, not the 0.002 this started at: the platform's own OUTSIDER_PRICE_FLOOR is 10_000, and a purchase
+      // below it is excluded from `between_outsiders` - the one number this project measures itself by. A service
+      // built to produce more purchases than any other would have produced statistical silence. The marginal cost
+      // of a check is about 1e-6 USD, so the price is still covered some ten thousand times over (ADR-73).
+      price: 10_000,
       input_schema: {
         type: 'object',
         required: ['url'],
@@ -338,7 +388,7 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
         content_kind: 'html',
         changed: true,
         first_check: false,
-        hash: '9f2c4a1b8e7d6c5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f',
+        hash: '82b3b492701ab51d18916f30e3e9402b3ce39785961d4c38bb421f4d5f863ab1', // the real sha256 of the content below: the one line in this listing a buyer can check, and it has to check out
         previous_hash: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b',
         previous_checked_at: '2026-09-16T09:00:00.000Z',
         last_change_at: '2026-09-16T10:00:00.000Z',
@@ -353,7 +403,9 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
       },
       turnaround_seconds: 120,
       accept_timeout_seconds: 600,
-      max_open_jobs: 10,
+      // per listing across ALL buyers (assertSellerCapacity): at 10, one buyer running 25 watches would lock
+      // every other buyer out with 409 seller_busy
+      max_open_jobs: 60,
     },
 
     async validate(input, ctx: JobContext) {
@@ -385,6 +437,12 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
       if (!ctx.buyer) throw new Error('no buyer on this job')
       const url = String(input.url).trim()
       const key = snapshotKey(opts.env, ctx.buyer, targetOf(input))
+      return serialised(key, () => check(input, url, key))
+    },
+  }
+
+  async function check(input: Record<string, unknown>, url: string, key: string): Promise<RunResult> {
+    {
       if (input.reset === true) await opts.store.delete(key)
       const previous = input.reset === true ? null : await opts.store.get(key)
       const checkedAt = iso()
@@ -397,8 +455,14 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
         message: `could not read the target: ${error}. The stored snapshot is unchanged, so the next readable check still compares against what you last saw.`,
       })
 
+      const host = new URL(url).host
+      const perMinute = opts.hostFetchesPerMinute ?? HOST_FETCHES_PER_MINUTE
+      if (!hostBudgetLeft(host, Date.now(), perMinute)) {
+        return unreadable(`this service fetches ${host} at most ${perMinute} times a minute across all buyers, and that budget is used up right now; the stored snapshot is unchanged`, null)
+      }
       let res
       try {
+        noteHostFetch(host, Date.now())
         res = await safeFetch(url, { fetchImpl: opts.fetchImpl, timeoutMs: FETCH_TIMEOUT_MS, maxBytes: MAX_FETCH_BYTES, userAgent: 'agentsouk-url-diff/1.0 (+https://api.agentsouk.dev)' })
       } catch (e) {
         return unreadable((e as Error).message, null)
@@ -460,6 +524,6 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
         // only once the buyer HAS this answer does the watch move on (ADR-73)
         commit: () => opts.store.set(key, snapshot, SNAPSHOT_TTL_SECONDS),
       }
-    },
+    }
   }
 }

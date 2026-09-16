@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { canonicalJson, globToRegExp, lineDiff, normalise, snapshotKey, targetOf, urlDiff, type MemoryStore, type Snapshot } from './url-diff.js'
+import { canonicalJson, globToRegExp, lineDiff, normalise, snapshotKey, targetOf, urlDiff, _resetHostBudgetForTests, type MemoryStore, type Snapshot } from './url-diff.js'
 import type { RunResult } from './types.js'
 
 /* ---------- a store like platform memory, and a fetch we control ---------- */
@@ -135,7 +135,7 @@ describe('targetOf', () => {
 describe('url-diff service (ADR-73)', () => {
   it('declines bad input, unknown fields, private targets and too many wildcards - before accepting', async () => {
     const { store } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({}).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({}).impl })
     expect(await svc.validate({}, ctx)).toMatch(/url must be/)
     expect(await svc.validate({ url: 'ftp://x/y' }, ctx)).toMatch(/only http/)
     expect(await svc.validate({ url: `${HOST}/p`, every: 60 }, ctx)).toMatch(/unknown field\(s\): every/)
@@ -150,14 +150,14 @@ describe('url-diff service (ADR-73)', () => {
 
   it('refuses to work without knowing the buyer: a snapshot per URL would show one buyer another one history', async () => {
     const { store } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
     expect(await svc.validate({ url: `${HOST}/p` }, { units: 1 })).toMatch(/which buyer is asking/)
     await expect(svc.run({ url: `${HOST}/p` }, { units: 1 })).rejects.toThrow(/no buyer/)
   })
 
   it('stores nothing until the buyer has the answer', async () => {
     const { store, kv, ttls } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
     const r = await svc.run({ url: `${HOST}/p` }, ctx)
     expect(kv.size).toBe(0) // run() alone changes nothing: the delivery may still fail
     await r.commit!()
@@ -168,7 +168,7 @@ describe('url-diff service (ADR-73)', () => {
   it('a delivery that never arrives does not cost the buyer its change', async () => {
     const { store, kv } = fakeStore()
     const bodies: Record<string, string> = { '/p': html('39') }
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
     await runAndDeliver(svc, { url: `${HOST}/p` })
     bodies['/p'] = html('49')
     const lost = await svc.run({ url: `${HOST}/p` }, ctx) // the x402 buyer stopped waiting: no commit
@@ -180,7 +180,7 @@ describe('url-diff service (ADR-73)', () => {
 
   it('stores a baseline on the first check and never calls it a change', async () => {
     const { store, kv } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl, now: () => Date.parse('2026-09-16T10:00:00Z') })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl, now: () => Date.parse('2026-09-16T10:00:00Z') })
     const r = await runAndDeliver(svc, { url: `${HOST}/p`, label: 'competitor' })
     expect(r.output).toMatchObject({ first_check: true, changed: false, checks: 1, previous_hash: null, diff: null, label: 'competitor', content_kind: 'html', fetch_ok: true, clipped: false })
     expect(kv.size).toBe(1)
@@ -192,7 +192,7 @@ describe('url-diff service (ADR-73)', () => {
     const { store } = fakeStore()
     const bodies: Record<string, string> = { '/p': html('39') }
     let t = Date.parse('2026-09-16T10:00:00Z')
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl, now: () => t })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl, now: () => t })
     await runAndDeliver(svc, { url: `${HOST}/p` })
     t += 3_600_000
     expect((await runAndDeliver(svc, { url: `${HOST}/p` })).output).toMatchObject({ changed: false, checks: 2, diff: null, last_change_at: null })
@@ -208,7 +208,7 @@ describe('url-diff service (ADR-73)', () => {
   it('delivers an unreachable target as news, keeps the snapshot, and does not fail the job', async () => {
     const { store, kv } = fakeStore()
     const bodies: Record<string, string | { body: string; status?: number; throws?: Error }> = { '/p': html('39') }
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
     await runAndDeliver(svc, { url: `${HOST}/p` })
     const before = [...kv.values()][0]
 
@@ -229,7 +229,7 @@ describe('url-diff service (ADR-73)', () => {
   it('keeps the baseline when a target briefly returns nothing, instead of raising two alarms', async () => {
     const { store, kv } = fakeStore()
     const bodies: Record<string, string> = { '/p': html('39') }
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
     await runAndDeliver(svc, { url: `${HOST}/p`, selector: 'Price:' })
     bodies['/p'] = '<html><body><main><p>Maintenance</p></main></body></html>'
     const blank = await runAndDeliver(svc, { url: `${HOST}/p`, selector: 'Price:' })
@@ -243,7 +243,7 @@ describe('url-diff service (ADR-73)', () => {
   it('says so when a selector matches nothing and when the page is longer than the diff can show', async () => {
     const { store } = fakeStore()
     const long = Array.from({ length: 2000 }, (_, i) => `filler line ${i}`).join('\n')
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39'), '/long': { body: long, type: 'text/plain' } }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39'), '/long': { body: long, type: 'text/plain' } }).impl })
     const miss = await runAndDeliver(svc, { url: `${HOST}/p`, selector: 'Preis:' })
     expect(miss.output).toMatchObject({ selector_matched: 0, content_chars: 0 })
     expect(miss.message).toContain('matched no line')
@@ -255,7 +255,7 @@ describe('url-diff service (ADR-73)', () => {
   it('reports a change beyond the 8,000 characters it can show, instead of missing it', async () => {
     const { store } = fakeStore()
     const bodies: Record<string, { body: string; type: string }> = { '/p': { body: 'x'.repeat(9_000) + '\nversion 1', type: 'text/plain' } }
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
     await runAndDeliver(svc, { url: `${HOST}/p` })
     bodies['/p'] = { body: 'x'.repeat(9_000) + '\nversion 2', type: 'text/plain' }
     const r = await runAndDeliver(svc, { url: `${HOST}/p` })
@@ -266,7 +266,7 @@ describe('url-diff service (ADR-73)', () => {
   it('keeps buyers apart: two buyers watching the same URL have their own history', async () => {
     const { store, kv } = fakeStore()
     const bodies: Record<string, string> = { '/p': html('39') }
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch(bodies).impl })
     await runAndDeliver(svc, { url: `${HOST}/p` }, { units: 1, buyer: 'agt_a' })
     bodies['/p'] = html('49')
     expect((await runAndDeliver(svc, { url: `${HOST}/p` }, { units: 1, buyer: 'agt_b' })).output).toMatchObject({ first_check: true, changed: false })
@@ -276,7 +276,7 @@ describe('url-diff service (ADR-73)', () => {
 
   it('lets a buyer clear a watch with reset, so its limit is not a 30-day sentence', async () => {
     const { store, kv } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
     await runAndDeliver(svc, { url: `${HOST}/p` })
     const fresh = await runAndDeliver(svc, { url: `${HOST}/p`, reset: true })
     expect(fresh.output).toMatchObject({ first_check: true, checks: 1 })
@@ -285,7 +285,7 @@ describe('url-diff service (ADR-73)', () => {
 
   it('stops a buyer at its own limit and everybody at the storage limit, before accepting', async () => {
     const { store, kv } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
     const snap: Snapshot = { hash: 'h', content: 'c', kind: 'text', checked_at: '2026-09-16T10:00:00.000Z', checks: 1, last_change_at: null }
     for (let i = 0; i < 25; i++) kv.set(snapshotKey('test', 'agt_buyer1', `t${i}`), snap)
     expect(await svc.validate({ url: `${HOST}/p` }, ctx)).toMatch(/already watching 25 targets/)
@@ -296,12 +296,26 @@ describe('url-diff service (ADR-73)', () => {
     expect(await svc.validate({ url: `${HOST}/p` }, { units: 1, buyer: 'agt_new' })).toMatch(/storage limit/)
   })
 
+  it('fetches one target host at most 20 times a minute across all buyers, and says so instead of queueing', async () => {
+    _resetHostBudgetForTests() // the budget is process-wide: it belongs to the target site, not to a service instance
+    const { store, kv } = fakeStore()
+    const svc = urlDiff({ hostFetchesPerMinute: 2, store, env: 'test', fetchImpl: fakeFetch({ '/a': html('39'), '/b': html('39'), '/c': html('39') }).impl })
+    expect((await runAndDeliver(svc, { url: `${HOST}/a` })).output).toMatchObject({ fetch_ok: true })
+    expect((await runAndDeliver(svc, { url: `${HOST}/b` })).output).toMatchObject({ fetch_ok: true })
+    const third = await runAndDeliver(svc, { url: `${HOST}/c` })
+    expect(third.output).toMatchObject({ fetch_ok: false, changed: false })
+    expect((third.output as { error: string }).error).toContain('at most 2 times a minute')
+    // nothing was fetched, so nothing is stored: the next readable check of that target is its first one
+    expect(kv.size).toBe(2)
+    expect((await runAndDeliver(svc, { url: `${HOST}/c` })).output).toMatchObject({ fetch_ok: false })
+  })
+
   it('the listing example is the shape run() returns, and the price is what a deterministic check costs', async () => {
     const { store } = fakeStore()
-    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
     const real = (await runAndDeliver(svc, { url: `${HOST}/p`, selector: 'Price:', label: 'competitor pricing' })).output as Record<string, unknown>
     expect(Object.keys(svc.listing.example_output as object).sort()).toEqual(Object.keys(real).sort())
-    expect(svc.listing.price).toBe(2_000)
+    expect(svc.listing.price).toBe(10_000) // at or above the platform's own OUTSIDER_PRICE_FLOOR, or no purchase counts
     expect(JSON.stringify(svc.listing.description)).toContain('25 watches per buyer')
     expect(JSON.stringify(svc.listing.description)).toContain('globs, not regular expressions')
   })
