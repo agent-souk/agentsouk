@@ -98,7 +98,7 @@ export function platformSnapshotStore(memory: MemoryApi): MemoryStore {
  * conversion extract-web sells), JSON is re-serialised with sorted keys (key order is not a change), whitespace is
  * collapsed, and the buyer's own `ignore` patterns are removed before hashing.
  */
-export function normalise(body: string, contentType: string, opts: { selector?: string; ignore?: string[] } = {}): { content: string; kind: 'html' | 'json' | 'text' } {
+export function normalise(body: string, contentType: string, opts: { selector?: string; ignore?: string[] } = {}): { content: string; kind: 'html' | 'json' | 'text'; clipped: boolean; matched: number | null } {
   const isJson = contentType.includes('json')
   const isHtml = !isJson && (contentType.includes('html') || contentType.includes('xml') || /<html|<body|<div|<p[\s>]/i.test(body.slice(0, 4000)))
   let content: string
@@ -117,7 +117,11 @@ export function normalise(body: string, contentType: string, opts: { selector?: 
     kind = 'text'
     content = body
   }
-  if (opts.selector) content = pick(content, opts.selector)
+  let matched: number | null = null
+  if (opts.selector) {
+    content = pick(content, opts.selector)
+    matched = content ? content.split('\n').length : 0
+  }
   for (const pattern of opts.ignore ?? []) {
     try {
       content = content.replace(new RegExp(pattern, 'g'), '')
@@ -125,7 +129,11 @@ export function normalise(body: string, contentType: string, opts: { selector?: 
       // a pattern that does not compile was refused in validate(); ignore it here rather than fail a paid job
     }
   }
-  return { content: content.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_SNAPSHOT_CHARS), kind }
+  const tidy = content.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  // Clipping matters to the buyer, not only to us: a change past character 8,000 is invisible, and a watch that
+  // silently sees two thirds of a page is worse than one that says so (found in the real run of ADR-73 against our
+  // own x402 index, which is longer than the cap).
+  return { content: tidy.slice(0, MAX_SNAPSHOT_CHARS), kind, clipped: tidy.length > MAX_SNAPSHOT_CHARS, matched }
 }
 
 /** Object keys in a stable order: a JSON API that reorders its keys has not changed anything. */
@@ -240,11 +248,15 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
             properties: { added: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } }, truncated: { type: 'boolean' } },
           },
           content_chars: { type: 'integer' },
+          clipped: { type: 'boolean', description: 'true when the page was longer than the 8,000 characters compared: a change after them is invisible' },
+          selector_matched: { type: ['integer', 'null'], description: 'lines your selector kept; 0 means the watch is comparing nothing and will never report a change' },
           snippet: { type: 'string', description: 'the first 200 characters of what was compared, so you can see the watch is pointed at the right thing' },
           checked_at: { type: 'string', format: 'date-time' },
         },
       },
-      example_input: { url: 'https://example.com/pricing', selector: 'Price:', label: 'competitor pricing' },
+      // the ignore pattern is not decoration: our own JSON index carries a "generated_at", and without it every
+      // single check reports a change (measured, ADR-73)
+      example_input: { url: 'https://example.com/pricing', selector: 'Price:', ignore: ['"generated_at": "[^"]*"'], label: 'competitor pricing' },
       example_output: {
         url: 'https://example.com/pricing',
         final_url: 'https://example.com/pricing',
@@ -260,6 +272,8 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
         checks: 14,
         diff: { added: ['Price: 49 USD / month'], removed: ['Price: 39 USD / month'], truncated: false },
         content_chars: 21,
+        clipped: false,
+        selector_matched: 1,
         snippet: 'Price: 49 USD / month',
         checked_at: '2026-09-16T10:00:00.000Z',
       },
@@ -291,7 +305,7 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
 
       const res = await safeFetch(url, { fetchImpl: opts.fetchImpl, timeoutMs: FETCH_TIMEOUT_MS, userAgent: 'agentsouk-url-diff/1.0 (+https://api.agentsouk.dev)' })
       if (res.status >= 400) throw new Error(`the URL answered HTTP ${res.status}; nothing was compared and the stored snapshot is unchanged`)
-      const { content, kind } = normalise(res.body, res.contentType, { selector: input.selector as string | undefined, ignore: input.ignore as string[] | undefined })
+      const { content, kind, clipped, matched } = normalise(res.body, res.contentType, { selector: input.selector as string | undefined, ignore: input.ignore as string[] | undefined })
       const hash = createHash('sha256').update(content).digest('hex')
       const changed = previous != null && previous.hash !== hash
       const checkedAt = iso()
@@ -321,13 +335,21 @@ export function urlDiff(opts: UrlDiffOptions): ServiceDef {
         checks: snapshot.checks,
         diff,
         content_chars: content.length,
+        clipped,
+        selector_matched: matched,
         snippet: content.slice(0, 200),
         checked_at: checkedAt,
       }
       return {
         output,
-        preview: { changed, first_check: previous == null, checks: snapshot.checks, content_kind: kind, added: diff?.added.length ?? 0, removed: diff?.removed.length ?? 0, snippet: content.slice(0, 120), checked_at: checkedAt },
-        message: previous == null ? `first check of this target: baseline stored (${content.length} characters of ${kind}).` : changed ? `changed: ${diff!.added.length} line(s) added, ${diff!.removed.length} removed (check ${snapshot.checks}).` : `unchanged since ${previous.checked_at} (check ${snapshot.checks}).`,
+        preview: { changed, first_check: previous == null, checks: snapshot.checks, content_kind: kind, clipped, selector_matched: matched, added: diff?.added.length ?? 0, removed: diff?.removed.length ?? 0, snippet: content.slice(0, 120), checked_at: checkedAt },
+        message:
+          (matched === 0
+            ? `WARNING: the selector ${JSON.stringify(input.selector)} matched no line on this page, so this watch is comparing nothing and can never report a change. Check the selector against the page text (the extract-web service shows you what we read). `
+            : clipped
+              ? `NOTE: only the first ${MAX_SNAPSHOT_CHARS} characters are compared; a change after them is invisible. Narrow the watch with selector or ignore. `
+              : '') +
+          (previous == null ? `first check of this target: baseline stored (${content.length} characters of ${kind}).` : changed ? `changed: ${diff!.added.length} line(s) added, ${diff!.removed.length} removed (check ${snapshot.checks}).` : `unchanged since ${previous.checked_at} (check ${snapshot.checks}).`),
       }
     },
   }

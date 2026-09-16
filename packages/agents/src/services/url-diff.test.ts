@@ -190,6 +190,28 @@ describe('url-diff service (ADR-73)', () => {
     expect(after).toMatchObject({ changed: true, checks: 2 })
   })
 
+  it('says so when a selector matches nothing: a silent empty watch would never report a change', async () => {
+    const { store } = fakeStore()
+    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
+    const r = await svc.run({ url: `${HOST}/p`, selector: 'Preis:' }, ctx)
+    const o = r.output as Record<string, unknown>
+    expect(o).toMatchObject({ selector_matched: 0, content_chars: 0, changed: false })
+    expect(r.message).toContain('matched no line')
+    expect(r.preview).toMatchObject({ selector_matched: 0 })
+    // a selector that hits reports how many lines it kept
+    const hit = (await svc.run({ url: `${HOST}/p`, selector: 'Price:' }, ctx)).output as Record<string, unknown>
+    expect(hit).toMatchObject({ selector_matched: 1, clipped: false })
+  })
+
+  it('says so when the page is longer than what is compared, instead of watching a third of it quietly', async () => {
+    const { store } = fakeStore()
+    const long = 'line one\n' + Array.from({ length: 2000 }, (_, i) => `filler line ${i}`).join('\n')
+    const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': { body: long, type: 'text/plain' } }).impl })
+    const r = await svc.run({ url: `${HOST}/p` }, ctx)
+    expect(r.output).toMatchObject({ clipped: true, content_chars: 8_000 })
+    expect(r.message).toContain('only the first 8000 characters')
+  })
+
   it('the listing example is the shape run() returns, and the price is what a deterministic check costs', async () => {
     const { store } = fakeStore()
     const svc = urlDiff({ store, env: 'test', fetchImpl: fakeFetch({ '/p': html('39') }).impl })
