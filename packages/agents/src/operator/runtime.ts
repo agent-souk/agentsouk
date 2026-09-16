@@ -415,6 +415,12 @@ export class OperatorRuntime {
    * What this desk has paid, lifetime and today: the platform's settled payments from the operator wallet, or the
    * desk's own ledger of broadcast transfers, united by transaction hash (a transfer counts the moment it is sent).
    */
+  /** ADR-71: what the desk has paid out, for the daily report. The ledger is the truth here, not the balance. */
+  async spendSoFar(): Promise<{ total: bigint; today: bigint; budget: bigint }> {
+    const s = await this.refreshSpend()
+    return { total: s.total, today: s.today, budget: this.config.totalBudget }
+  }
+
   private async refreshSpend(): Promise<{ total: bigint; today: bigint }> {
     if (this.spend && this.now() - this.spend.at < 60_000) return this.spend
     const day = this.iso().slice(0, 10)

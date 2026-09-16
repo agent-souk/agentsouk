@@ -16,6 +16,10 @@
  *   OPERATOR_API_KEY_LIVE/TEST keys of the bounty desk identity (souk-bounties); optional
  *   OPERATOR_PRIVATE_KEY       0x... key of the wallet bound to that identity; without it the desk posts nothing
  *   OPERATOR_TOTAL_BUDGET_USDC default 50 (lifetime), OPERATOR_DAILY_CAP_USDC default 20, OPERATOR_MAX_TRANSFER_USDC default 15
+ *   OPERATOR_TOTAL_BUDGET_USDC_LIVE/TEST  per environment and stronger than the shared figure (ADR-71): 0 stops every
+ *                              outgoing payment of the desk in that environment - bounties and first-buys both check it
+ *   OPERATOR_ALERT_WEBHOOK_URL enables the daily money line (ADR-71): one message a day with what came in, what the desk
+ *                              paid out, the model spend and the outsider counters, sent to the operator's alert channel
  *   FAUCET_SECRET              enables POST /faucet for the platform API (sandbox faucet, ADR-30): testnet USDC from the operator wallet, gas-free via the x402 facilitator
  *   FAUCET_MAX_USDC            per request, default 1; FAUCET_DAILY_CAP_USDC default 50
  *   FIRSTBUY_ENABLED           default true: the desk hires new outside listings once (ADR-31), paid gas-free, graded and reviewed
@@ -34,6 +38,7 @@ import { DEFAULT_FIRSTBUY, FirstBuyer } from './operator/firstbuy.js'
 import { DEFAULT_CONFIG, OperatorRuntime } from './operator/runtime.js'
 import { CHAINS, typedDataSigner, UsdcWallet } from './operator/usdc.js'
 import { CatalogRegistrar, cdpFacilitator, platformMemoryStore, type Facilitator } from './operator/bazaar.js'
+import { runDailyDigest, type DigestSnapshot } from './operator/digest.js'
 import { SellerRuntime, type Env } from './runner.js'
 import { createServer, KEEPALIVE_MAX_MS, type Operators, type Runtimes } from './server.js'
 import { allServices } from './services/index.js'
@@ -78,13 +83,26 @@ for (const env of ['live', 'test'] as Env[]) {
 const usdc = (v: string | undefined, dflt: bigint) => (v && Number.isFinite(Number(v)) ? BigInt(Math.round(Number(v) * 1e6)) : dflt)
 const operators: Partial<Record<Env, OperatorRuntime>> = {}
 const operatorKey = process.env.OPERATOR_PRIVATE_KEY
-const operatorConfig = { ...DEFAULT_CONFIG, totalBudget: usdc(process.env.OPERATOR_TOTAL_BUDGET_USDC, DEFAULT_CONFIG.totalBudget), dailyCap: usdc(process.env.OPERATOR_DAILY_CAP_USDC, DEFAULT_CONFIG.dailyCap) }
+/**
+ * The desk's budget, per environment (ADR-71). It used to be one figure for both, and the two are not comparable:
+ * live is Nick's money, the sandbox is testnet USDC from a faucet. Setting the live budget to 0 stops every
+ * outgoing payment of the desk - bounties and first-buys both check it - while the sandbox keeps demonstrating
+ * that the marketplace works. `OPERATOR_TOTAL_BUDGET_USDC` without a suffix still applies to both.
+ */
+const operatorConfigFor = (env: Env) => {
+  const E = env.toUpperCase()
+  return {
+    ...DEFAULT_CONFIG,
+    totalBudget: usdc(process.env[`OPERATOR_TOTAL_BUDGET_USDC_${E}`] ?? process.env.OPERATOR_TOTAL_BUDGET_USDC, DEFAULT_CONFIG.totalBudget),
+    dailyCap: usdc(process.env[`OPERATOR_DAILY_CAP_USDC_${E}`] ?? process.env.OPERATOR_DAILY_CAP_USDC, DEFAULT_CONFIG.dailyCap),
+  }
+}
 for (const env of ['live', 'test'] as Env[]) {
   const key = process.env[`OPERATOR_API_KEY_${env.toUpperCase()}`]
   if (!key) continue
   const wallet = operatorKey && llms[env].enabled ? new UsdcWallet(operatorKey, CHAINS[env], { maxPerTransfer: usdc(process.env.OPERATOR_MAX_TRANSFER_USDC, 15_000_000n), log }) : null
   const judge = new Judge(llms[env])
-  const op = new OperatorRuntime(clientFor(key), wallet, judge, CATALOG, env, log, operatorConfig)
+  const op = new OperatorRuntime(clientFor(key), wallet, judge, CATALOG, env, log, operatorConfigFor(env))
   if (wallet && operatorKey && process.env.FIRSTBUY_ENABLED !== 'false') {
     const E = env.toUpperCase()
     const perSeller = Number.parseInt(process.env.FIRSTBUY_PER_SELLER ?? '', 10)
@@ -176,7 +194,52 @@ for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) {
 setInterval(() => {
   for (const [env, rt] of Object.entries(runtimes) as [Env, SellerRuntime][]) rt.catchUp().then((n) => n && log('poll processed jobs', { env, jobs: n })).catch((e: unknown) => log('poll failed', { env, error: String(e) }))
 }, pollMs).unref()
+/**
+ * ADR-71: the daily money line, on the tick that already exists and through the alert webhook that already
+ * exists. Live only - the sandbox spends faucet money, and a report about play money would train us to ignore it.
+ */
+const digestWebhook = process.env.OPERATOR_ALERT_WEBHOOK_URL
+const sellerLive = process.env.AGENTSOUK_API_KEY_LIVE
+const digest =
+  digestWebhook && sellerLive && operators.live?.wallet
+    ? {
+        store: platformMemoryStore<DigestSnapshot>(operators.live.client.memory, 'operator/live/daily-digest'),
+        send: async (text: string) => {
+          const res = await fetch(digestWebhook, { method: 'POST', headers: { 'content-type': 'text/plain', title: 'Agent Souk: daily money', priority: '2' }, body: text })
+          if (!res.ok) throw new Error(`webhook answered HTTP ${res.status}`)
+        },
+        facts: async () => {
+          const op = operators.live!
+          const wallet = op.wallet!
+          const seller = await clientFor(sellerLive).agents.me()
+          const [sellerUsdc, deskUsdc, spend, stats] = await Promise.all([
+            seller.wallet_address ? wallet.usdcBalance(seller.wallet_address) : Promise.resolve(0n),
+            wallet.usdcBalance(),
+            op.spendSoFar(),
+            fetch(`${baseUrl}/v1/stats?env=live`).then((r) => r.json() as Promise<{ jobs_completed: number; between_outsiders: { orders: number; jobs_completed: number } }>),
+          ])
+          return {
+            sellerUsdc,
+            deskUsdc,
+            deskSpentTotal: spend.total,
+            deskBudget: spend.budget,
+            jobsCompleted: stats.jobs_completed,
+            outsiderOrders: stats.between_outsiders.orders,
+            outsiderJobsCompleted: stats.between_outsiders.jobs_completed,
+            llmLiveUsd: llms.live.status().spent_today_usd,
+            llmTestUsd: llms.test.status().spent_today_usd,
+          }
+        },
+        log,
+      }
+    : null
+if (!digest) log('daily digest disabled', { reason: !digestWebhook ? 'no OPERATOR_ALERT_WEBHOOK_URL' : !sellerLive ? 'no live seller key' : 'no operator wallet' })
+// once at startup as well as on the tick: the machine is redeployed most days, and a report that waits ten minutes
+// for the first tick is a report that a short-lived process never sends
+if (digest) runDailyDigest(digest).catch((e: unknown) => log('daily digest failed', { error: String(e) }))
+
 setInterval(() => {
+  if (digest) runDailyDigest(digest).catch((e: unknown) => log('daily digest failed', { error: String(e) }))
   for (const [env, op] of Object.entries(operators) as [Env, OperatorRuntime][]) {
     // ADR-61: a hook the platform disabled while this process was running is replaced on the next timer tick, not
     // only at the next start - and a host that is stopped has no timer, which is what the operator alert is for.
