@@ -213,7 +213,10 @@ describe('SellerRuntime with LLM services', () => {
         },
       },
     })
-    const full = new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test')
+    // Ten, not all of them: the platform caps a seller nobody but the desk has paid at 10 active listings and
+    // raises it to 50 after the first outside payment (assertSellerCapacity). A fresh test identity has none, and
+    // this test is about per-unit listings, not about that cap.
+    const full = new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm).slice(0, 10), 'test')
     await full.init()
     expect(full.listingIds()).toHaveLength(10)
     const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
@@ -240,7 +243,7 @@ describe('SellerRuntime with LLM services', () => {
     const status = Object.fromEntries(after.body.data.map((l: any) => [l.tags.find((t: string) => t.startsWith('souk:')), l.status]))
     expect(status).toEqual({ 'souk:extract-web': 'active', 'souk:validate-json': 'active', 'souk:token-snapshot': 'active', 'souk:extract-pdf': 'active', 'souk:strategy-stats': 'active', 'souk:translate': 'paused', 'souk:summarize': 'paused', 'souk:extract-structured': 'paused', 'souk:classify': 'paused', 'souk:extract-image': 'paused' })
     // ...and resumed once model access is back.
-    await new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm), 'test').init()
+    await new SellerRuntime(client(seller.api_keys.test), allServices(fakeLlm).slice(0, 10), 'test').init()
     const back = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
     expect(back.body.data.every((l: any) => l.status === 'active')).toBe(true)
   })

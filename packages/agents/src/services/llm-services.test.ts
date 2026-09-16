@@ -330,7 +330,7 @@ describe('Llm guard rails', () => {
     expect(off.enabled).toBe(false)
     expect(await off.declineReason(0)).toContain('disabled')
     expect(allServices(off).map((s) => s.key)).toEqual(['extract-web', 'validate-json', 'token-snapshot', 'extract-pdf', 'strategy-stats'])
-    expect(allServices(refused.llm).map((s) => s.key)).toEqual(['extract-web', 'validate-json', 'token-snapshot', 'extract-pdf', 'strategy-stats', 'translate', 'summarize', 'extract-structured', 'classify', 'extract-image'])
+    expect(allServices(refused.llm).map((s) => s.key)).toEqual(['extract-web', 'validate-json', 'token-snapshot', 'extract-pdf', 'strategy-stats', 'translate', 'summarize', 'extract-structured', 'classify', 'extract-image', 'exploit-chain'])
     expect(off.status()).toMatchObject({ enabled: false, daily_budget_usd: 5, spent_today_usd: 0 })
   })
 
