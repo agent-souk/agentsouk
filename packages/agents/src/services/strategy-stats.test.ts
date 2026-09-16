@@ -40,12 +40,12 @@ describe('statistics', () => {
     expect(maxDrawdown([-0.03, 0.01])).toBeCloseTo(0.03, 12)
     expect(maxDrawdown([0.01, 0.02])).toBe(0)
   })
-  it('computes the series statistics with population std, rf 0 and the stated annualisation', () => {
+  it('computes the series statistics with population std, rf 0 and the stated annualisation', async () => {
     const r = [0.01, -0.01, 0.02, 0.0, 0.01, -0.02, 0.03, 0.01, -0.01, 0.0, 0.01, 0.02, -0.03, 0.01, 0.0, 0.01, 0.02, -0.01, 0.01, 0.0]
     const n = r.length
     const mean = r.reduce((a, b) => a + b, 0) / n
     const std = Math.sqrt(r.reduce((a, b) => a + (b - mean) ** 2, 0) / n)
-    const s = seriesStats(r, 252, new Rng(1), 200)
+    const s = await seriesStats(r, 252, new Rng(1), 200)
     expect(s.days).toBe(n)
     // every figure is rounded to six significant digits
     expect(s.mean_daily).toBe(Number(mean.toPrecision(6)))
@@ -56,21 +56,29 @@ describe('statistics', () => {
     expect(s.worst_day).toBe(-0.03)
     expect(s.best_day).toBe(0.03)
     expect(s.positive_days_ratio).toBeCloseTo(11 / 20, 6)
-    expect(s.var_99).toBeGreaterThan(0)
-    expect(s.cvar_95).toBeGreaterThanOrEqual(s.var_99 * 0) // defined
+    expect(s.var_99).toBeGreaterThan(0) // the 1 % quantile is a loss here
+    expect(s.cvar_95).toBeGreaterThan(0)
     expect(s.p_value_mean_gt_zero).toBeGreaterThanOrEqual(0)
     expect(s.p_value_mean_gt_zero).toBeLessThanOrEqual(1)
     expect(s.autocorr_lag1).not.toBeNull()
   })
-  it('a constant series has zero variance: sharpe/sortino 0, no skew, p-value 0 or 1', () => {
-    const s = seriesStats(new Array(30).fill(0.001), 252, new Rng(1), 50)
-    expect(s.sharpe).toBe(0)
-    expect(s.sortino).toBe(0)
+  it('a constant series has no variance: sharpe/sortino null, no skew, p-value never exactly 0', async () => {
+    const s = await seriesStats(new Array(30).fill(0.001), 252, new Rng(1), 50)
+    expect(s.sharpe).toBeNull()
+    expect(s.sortino).toBeNull()
     expect(s.skewness).toBeNull()
     expect(s.autocorr_lag1).toBeNull()
-    expect(s.p_value_mean_gt_zero).toBe(0)
-    const z = seriesStats(new Array(30).fill(-0.001), 252, new Rng(1), 50)
+    expect(s.p_value_mean_gt_zero).toBe(Number((1 / 51).toPrecision(6))) // (0 + 1) / (50 + 1)
+    const z = await seriesStats(new Array(30).fill(-0.001), 252, new Rng(1), 50)
     expect(z.p_value_mean_gt_zero).toBe(1)
+  })
+  it('a series that never loses reports VaR and CVaR of 0 and no Sortino, not a gain as a loss', async () => {
+    const s = await seriesStats(Array.from({ length: 30 }, (_, i) => 0.001 + 0.0001 * (i % 7)), 252, new Rng(1), 50)
+    expect(s.var_99).toBe(0)
+    expect(s.cvar_95).toBe(0)
+    expect(s.sortino).toBeNull()
+    expect(s.sharpe).toBeGreaterThan(10)
+    expect(s.worst_day).toBe(0.001)
   })
 })
 
@@ -88,6 +96,16 @@ describe('simulateChallenge', () => {
     expect(c.days_to_target).toEqual({ median: 20, p25: 20, p75: 20 })
     expect(c.terminal_return.p50).toBeCloseTo(0.1, 9)
     expect(c.path_max_drawdown.p95).toBe(0)
+  })
+  it('a sum that lands exactly on the target or the limit counts (ten times 0.01 is 0.1, not 0.09999999999999999)', async () => {
+    const up = await simulateChallenge(new Array(30).fill(0.01), p({ target: 0.1, max_days: 10, simulations: 200 }), new Rng(1))
+    expect(up.pass_probability).toBe(1)
+    expect(up.days_to_target).toEqual({ median: 10, p25: 10, p75: 10 })
+    const down = await simulateChallenge(new Array(30).fill(-0.01), p({ max_loss: 0.1, daily_loss: 0, max_days: 10, simulations: 200 }), new Rng(1))
+    expect(down.bust_probability).toBe(1)
+    expect(down.bust_by.max_loss).toBe(1)
+    const daily = await simulateChallenge(new Array(30).fill(-0.05 / 3 * 3), p({ daily_loss: 0.05, max_loss: 1, simulations: 200 }), new Rng(1))
+    expect(daily.bust_by.daily_loss).toBe(1)
   })
   it('always busts on the overall limit on a steadily losing series, on the day the limit is reached', async () => {
     const r = new Array(30).fill(-0.006)
@@ -124,8 +142,11 @@ describe('simulateChallenge', () => {
   })
   it('probabilities add up and quantiles are ordered', async () => {
     const c = await simulateChallenge(EXAMPLE_RETURNS.map((x) => x * 3), p({ scale: 3, simulations: 3000 }), new Rng(11))
+    // totals are built from the rounded parts, so they agree up to the six-significant-digit rounding
     expect(c.pass_probability + c.bust_probability + c.undecided_probability).toBeCloseTo(1, 5)
     expect(c.bust_by.daily_loss + c.bust_by.max_loss).toBeCloseTo(c.bust_probability, 5)
+    expect(c.standard_error.pass_probability).toBeCloseTo(Math.sqrt((c.pass_probability * (1 - c.pass_probability)) / 3000), 4)
+    expect(c.standard_error.bust_probability).toBeGreaterThan(0)
     const t = c.terminal_return
     expect(t.p5).toBeLessThanOrEqual(t.p25)
     expect(t.p25).toBeLessThanOrEqual(t.p50)
@@ -150,7 +171,8 @@ describe('parseInput', () => {
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), max_days: 0 })).toMatch(/max_days/)
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), target: 0 })).toMatch(/target/)
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), daily_loss: -0.1 })).toMatch(/daily_loss/)
-    expect(parseInput({ daily_returns: new Array(20).fill(0.001), block_length: 21 })).toMatch(/block_length 21 is longer/)
+    expect(parseInput({ daily_returns: new Array(20).fill(0.001), block_length: 250 })).toMatchObject({ block_length: 250 }) // wrap-around, as in the lab
+    expect(parseInput({ daily_returns: new Array(20).fill(0.001), block_length: 251 })).toMatch(/block_length/)
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), seed: -1 })).toMatch(/seed/)
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), seed: 1e12 })).toMatch(/seed/)
     expect(parseInput({ daily_returns: new Array(20).fill(0.001), scale: '2' })).toMatch(/scale must be a number/)
@@ -163,7 +185,7 @@ describe('parseInput', () => {
 })
 
 describe('strategyStats service', () => {
-  const svc = strategyStats({ now: () => Date.parse('2026-09-16T00:00:00.000Z') })
+  const svc = strategyStats()
   it('validate mirrors parseInput', async () => {
     expect(await svc.validate({}, { units: 1 })).toMatch(/daily_returns/)
     expect(await svc.validate({ daily_returns: EXAMPLE_RETURNS }, { units: 1 })).toBeNull()
@@ -171,15 +193,16 @@ describe('strategyStats service', () => {
   it('is deterministic for the same input and seed, and the example output in the listing is what it computes', async () => {
     const input = svc.listing.example_input as Record<string, unknown>
     const a = await svc.run(input, { units: 1 })
+    await new Promise((r) => setTimeout(r, 5))
     const b = await svc.run(input, { units: 1 })
-    expect(a.output).toEqual(b.output)
+    expect(JSON.stringify(a.output)).toBe(JSON.stringify(b.output)) // byte-identical: no clock in the output
     const out = a.output as typeof EXAMPLE_OUTPUT
     expect(out.stats).toEqual(EXAMPLE_OUTPUT.stats)
     expect(out.challenge).toEqual(EXAMPLE_OUTPUT.challenge)
     expect(out.input_summary).toEqual(EXAMPLE_OUTPUT.input_summary)
     expect(out.method).toBe(EXAMPLE_OUTPUT.method)
     expect(out.caveats).toEqual(EXAMPLE_OUTPUT.caveats)
-    expect(out.computed_at).toBe('2026-09-16T00:00:00.000Z')
+    expect(out).toEqual(EXAMPLE_OUTPUT)
     expect(a.message).toMatch(/pass \d+\.\d %/)
     expect(JSON.stringify(a.preview).length).toBeLessThan(1000)
     expect(JSON.stringify(a.output).length).toBeLessThan(8000)
@@ -190,6 +213,7 @@ describe('strategyStats service', () => {
     expect(a.challenge.terminal_return).not.toEqual(b.challenge.terminal_return)
     const { p_value_mean_gt_zero: pa, ...sa } = a.stats
     const { p_value_mean_gt_zero: pb, ...sb } = b.stats
+    expect(a.challenge.standard_error.bust_probability).toBeGreaterThanOrEqual(0)
     expect(sa).toEqual(sb)
     expect(typeof pa).toBe('number')
     expect(typeof pb).toBe('number')
