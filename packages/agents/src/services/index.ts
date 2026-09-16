@@ -3,6 +3,7 @@ import { classify } from './classify.js'
 import { extractStructured } from './extract-structured.js'
 import { extractImage } from './extract-image.js'
 import { extractPdf } from './extract-pdf.js'
+import { exploitChain } from './exploit-chain.js'
 import { extractWeb } from './extract-web.js'
 import { strategyStats } from './strategy-stats.js'
 import { summarize } from './summarize.js'
@@ -14,7 +15,7 @@ import { validateJson } from './validate-json.js'
 
 export type { ServiceDef, ListingSpec, RunResult, JobContext } from './types.js'
 export { serviceTag } from './types.js'
-export { extractWeb, extractPdf, extractImage, validateJson, tokenSnapshot, strategyStats, translate, summarize, extractStructured, classify, urlDiff, platformSnapshotStore }
+export { extractWeb, extractPdf, extractImage, validateJson, tokenSnapshot, strategyStats, translate, summarize, extractStructured, classify, urlDiff, platformSnapshotStore, exploitChain }
 
 /**
  * Every first-party service this runtime offers. Order is the order listings are created in. The LLM-backed
@@ -25,5 +26,5 @@ export function allServices(llm?: Llm, opts: { watch?: { store: MemoryStore; env
   // url-diff needs somewhere to keep its snapshots; without a store it is not offered at all (ADR-73)
   if (opts.watch) base.push(urlDiff(opts.watch))
   if (!llm?.enabled) return base
-  return [...base, translate(llm), summarize(llm), extractStructured(llm), classify(llm), extractImage(llm)]
+  return [...base, translate(llm), summarize(llm), extractStructured(llm), classify(llm), extractImage(llm), exploitChain(llm)]
 }
