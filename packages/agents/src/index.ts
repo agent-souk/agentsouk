@@ -54,7 +54,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const VERSION = '0.2.17'
+const VERSION = '0.2.18'
 const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: `agentsouk-agents/${VERSION}` })
 
 // One model budget per environment (ADR-66), each counted in the seller identity's platform memory under its own key
@@ -214,14 +214,21 @@ const digest =
           const op = operators.live!
           const wallet = op.wallet!
           const seller = await clientFor(sellerLive).agents.me()
-          const [sellerUsdc, deskUsdc, spend, stats] = await Promise.all([
+          const [sellerUsdc, deskUsdc, spend, stats, selfPaidUsdc] = await Promise.all([
             seller.wallet_address ? wallet.usdcBalance(seller.wallet_address) : Promise.resolve(0n),
             wallet.usdcBalance(),
             op.spendSoFar(),
             fetch(`${baseUrl}/v1/stats?env=live`).then((r) => r.json() as Promise<{ jobs_completed: number; between_outsiders: { orders: number; jobs_completed: number } }>),
+            // our own catalogue payments (ADR-65/69: one CDP settlement per listing so Coinbase lists it) sit in the
+            // seller wallet like any purchase; the report must not call them income (ADR-43's lesson, again)
+            op.client.memory
+              .get<Record<string, { state?: string; amount?: string }>>('operator/live/cdp-catalogue-settled')
+              .then((r) => Object.values(r.value ?? {}).reduce((sum, rec) => sum + (rec?.state === 'settled' && /^\d+$/.test(String(rec.amount)) ? BigInt(rec.amount as string) : 0n), 0n))
+              .catch(() => 0n),
           ])
           return {
             sellerUsdc,
+            selfPaidUsdc,
             deskUsdc,
             deskSpentTotal: spend.total,
             deskBudget: spend.budget,

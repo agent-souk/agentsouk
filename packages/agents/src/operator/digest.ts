@@ -24,6 +24,8 @@ export type DigestSnapshot = {
 export type DigestFacts = {
   /** cumulative USDC ever received by the seller wallet: every x402 purchase, ours and theirs */
   sellerUsdc: bigint
+  /** the part of that we paid ourselves - the one CDP settlement per listing that makes Coinbase's Bazaar list it (ADR-65/69) */
+  selfPaidUsdc: bigint
   /** what the desk has paid out over its lifetime, and what it is still allowed to */
   deskSpentTotal: bigint
   deskBudget: bigint
@@ -44,15 +46,17 @@ const deltaN = (now: number, then: number | undefined): string => (then === unde
 
 /**
  * The report. Deliberately one block of plain text: it goes to a phone, and the numbers that matter are the two
- * money lines. `earned` is cumulative on purpose - the seller wallet is never emptied, so its balance IS the
- * lifetime income, and the delta against yesterday is the day's takings.
+ * money lines. `from others` is cumulative on purpose - the seller wallet is never emptied, so its balance minus
+ * what we paid into it ourselves IS the lifetime income, and the delta against yesterday is the day's takings.
+ * Still inside that figure: payments from wallets the desk had funded (veriton, ADR-56/63: 0.012 USDC so far);
+ * the platform applies that rule in /v1/stats, the wallet cannot.
  */
 export function digestText(f: DigestFacts, prev: DigestSnapshot | null): string {
   const prevEarned = prev ? BigInt(prev.earned_usdc) : undefined
   const prevSpent = prev ? BigInt(prev.spent_usdc) : undefined
   const lines = [
     `Agent Souk, ${new Date().toISOString().slice(0, 10)}`,
-    `in:    ${formatUsdc(f.sellerUsdc)} earned ever${delta(f.sellerUsdc, prevEarned)}`,
+    `in:    ${formatUsdc(f.sellerUsdc - f.selfPaidUsdc)} from others ever${delta(f.sellerUsdc - f.selfPaidUsdc, prevEarned)} (wallet ${formatUsdc(f.sellerUsdc)}, ${formatUsdc(f.selfPaidUsdc)} of it our own catalogue payments)`,
     `out:   ${formatUsdc(f.deskSpentTotal)} desk spend ever${delta(f.deskSpentTotal, prevSpent)} of ${formatUsdc(f.deskBudget)} budget`,
     `model: ${f.llmLiveUsd.toFixed(4)} USD live today, ${f.llmTestUsd.toFixed(4)} sandbox`,
     `jobs:  ${f.jobsCompleted} delivered${deltaN(f.jobsCompleted, prev?.jobs_completed)}`,
@@ -64,7 +68,7 @@ export function digestText(f: DigestFacts, prev: DigestSnapshot | null): string 
 }
 
 export function snapshotOf(f: DigestFacts, day: string): DigestSnapshot {
-  return { day, earned_usdc: f.sellerUsdc.toString(), spent_usdc: f.deskSpentTotal.toString(), jobs_completed: f.jobsCompleted, outsider_orders: f.outsiderOrders }
+  return { day, earned_usdc: (f.sellerUsdc - f.selfPaidUsdc).toString(), spent_usdc: f.deskSpentTotal.toString(), jobs_completed: f.jobsCompleted, outsider_orders: f.outsiderOrders }
 }
 
 export type DigestDeps = {
@@ -92,6 +96,6 @@ export async function runDailyDigest(deps: DigestDeps): Promise<'sent' | 'alread
     return 'failed'
   }
   await deps.store.save(snapshotOf(facts, day))
-  deps.log?.('daily digest sent', { day, earned_usdc: facts.sellerUsdc.toString(), desk_spent_usdc: facts.deskSpentTotal.toString() })
+  deps.log?.('daily digest sent', { day, earned_usdc: (facts.sellerUsdc - facts.selfPaidUsdc).toString(), desk_spent_usdc: facts.deskSpentTotal.toString() })
   return 'sent'
 }

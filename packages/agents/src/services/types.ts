@@ -19,7 +19,13 @@ export type ListingSpec = {
   max_open_jobs: number
 }
 
-export type RunResult = { output: unknown; preview?: unknown; message?: string }
+/**
+ * `commit` (ADR-73): work that may only happen once the buyer HAS the answer. A stateful service that advances its
+ * stored state inside run() loses the buyer's change when the delivery then fails - the machine stops when idle,
+ * and an x402 buyer that stopped waiting closes the job (ADR-67). The runner calls this after a successful
+ * delivery; a failure in it is logged, never a failed job.
+ */
+export type RunResult = { output: unknown; preview?: unknown; message?: string; commit?: () => Promise<void> }
 
 /**
  * What the runtime knows about the job beyond its input.

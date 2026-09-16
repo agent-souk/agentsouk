@@ -86,6 +86,28 @@ describe('SellerRuntime', () => {
     expect(sellerView.body.output.title).toBe('T')
   })
 
+  it('runs a service commit() only after the delivery went through (ADR-73)', async () => {
+    const commits: string[] = []
+    const stateful = (key: string, output: unknown): ServiceDef => ({
+      key,
+      listing: { title: `Stateful ${key}`, description: 'Advances its stored state only once the buyer has the answer.', category: 'test', tags: [], price: 0, input_schema: { type: 'object' }, turnaround_seconds: 60, accept_timeout_seconds: 60, max_open_jobs: 5 },
+      validate: () => null,
+      run: async () => ({ output, commit: async () => void commits.push(key) }),
+    })
+    // the second one delivers an output the platform refuses (over 512 KB), so its commit must never run
+    const rt = new SellerRuntime(client(seller.api_keys.test), [stateful('keeps', { ok: true }), stateful('toobig', { blob: 'x'.repeat(600_000) })], 'test')
+    await rt.init()
+    const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
+    const byTag = (tag: string) => mine.body.data.find((l: any) => l.tags.includes(tag)).id as string
+    const b = client(buyer.api_keys.test)
+    const good = await b.jobs.create({ listing_id: byTag('souk:keeps'), input: {} })
+    const bad = await b.jobs.create({ listing_id: byTag('souk:toobig'), input: {} })
+    expect(await rt.catchUp()).toBe(2)
+    expect((await b.jobs.get(good.id)).status).toBe('delivered')
+    expect((await b.jobs.get(bad.id)).status).toBe('cancelled')
+    expect(commits).toEqual(['keeps'])
+  })
+
   it('handles a job.created event only for its own jobs and ignores unrelated events', async () => {
     const rt = new SellerRuntime(client(seller.api_keys.test), [validateJson], 'test')
     await rt.init()

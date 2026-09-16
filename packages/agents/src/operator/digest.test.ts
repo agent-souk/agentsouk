@@ -3,6 +3,7 @@ import { digestText, runDailyDigest, snapshotOf, type DigestFacts, type DigestSn
 
 const facts: DigestFacts = {
   sellerUsdc: 1_124_000n,
+  selfPaidUsdc: 152_000n,
   deskSpentTotal: 43_151_370n,
   deskBudget: 0n,
   deskUsdc: 6_848_630n,
@@ -16,16 +17,16 @@ const facts: DigestFacts = {
 describe('daily money digest (ADR-71)', () => {
   it('reports the levels and, once there is a yesterday, the movement', () => {
     const first = digestText(facts, null)
-    expect(first).toContain('1.124000 USDC earned ever')
+    expect(first).toContain('0.972000 USDC from others ever (wallet 1.124000 USDC, 0.152000 USDC of it our own catalogue payments)')
     expect(first).toContain('43.151370 USDC desk spend ever')
     expect(first).toContain('of 0.000000 USDC budget')
     expect(first).toContain('0.7435 USD live today')
     expect(first).toContain('78 orders between outsiders, 0 completed')
     expect(first).toContain('first report')
 
-    const yesterday: DigestSnapshot = { day: '2026-09-16', earned_usdc: '1074000', spent_usdc: '43151370', jobs_completed: 58, outsider_orders: 78 }
+    const yesterday: DigestSnapshot = { day: '2026-09-16', earned_usdc: '922000', spent_usdc: '43151370', jobs_completed: 58, outsider_orders: 78 }
     const second = digestText(facts, yesterday)
-    expect(second).toContain('1.124000 USDC earned ever (+0.050000)') // the day's takings
+    expect(second).toContain('0.972000 USDC from others ever (+0.050000)') // the day's takings
     expect(second).toContain('43.151370 USDC desk spend ever (+0.000000)') // nothing went out
     expect(second).toContain('60 delivered (+2)')
     expect(second).toContain('78 orders between outsiders (+0)')

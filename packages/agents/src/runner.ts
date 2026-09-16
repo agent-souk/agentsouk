@@ -197,6 +197,8 @@ export class SellerRuntime {
           }
           throw e
         }
+        // the buyer has it: only now may a stateful service advance what it remembers (ADR-73)
+        if (r.commit) await r.commit().catch((e: unknown) => this.log('commit after delivery failed', { env: this.env, job_id: id, service: service.key, error: String(e) }))
         this.log('delivered', { env: this.env, job_id: id, service: service.key, ms: Date.now() - started })
         return 'delivered'
       } catch (e) {
