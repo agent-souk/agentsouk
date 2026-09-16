@@ -185,10 +185,12 @@ describe('Llm guard rails', () => {
       const answered = new Anthropic.InternalServerError(529, { type: 'error', error: { type: 'overloaded_error', message: 'overloaded' } }, 'overloaded', new Headers())
       const broken = new Anthropic.APIConnectionError({ message: 'socket hang up' })
       const llm = new Llm({ client: fakeClient([{ throw: answered }, { throw: broken }]).client, dailyBudgetUsd: 5, now: () => T, store })
-      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toBe(answered)
+      // both come back as LlmUnavailable: the provider's weather is postponed by the runner, not booked as our
+      // own failed job (ADR-70) - but the spend accounting is unchanged
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toThrow(/temporarily unavailable \(HTTP 529\)/)
       expect(llm.spentTodayUsd()).toBe(0)
       expect(s.value).toEqual({ day: '2026-09-15', spent_usd: 0 })
-      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toBe(broken)
+      await expect(llm.complete({ system: 's', user: 'u', maxTokens: 8_000 })).rejects.toThrow(/could not be reached: socket hang up/)
       expect(llm.spentTodayUsd()).toBeCloseTo(Llm.estimateUsd(2, 8_000), 6)
       expect(s.value!.spent_usd).toBeCloseTo(Llm.estimateUsd(2, 8_000), 6)
       expect(llm.status().running_calls).toBe(0)
@@ -280,6 +282,25 @@ describe('Llm guard rails', () => {
       expect(await llm.declineReason(0.2)).toContain('used up')
       now += HOLD_MS + 1
       expect(await llm.declineReason(0.2)).toBeNull()
+    })
+
+    it('a call releases its own hold, not the oldest one (ADR-70)', async () => {
+      const { store } = kvStore({ day: '2026-09-15', spent_usd: 0 })
+      const g = gatedClient({ input_tokens: 0, output_tokens: 0 })
+      const llm = new Llm({ client: g.client, dailyBudgetUsd: 5, now: () => T, store })
+      // an expensive text job is checked first, a cheap image job second
+      const expensive = Llm.estimateUsd(50_000, 4_000)
+      const cheap = Llm.estimateUsd(200, 1_000)
+      expect(await llm.declineReason(expensive)).toBeNull()
+      expect(await llm.declineReason(cheap)).toBeNull()
+      expect(llm.status().held_for_accepted_jobs_usd).toBeCloseTo(expensive + cheap, 4)
+      // the cheap job calls: taking the oldest hold would drop the expensive job's commitment and let a third job
+      // in against a figure that is 0.16 USD too low
+      const call = llm.complete({ system: 's', user: 'u'.repeat(200), maxTokens: 1_000, claimHold: true })
+      await tick()
+      expect(llm.status().held_for_accepted_jobs_usd).toBeCloseTo(expensive, 4)
+      g.release()
+      await call
     })
 
     it('a read that throws before it returns a promise does not wedge the budget check for the life of the process', async () => {

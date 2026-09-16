@@ -2,7 +2,8 @@
  * One Anthropic client for every LLM-backed first-party service, with the guards a paid service needs:
  * a daily USD budget (protects the operator's account), honest handling of refusals and truncation (the job is
  * cancelled with a reason instead of delivering garbage), and a cost estimate the services use to decline early.
- * Customer text is always passed as data inside <input> tags; the system prompts say so explicitly.
+ * Customer text is passed as data inside <input> tags and the system prompts say so; extract-image fences the
+ * buyer's hints the same way and names the image itself as customer data.
  */
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -13,13 +14,17 @@ export const PRICE_PER_MTOK = { input: 5, output: 25 }
 export type Effort = 'low' | 'medium' | 'high'
 /** An image that goes in front of the user text, base64 as the API takes it; `tokens` is the caller's estimate of what the model bills for it (ADR-70). */
 export type ImageInput = { mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string; tokens: number }
-/** `claimHold`: this call is the one a job's budget check held an estimate for; the oldest hold is released as the call reserves its own. */
+/** `claimHold`: this call is the one a job's budget check held an estimate for; that hold is released as the call reserves its own. */
 export type CompleteInput = { system: string; user: string; maxTokens: number; effort?: Effort; jsonSchema?: Record<string, unknown>; claimHold?: boolean; images?: ImageInput[] }
 export type Completion = { text: string; inputTokens: number; outputTokens: number; costUsd: number; stopReason: string | null; model: string }
 
-/** The model would not or could not produce a usable result; the job is cancelled with this message. */
+/**
+ * The model would not or could not produce a usable result; the job is cancelled with this message. `kind` lets a
+ * service replace the generic wording with advice its buyer can act on - "split the input into smaller jobs" is
+ * useless to someone who sent one image.
+ */
 export class LlmDeclined extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly kind?: 'truncated' | 'refusal' | 'not_json') {
     super(message)
     this.name = 'LlmDeclined'
   }
@@ -30,6 +35,26 @@ export class LlmBudgetExceeded extends Error {
     super(message)
     this.name = 'LlmBudgetExceeded'
   }
+}
+
+/**
+ * The model provider is temporarily unreachable - rate limited, overloaded, a 5xx, a dropped connection. Nothing
+ * about the job is wrong, so it must not be cancelled: a cancellation out of `in_progress` is booked as
+ * `seller_failed` and counted publicly in `jobs_failed`, which would put a provider outage on our seller's record
+ * (found in the adversarial run of ADR-70: twenty minutes of 529s would have been five failed jobs). Carries
+ * `retryLater`, so the runner leaves the job for the next poll like an unreadable budget.
+ */
+export class LlmUnavailable extends Error {
+  readonly retryLater = true
+  constructor(message: string, readonly status?: number) {
+    super(message)
+    this.name = 'LlmUnavailable'
+  }
+}
+
+/** A failure that says nothing about the job: leave it, do not fail it. */
+export function isRetryLater(e: unknown): boolean {
+  return (e instanceof LlmBudgetExceeded || e instanceof LlmUnavailable) && e.retryLater
 }
 
 /** The slice of the SDK the services use; tests inject a fake. */
@@ -208,6 +233,21 @@ export class Llm {
     return this.reservedUsd() + this.liveHolds().reduce((sum, h) => sum + h.usd, 0)
   }
 
+  /**
+   * Release the hold this call is the one for. It takes the hold whose figure is closest to what the call now
+   * reserves, not simply the oldest: a job's check and its call compute the same estimate from the same input, so
+   * matching by figure hits that job's own hold, while dropping the oldest let a cheap call release an expensive
+   * job's hold (found in the adversarial run of ADR-70: a 0.11 USD image call released a 0.28 USD text hold and
+   * the counted commitment fell 43 % below the real one, which then cancelled a later job after accepting it).
+   */
+  private releaseHold(estimateUsd: number): void {
+    const holds = this.liveHolds()
+    if (!holds.length) return
+    let best = 0
+    for (let i = 1; i < holds.length; i++) if (Math.abs(holds[i].usd - estimateUsd) < Math.abs(holds[best].usd - estimateUsd)) best = i
+    holds.splice(best, 1)
+  }
+
   get enabled(): boolean {
     return this.client != null
   }
@@ -301,7 +341,7 @@ export class Llm {
     if (!this.restored) throw new LlmBudgetExceeded(CHECK_LATER, true)
     const imageTokens = (input.images ?? []).reduce((n, i) => n + i.tokens, 0)
     const estimate = Llm.estimateUsd(input.system.length + input.user.length, input.maxTokens, imageTokens)
-    if (input.claimHold) this.liveHolds().shift() // this call takes the place of the estimate its job's check held
+    if (input.claimHold) this.releaseHold(estimate) // this call takes the place of the estimate its job's check held
     if (!this.canAfford(estimate)) throw new LlmBudgetExceeded(USED_UP)
     // Reserved before the call and written, so concurrent calls cannot all pass the check against the same figure,
     // and a process stopped mid-call (the host stops when idle) leaves the call counted at its estimate.
@@ -327,11 +367,19 @@ export class Llm {
       this.inFlight.delete(reservation)
       // An error the API answered with a status produced nothing billable. A connection that broke or timed out
       // may have been generating: it keeps its estimate.
-      if (!(e instanceof Anthropic.APIError && typeof e.status === 'number')) {
+      const status = e instanceof Anthropic.APIError && typeof e.status === 'number' ? e.status : null
+      if (status === null) {
         this.rollDay()
         this.spentUsd += estimate
       }
       await this.persist()
+      // Rate limits, overload and 5xx are the provider's weather, not a fault of this job (the SDK has already
+      // retried twice); so is a connection that never got a status. They become LlmUnavailable, which the runner
+      // postpones instead of cancelling.
+      if (status === null && e instanceof Anthropic.APIError) throw new LlmUnavailable(`the model could not be reached: ${e.message}`)
+      if (status === 408 || status === 409 || status === 429 || (status !== null && status >= 500)) {
+        throw new LlmUnavailable(`the model is temporarily unavailable (HTTP ${status}); the job is retried, not failed`, status)
+      }
       throw e
     }
     const billed = Llm.billedTokens(res.usage)
@@ -343,9 +391,9 @@ export class Llm {
     await this.persist()
     if (res.stop_reason === 'refusal') {
       const why = (res as { stop_details?: { explanation?: string | null } | null }).stop_details?.explanation
-      throw new LlmDeclined(`the model declined to process this content${why ? `: ${why}` : ''}`)
+      throw new LlmDeclined(`the model declined to process this content${why ? `: ${why}` : ''}`, 'refusal')
     }
-    if (res.stop_reason === 'max_tokens') throw new LlmDeclined('the result would exceed the size limit of this service; split the input into smaller jobs')
+    if (res.stop_reason === 'max_tokens') throw new LlmDeclined('the result would exceed the size limit of this service; split the input into smaller jobs', 'truncated')
     const text = res.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
       .map((b) => b.text)
@@ -359,7 +407,7 @@ export class Llm {
     try {
       return { data: JSON.parse(completion.text) as T, completion }
     } catch {
-      throw new LlmDeclined('the model did not return valid JSON; retry the job')
+      throw new LlmDeclined('the model did not return valid JSON; retry the job', 'not_json')
     }
   }
 }

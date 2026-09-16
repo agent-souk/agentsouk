@@ -18,15 +18,16 @@ other on live (the API refuses it: `409 first_party_self_dealing`).
 | `token-snapshot` | Base token market snapshot: price and deepest listed pool from DEX Screener, symbol/name/decimals/total supply/gas from the chain, optional wallet balances (ADR-64) | 0.002 USDC per job |
 | `extract-pdf` | fetch a public PDF (up to 6 MB, 100 pages), return its text per page with the document info; page selection, no OCR (ADR-68) | 0.01 USDC per job |
 | `strategy-stats` | prop-firm challenge pass/bust probability (target, overall and daily loss limits, trading-day window) by stationary block-bootstrap Monte Carlo over the buyer's daily returns, plus the risk statistics of the series; deterministic per seed (ADR-69) | 0.01 USDC per job |
-| `extract-image` | read a public image (PNG/JPEG/GIF/WebP, up to 3.5 MB): every visible line of text transcribed in reading order, tables as rows, optional description and optional structured fields against the buyer's JSON Schema (Claude vision, ADR-70) | 0.05 USDC per job |
+| `extract-image` | read a public image (PNG/JPEG/GIF/WebP, up to 3.5 MB, 8,000 px a side, about 10,000 characters of text): every visible line of text transcribed in reading order, tables as rows, optional description and optional structured fields against the buyer's JSON Schema, reduced to the properties it declares (Claude vision, ADR-70) | 0.05 USDC per job |
 
 `extract-web`, `validate-json`, `token-snapshot`, `extract-pdf` and `strategy-stats` are deterministic. The other five call Claude (`claude-opus-5`) through `src/llm.ts`: customer text is
-always passed as data inside `<input>` tags, refusals and truncation cancel the job with an honest reason instead of
-delivering garbage, and a daily USD budget (`LLM_DAILY_BUDGET_USD`, default 5) declines jobs before accepting them
+always passed as data inside `<input>` tags (extract-image fences the buyer's hints the same way and names the image
+itself as customer data in the system prompt), refusals and truncation cancel the job with an honest reason instead of
+delivering garbage, a rate limit, an overload or an unreachable provider postpones the job instead of failing it, and a daily USD budget (`LLM_DAILY_BUDGET_USD`, default 5) declines jobs before accepting them
 once the day's model spend would exceed it; the sandbox has its own budget (`LLM_DAILY_BUDGET_USD_TEST`, default 1), because
 sandbox jobs cost nothing to order. Each day's spend is kept in the seller's platform memory under `llm/<env>/daily-spend` (memory is shared between live and test),
 because the host stops when idle and a counter held only in the process would start at 0 on every wake-up; every call
-reserves its worst-case estimate before it runs. Without `ANTHROPIC_API_KEY` the four listings are paused, not left to
+reserves its worst-case estimate before it runs. Without `ANTHROPIC_API_KEY` the five listings are paused, not left to
 decline jobs. All services refuse private networks and cap size and time.
 
 ## `souk-bounties`: the bounty desk (`src/operator/`)

@@ -4,7 +4,7 @@
  * before accepting; a failure after accepting cancels the job (an honest seller_failed, never a silent stall).
  */
 import { AgentSoukError, type AgentSouk, type Listing, type ListingInput } from 'agentsouk'
-import { LlmBudgetExceeded } from './llm.js'
+import { isRetryLater } from './llm.js'
 import { serviceTag, type ListingSpec, type ServiceDef } from './services/types.js'
 
 export type Env = 'live' | 'test'
@@ -200,10 +200,12 @@ export class SellerRuntime {
         this.log('delivered', { env: this.env, job_id: id, service: service.key, ms: Date.now() - started })
         return 'delivered'
       } catch (e) {
-        // a resumed job whose budget could not be checked yet is left for the next poll, not failed: the store is
-        // read again there, and the platform's deadline is the limit
-        if (resumed && e instanceof LlmBudgetExceeded && e.retryLater) {
-          this.log('resume postponed: budget not readable yet', { env: this.env, job_id: id, service: service.key })
+        // A failure that says nothing about this job - the spend store was not readable yet, or the model provider
+        // is rate limited, overloaded or unreachable - is left for the next poll instead of cancelled: catchUp()
+        // resumes in_progress jobs (ADR-67), so the job gets another run, and the platform's deadline is the limit.
+        // Cancelling here would book a provider outage as our own seller_failed (ADR-70 adversarial run).
+        if (isRetryLater(e)) {
+          this.log('postponed, not failed', { env: this.env, job_id: id, service: service.key, resumed, error: (e as Error).message })
           return 'skipped'
         }
         const msg = `Could not complete the job: ${(e as Error).message ?? String(e)}`.slice(0, 500)

@@ -4,6 +4,7 @@ import { freshApp, call, createTestAgent, type TestAgent } from '../../api/src/t
 import type { App } from '../../api/src/app.js'
 import { AgentSouk } from '../../sdk/src/index.js'
 import { SellerRuntime } from './runner.js'
+import { LlmUnavailable } from './llm.js'
 import { extractWeb } from './services/extract-web.js'
 import { validateJson } from './services/validate-json.js'
 import type { ServiceDef } from './services/types.js'
@@ -23,6 +24,16 @@ const boom: ServiceDef = {
   validate: () => null,
   run: async () => {
     throw new Error('upstream exploded')
+  },
+}
+
+/** A service whose model provider is having a bad day: nothing about the job is wrong (ADR-70). */
+const overloaded: ServiceDef = {
+  key: 'overloaded',
+  listing: { title: 'Provider is overloaded', description: 'A service whose provider answers 529, for the test.', category: 'test', tags: [], price: 0, input_schema: { type: 'object' }, turnaround_seconds: 60, accept_timeout_seconds: 60, max_open_jobs: 5 },
+  validate: () => null,
+  run: async () => {
+    throw new LlmUnavailable('the model is temporarily unavailable (HTTP 529); the job is retried, not failed', 529)
   },
 }
 
@@ -98,7 +109,7 @@ describe('SellerRuntime', () => {
         return { output: { ok: true }, preview: { ok: true }, message: 'done' }
       },
     }
-    const rt = new SellerRuntime(client(seller.api_keys.test), [validateJson, boom, slow], 'test')
+    const rt = new SellerRuntime(client(seller.api_keys.test), [validateJson, boom, slow, overloaded], 'test')
     await rt.init()
     const b = client(buyer.api_keys.test)
     const mine = await call(app, 'GET', '/v1/agents/me/listings', { key: seller.api_keys.test })
@@ -115,6 +126,12 @@ describe('SellerRuntime', () => {
     expect(await rt.catchUp()).toBe(0)
     // a job accepted and delivered is nothing to resume
     expect(await rt.processJob(left.id)).toBe('skipped')
+
+    // ADR-70: a provider outage is left for the next poll, NOT cancelled - a cancellation out of in_progress is
+    // booked as seller_failed and counted publicly, so twenty minutes of 529s would have been a run of failed jobs
+    const down = await b.jobs.create({ listing_id: byTag('souk:overloaded'), input: {} })
+    expect(await rt.processJob(down.id)).toBe('skipped')
+    expect((await b.jobs.get(down.id)).status).toBe('in_progress')
 
     // while a job runs, the runtime says so - that is what keeps the host from stopping the machine
     const job = await b.jobs.create({ listing_id: byTag('souk:slow'), input: {} })
