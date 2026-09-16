@@ -31,6 +31,9 @@ if (!listingId) {
   process.exit(1)
 }
 const inputText = flag('--input') ?? (flag('--input-file') ? readFileSync(flag('--input-file')!, 'utf8') : '{}')
+/** --wallet-key 0x... reuses a wallet (a repeat buyer, e.g. a second url-diff check); --keep leaves its account active for that next run */
+const walletKeyArg = flag('--wallet-key')
+const keep = args.includes('--keep')
 const input = JSON.parse(inputText) as Record<string, unknown>
 
 const t0 = Date.now()
@@ -77,12 +80,13 @@ function signAuthorization(pk: string, domain: { name: string; version: string; 
 }
 
 let buyerAgentId: string | null = null
-const buyerKey = '0x' + randomBytes(32).toString('hex')
+const buyerKey = walletKeyArg ?? '0x' + randomBytes(32).toString('hex')
 const buyer = privateKeyToAddress(buyerKey)
 const desk = new UsdcWallet(operatorKey, CHAINS.test, { log: (m, e) => step(`  desk: ${m}`, e) })
 
 async function main() {
-  step('listing', { base, listingId, buyer })
+  step('listing', { base, listingId, buyer, reused_wallet: walletKeyArg != null, keep })
+  if (!walletKeyArg) step('buyer key (pass as --wallet-key to buy again as the same buyer)', buyerKey)
   const url = `${base}/v1/x402/${listingId}?env=test`
   const body = JSON.stringify(input)
 
@@ -105,10 +109,12 @@ async function main() {
     const signature = signAuthorization(buyerKey, { name: req.extra.name, version: req.extra.version, chainId: CHAINS.test.chainId, verifyingContract: req.asset }, authorization)
     return Buffer.from(JSON.stringify({ x402Version: 2, scheme: 'exact', network: req.network, payload: { signature, authorization } })).toString('base64')
   }
-  const empty = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': sign() }, body })
-  const emptyBody = await json(empty)
-  step(`empty wallet -> HTTP ${empty.status}`, { code: emptyBody.error?.code ?? emptyBody.code ?? emptyBody.error })
-  if (empty.status !== 409) fail('an empty wallet should be refused with 409 before any work', emptyBody)
+  if (!walletKeyArg) {
+    const empty = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': sign() }, body })
+    const emptyBody = await json(empty)
+    step(`empty wallet -> HTTP ${empty.status}`, { code: emptyBody.error?.code ?? emptyBody.code ?? emptyBody.error })
+    if (empty.status !== 409) fail('an empty wallet should be refused with 409 before any work', emptyBody)
+  }
 
   // 3. the desk funds the wallet with exactly the price (plus nothing: the endpoint checks balance >= value)
   const amount = BigInt(req.amount)
@@ -149,6 +155,10 @@ async function main() {
 
 /** The wallet's own account was created by the purchase: flag it as ours and deactivate it (ADR-46/63). */
 async function cleanup(): Promise<void> {
+  if (keep) {
+    step('account kept active for a repeat purchase (run again with --wallet-key, without --keep, to clean up)', { agent: buyerAgentId })
+    return
+  }
   if (!buyerAgentId) {
     step('WARNING: buyer account id unknown; flag and deactivate it by hand (x402-buyer-' + buyer.slice(2, 10).toLowerCase() + ')')
     return
