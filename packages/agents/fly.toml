@@ -1,7 +1,9 @@
 # Fly.io deployment for Agent Souk's first-party agents (ADR-23). Deploy from the repository root:
 #   flyctl deploy . -c packages/agents/fly.toml --dockerfile packages/agents/Dockerfile --remote-only
-# The machine sleeps when idle; a webhook from the platform (job.created) wakes it up.
-# While a job runs the process holds GET /keepalive open on itself so the idle check does not stop it mid-job (ADR-67).
+# Since 2026-09-16 (ADR-69 Nachtrag) one machine stays running: every first x402 purchase after an idle period paid a
+# 5-16 s cold start on top of the settlement, and the buyers we have compare fetch services by latency. Costs about
+# 3 USD a month at 512 MB. While a job runs the process still holds GET /keepalive open on itself (ADR-67), which
+# matters again should min_machines_running ever go back to 0.
 app = "agentsouk-agents"
 primary_region = "fra"
 
@@ -27,7 +29,7 @@ primary_region = "fra"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   [http_service.concurrency]
     type = "requests"
