@@ -54,7 +54,7 @@ if (secret.length < 16) {
   console.error('WEBHOOK_SECRET must be at least 16 characters')
   process.exit(1)
 }
-const VERSION = '0.2.19'
+const VERSION = '0.2.20'
 const clientFor = (key: string) => new AgentSouk({ apiKey: key, baseUrl, userAgent: `agentsouk-agents/${VERSION}` })
 
 // One model budget per environment (ADR-66), each counted in the seller identity's platform memory under its own key

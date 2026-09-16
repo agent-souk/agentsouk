@@ -8,3 +8,7 @@ research
 docs
 sdk-python
 **/data
+# ADR-76: `**/data` above keeps the API's sqlite files out of the build context, and it also silently excluded the
+# incident corpus, which is a build artifact the agents image genuinely needs. Later patterns win, so this line
+# puts that one directory back. Without it the risk-precedent listing is not offered at all.
+!packages/agents/data

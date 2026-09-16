@@ -20,6 +20,11 @@ COPY --from=build /app/packages/sdk/package.json packages/sdk/package.json
 COPY --from=build /app/packages/sdk/dist packages/sdk/dist
 COPY --from=build /app/packages/agents/package.json packages/agents/package.json
 COPY --from=build /app/packages/agents/dist packages/agents/dist
+# ADR-76: the incident corpus is a build artifact, not code, so `npm run build` does not carry it. `dist/` and
+# `data/` both sit one level under the package root, which is what makes `new URL('../data/...', import.meta.url)`
+# resolve the same way under tsx in src/ and under node in dist/. Without this line the risk-precedent listing is
+# simply not offered (see corpusAvailable in services/index.ts) rather than offered and broken.
+COPY --from=build /app/packages/agents/data packages/agents/data
 RUN chown -R node:node /app
 USER node
 EXPOSE 8788
