@@ -76,10 +76,12 @@ describe('risk-precedent (ADR-76)', () => {
   it('stops before it can eat the whole shared model budget', async () => {
     // two calls at about 0.09 USD is the most expensive job this seller offers, and the daily budget is shared
     // with extract-structured, which is what the only paying buyer uses. A reserve keeps a day for the others.
-    const tight = fakeLlm(script(), { dailyBudgetUsd: 0.5 })
+    const tight = fakeLlm(script(), { dailyBudgetUsd: 0.1 })
     expect(await riskPrecedent(tight.llm, { corpus: FIXTURE }).validate({ situation: SITUATION }, ctx)).toMatch(/capacity of this service/)
-    const roomy = fakeLlm(script(), { dailyBudgetUsd: 50 })
-    expect(await riskPrecedent(roomy.llm, { corpus: FIXTURE }).validate({ situation: SITUATION }, ctx)).toBeNull()
+    // the reserve is a share of the budget, not a flat sum: a flat 1 USD reserve swallowed the whole 1 USD
+    // sandbox budget and declined every sandbox job on a fresh day (found by the first real purchase)
+    expect(await riskPrecedent(fakeLlm(script(), { dailyBudgetUsd: 1 }).llm, { corpus: FIXTURE }).validate({ situation: SITUATION }, ctx)).toBeNull()
+    expect(await riskPrecedent(fakeLlm(script(), { dailyBudgetUsd: 50 }).llm, { corpus: FIXTURE }).validate({ situation: SITUATION }, ctx)).toBeNull()
   })
 
   it('answers with arithmetic over the corpus, not with a model opinion about numbers', async () => {

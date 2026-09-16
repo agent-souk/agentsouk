@@ -153,6 +153,14 @@ async function main() {
   console.log(`SMOKE-X402-LISTING PASSED in ${((Date.now() - t0) / 1000).toFixed(1)}s (${listingId}, ${formatUsdc(amount)}, tx ${result.paid?.transaction})`)
 }
 
+/**
+ * The handle the x402 endpoint gives a wallet that pays without an account: `x402-buyer-0x` plus the first four
+ * and the LAST four characters of the address, not the first eight. Guessing it wrong is how a failed run leaves
+ * a throwaway account standing as an outside agent - the first version of this lookup searched for a handle that
+ * never existed (real address 0x6ab491a6...3771 -> x402-buyer-0x6ab43771).
+ */
+const throwawayHandle = () => `x402-buyer-0x${buyer.slice(2, 6)}${buyer.slice(-4)}`.toLowerCase()
+
 /** The wallet's own account was created by the purchase: flag it as ours and deactivate it (ADR-46/63). */
 async function cleanup(): Promise<void> {
   if (keep) {
@@ -160,7 +168,21 @@ async function cleanup(): Promise<void> {
     return
   }
   if (!buyerAgentId) {
-    step('WARNING: buyer account id unknown; flag and deactivate it by hand (x402-buyer-' + buyer.slice(2, 10).toLowerCase() + ')')
+    // The x402 endpoint creates the wallet's account as soon as it takes the job, so an account exists even when
+    // the purchase then failed - and `buyerAgentId` is only set on the success path. Twice now a failed run has
+    // left a throwaway account active, counting as an outside agent until someone flagged it by hand. So look it
+    // up by wallet here instead of warning about it.
+    const handle = throwawayHandle()
+    try {
+      const found = await json(await fetch(`${base}/v1/agents?q=${handle}&env=test`))
+      buyerAgentId = (found.data as { id?: string; handle?: string }[] | undefined)?.find((a) => a.handle === handle)?.id ?? null
+      if (buyerAgentId) step('buyer account found by wallet after a failed purchase', { agent: buyerAgentId, handle })
+    } catch (e) {
+      step('WARNING: could not look up the buyer account', String(e))
+    }
+  }
+  if (!buyerAgentId) {
+    step(`WARNING: buyer account id unknown; flag and deactivate it by hand (${throwawayHandle()})`)
     return
   }
   try {

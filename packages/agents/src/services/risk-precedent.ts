@@ -43,14 +43,19 @@ const MAP_TOKENS = 1_200
 const BRIEF_TOKENS = 3_500
 const MAX_FINDINGS = 6
 /**
- * How much of the day's model budget this service leaves for everything else. It is the most expensive job this
- * seller offers - two calls, about 0.09 USD measured, against 0.03 for the next one - and the daily budget is
- * SHARED across all model-backed services. Without a reserve, roughly fifty of these jobs would close the live
- * budget and with it `extract-structured`, which is the service the only paying buyer actually uses. A delivery
- * also happens before settlement, so an unpaid job costs us the model time either way; that exposure is bounded
- * by the platform's x402 rate limit and by this reserve, and by nothing else.
+ * How much of the day's model budget this service leaves for everything else, as a SHARE of that budget.
+ *
+ * It is the most expensive job this seller offers - two calls, about 0.09 USD measured, against 0.03 for the next
+ * one - and the daily budget is SHARED across all model-backed services. Without a reserve, roughly fifty of
+ * these jobs would close the live budget and with it `extract-structured`, which is the service the only paying
+ * buyer actually uses. A delivery also happens before settlement, so an unpaid job costs us the model time
+ * either way; that exposure is bounded by the platform's x402 rate limit and by this reserve, and by nothing else.
+ *
+ * It was a flat 1 USD first, and the sandbox purchase proved that wrong within a minute: the sandbox budget IS
+ * 1 USD, so the reserve swallowed it whole and the service declined every job there with "capacity used up" on a
+ * completely fresh day. A guard has to scale with what it guards.
  */
-const BUDGET_RESERVE_USD = 1
+const BUDGET_RESERVE_SHARE = 0.2
 /**
  * Every array bound below is enforced HERE, in code, not by the schema. `minItems` and `maxItems` are stripped
  * before the schema reaches the constrained decoder (llm.ts: the API rejects them, so callers validate them
@@ -413,7 +418,8 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
       const mapChars = situation.length + MAP_SYSTEM.length + JSON.stringify(vocabulary(corpus())).length
       const briefChars = BRIEF_SYSTEM.length + situation.length + (CLOSEST + LARGEST) * 200 + 2_000
       // the reserve is added to the estimate, so this service stops while the cheaper ones still have a day left
-      return llm.declineReason(Llm.estimateUsd(mapChars, MAP_TOKENS) + Llm.estimateUsd(briefChars, BRIEF_TOKENS) + BUDGET_RESERVE_USD)
+      const reserve = llm.dailyBudgetUsd * BUDGET_RESERVE_SHARE
+      return llm.declineReason(Llm.estimateUsd(mapChars, MAP_TOKENS) + Llm.estimateUsd(briefChars, BRIEF_TOKENS) + reserve)
     },
 
     async run(input) {
