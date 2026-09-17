@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
 import { Llm, MODEL } from '../llm.js'
 import { FIXTURE } from '../corpus.test.js'
-import { loadCorpus } from '../corpus.js'
+import { loadCorpus, type References } from '../corpus.js'
 import { LIMITS, PRICE, riskPrecedent } from './risk-precedent.js'
 import { validateDocuments } from './validate-json.js'
 
@@ -39,11 +39,37 @@ const BRIEF = {
     { finding: 'Price the share against a time-weighted value, not a spot quote read in the same block as the deposit.', because: 'Spot Price Manipulation is four of the five incidents in this scope.', precedent_ids: ['a1', 'a6'] },
   ],
 }
+/**
+ * A reference index for the fixture. The fixture tests pass it explicitly: without that they would quietly join
+ * against the real data/references.json, whose ids are real incidents and never match a1..a8 - so every
+ * assertion about references would pass by being empty.
+ */
+const FIXTURE_REFS: References = {
+  object: 'incident_references',
+  built_at: '2026-09-11T01:00:00.000Z',
+  sources: [{ name: 'TestLabs', url: 'https://example.invalid/repo', licence: 'Apache-2.0', attribution: 'test' }],
+  counts: { incidents_referenced: 2, with_reproduction: 1 },
+  by_incident: {
+    a1: {
+      mechanism: 'spot quote read in the same block as the deposit',
+      source: 'TestLabs',
+      poc: { path: 'src/test/Alpha_exp.sol', url: 'https://example.invalid/repo/blob/main/src/test/Alpha_exp.sol', command: 'forge test --contracts src/test/Alpha_exp.sol -vvv', reproduced: '~1000 USD' },
+      matched: { on: 'date+name', source_date: '2026-09-10', source_name: 'Alpha', days_apart: 0 },
+    },
+    a6: {
+      mechanism: 'a mechanism we hold a description for but no reproduction',
+      source: 'TestLabs',
+      poc: null,
+      matched: { on: 'date+name', source_date: '2025-03-01', source_name: 'Zeta', days_apart: 0 },
+    },
+  },
+}
+
 /** Two calls per job: the mapping, then the findings. */
 const script = (over: { map?: unknown; brief?: unknown } = {}) => (_p: Anthropic.Beta.MessageCreateParamsNonStreaming, n: number) => ({ text: JSON.stringify(n === 0 ? (over.map ?? MAPPING) : (over.brief ?? BRIEF)) })
 const svcWith = (over: { map?: unknown; brief?: unknown } = {}) => {
   const f = fakeLlm(script(over))
-  return { svc: riskPrecedent(f.llm, { corpus: FIXTURE }), calls: f.calls }
+  return { svc: riskPrecedent(f.llm, { corpus: FIXTURE, references: FIXTURE_REFS }), calls: f.calls }
 }
 const ctx = { units: 1 }
 
@@ -108,15 +134,17 @@ describe('risk-precedent (ADR-76)', () => {
       scope_share_of_corpus_pct: 62.5,
       narrowed_incidents: 3,
       precedents: 5,
+      precedents_with_reproduction: 1,
       precedents_span: { oldest: '2025-03-01', newest: '2026-09-10' },
       findings: 1,
       findings_grounded: 1,
       corpus: { incidents: 8, built_at: FIXTURE.built_at },
     })
     // one base rate per mechanism, largest first, each with its own numbers - the union is context only
-    expect(o.base_rates.by_mechanism.map((x: any) => [x.value, x.kind, x.incidents, x.loss.median_usd, x.narrowed_incidents, x.change_pct, x.excess_pct])).toEqual([
-      ['Oracle Manipulation', 'classification', 5, 1_000, 3, 300, 267],
-      ['Spot Price Manipulation', 'technique', 4, 1_000, 2, 200, 167],
+    expect(o.base_rates.by_mechanism.map((x: any) => [x.value, x.kind, x.incidents, x.loss.median_usd, x.narrowed_incidents, x.with_reproduction, x.change_pct, x.excess_pct])).toEqual([
+      // only a1 carries a reproduction, so each mechanism reports exactly one backed by something runnable
+      ['Oracle Manipulation', 'classification', 5, 1_000, 3, 1, 300, 267],
+      ['Spot Price Manipulation', 'technique', 4, 1_000, 2, 1, 200, 167],
     ])
     expect(r.message).toContain('2 mechanism(s) matched your situation')
     expect(r.message).toContain('Read by_mechanism rather than the union figure')
@@ -151,6 +179,42 @@ describe('risk-precedent (ADR-76)', () => {
     // and relevance ranking alone would have hidden it
     expect(Math.max(...o.precedents.closest.map((p: any) => p.amount_usd ?? 0))).toBeLessThan(o.precedents.largest[0].amount_usd)
     expect(o.precedents.closest.every((p: any) => p.matched_on.length > 0)).toBe(true)
+  })
+
+  it('hands a precedent what it can be backed by, and says plainly where it holds nothing', async () => {
+    const { svc } = svcWith()
+    const r = await svc.run({ situation: SITUATION }, ctx)
+    const o = r.output as Record<string, any>
+    const byId = Object.fromEntries(o.precedents.closest.map((p: any) => [p.id, p]))
+    // the row a reproduction exists for carries the command that runs it - the one thing in this answer a
+    // reviewer can execute against their own design
+    expect(byId.a1.reference).toEqual({
+      mechanism: 'spot quote read in the same block as the deposit',
+      source: 'TestLabs',
+      poc: { url: 'https://example.invalid/repo/blob/main/src/test/Alpha_exp.sol', command: 'forge test --contracts src/test/Alpha_exp.sol -vvv', reproduced: '~1000 USD' },
+    })
+    // held a description, no reproduction: said so rather than implied by omission
+    expect(byId.a6.reference).toMatchObject({ mechanism: 'a mechanism we hold a description for but no reproduction', poc: null })
+    // nothing held at all is null, not an empty object that reads like a reference
+    expect(byId.a2.reference).toBeNull()
+    expect(o.corpus.references).toMatchObject({ incidents_referenced: 2, with_reproduction: 1, sources: [{ name: 'TestLabs', licence: 'Apache-2.0' }] })
+    expect(r.message).toContain('1 of which carry a public test that reproduces the exploit')
+  })
+
+  it('works with no reference index at all, because a missing artifact must not fail a job', async () => {
+    const f = fakeLlm(script())
+    const o = (await riskPrecedent(f.llm, { corpus: FIXTURE, references: null }).run({ situation: SITUATION }, ctx)).output as Record<string, any>
+    expect(o.precedents.closest.every((p: any) => p.reference === null)).toBe(true)
+    expect(o.base_rates.by_mechanism.every((x: any) => x.with_reproduction === null)).toBe(true)
+    expect(o.corpus.references).toBeNull()
+  })
+
+  it('feeds the findings call the mechanism in one line, not only the taxonomy label', async () => {
+    const { svc, calls } = svcWith()
+    await svc.run({ situation: SITUATION }, ctx)
+    const user = calls[1].messages[0].content as string
+    expect(user).toContain('mechanism (TestLabs): spot quote read in the same block as the deposit [a runnable reproduction exists]')
+    expect(user).toContain('re-run that exact exploit against their own design')
   })
 
   it('checks every citation against the rows actually delivered and says which findings hold', async () => {

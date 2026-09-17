@@ -99,6 +99,52 @@ export function vocabulary(c: Corpus) {
   }
 }
 
+/**
+ * ADR-76 iteration 2: what an incident can be backed by, joined on the incident id.
+ *
+ * A second artifact, not a column in the corpus: `data/incidents.json` is rebuilt whenever DefiLlama moves, and a
+ * merged file would throw this work away on every rebuild. Built by scripts/build-incident-references.ts from
+ * SunWeb3Sec/DeFiHackLabs (Apache-2.0, attributed): 344 of the 1,271 incidents carry a reference and 270 of those
+ * carry a Foundry test that reproduces the exploit. That is the sentence a reviewer acts on - not "oracle
+ * manipulation happens 159 times" but "this mechanism has a public runnable reproduction, here it is".
+ *
+ * The service works without it: a missing or unreadable file means precedents carry `reference: null`, never a
+ * failed job. Nothing here is a fact about the world we invented - it is a pointer plus the one-line mechanism
+ * description its authors wrote, and the answer says which source it came from.
+ */
+export type Poc = { path: string; url: string; command: string; reproduced: string | null }
+export type Reference = {
+  mechanism: string
+  source: string
+  poc: Poc | null
+  matched: { on: string; source_date: string; source_name: string; days_apart: number }
+}
+export type References = {
+  object: 'incident_references'
+  built_at: string
+  sources: { name: string; url: string; licence: string; attribution: string }[]
+  counts: Record<string, number>
+  by_incident: Record<string, Reference>
+}
+
+const REFERENCES_PATH = new URL('../data/references.json', import.meta.url)
+let refsCached: References | null | undefined
+
+/** The reference index, or null when the artifact is absent or unusable. Read once; never throws. */
+export function loadReferences(path: URL | string = REFERENCES_PATH): References | null {
+  if (refsCached !== undefined) return refsCached
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as References
+    refsCached = raw.object === 'incident_references' && raw.by_incident && typeof raw.by_incident === 'object' ? raw : null
+  } catch {
+    refsCached = null
+  }
+  return refsCached
+}
+export function resetReferenceCache(): void {
+  refsCached = undefined
+}
+
 export type Match = {
   classifications: string[]
   techniques: string[]
@@ -289,6 +335,8 @@ export type Mechanism = {
   loss: LossStats
   /** the same mechanism restricted to the chain and target type of the situation; null when neither was named */
   narrowed_incidents: number | null
+  /** how many incidents under this mechanism have a public runnable reproduction (null when no index is loaded) */
+  with_reproduction: number | null
   recent_12m: number
   previous_12m: number
   change_pct: number | null
@@ -296,7 +344,7 @@ export type Mechanism = {
   excess_pct: number | null
 }
 
-export function mechanisms(c: Corpus, m: Match): Mechanism[] {
+export function mechanisms(c: Corpus, m: Match, refs: References | null = loadReferences()): Mechanism[] {
   const narrows = Boolean(m.target_type || m.chains.length)
   const corpusTrend = trend([], c)
   const out: Mechanism[] = []
@@ -311,6 +359,7 @@ export function mechanisms(c: Corpus, m: Match): Mechanism[] {
       share_of_corpus_pct: Math.round((rows.length / c.incidents.length) * 1000) / 10,
       loss: lossStats(rows),
       narrowed_incidents: narrows ? narrow(rows, m).length : null,
+      with_reproduction: refs ? rows.filter((i) => refs.by_incident[i.id]?.poc).length : null,
       recent_12m: t.recent.incidents,
       previous_12m: t.previous.incidents,
       change_pct: t.change_pct,
@@ -337,7 +386,7 @@ export type BaseRates = {
   returned_usd: number
 }
 
-export function baseRates(c: Corpus, m: Match): BaseRates {
+export function baseRates(c: Corpus, m: Match, refs: References | null = loadReferences()): BaseRates {
   const scope = scopeOf(c, m)
   const narrowed = narrow(scope, m)
   const narrowsTo = [m.target_type ? `target type ${m.target_type}` : null, m.chains.length ? `chain in ${m.chains.join(', ')}` : null].filter(Boolean).join(' and ')
@@ -349,7 +398,7 @@ export function baseRates(c: Corpus, m: Match): BaseRates {
       loss: lossStats(scope),
     },
     narrowed: narrowsTo ? { definition: `the same scope, ${narrowsTo}`, incidents: narrowed.length, loss: lossStats(narrowed) } : null,
-    by_mechanism: mechanisms(c, m),
+    by_mechanism: mechanisms(c, m, refs),
     by_classification: countBy(scope, (i) => (i.classification ? [i.classification] : [])),
     by_technique: countBy(scope, (i) => (i.technique ? [i.technique] : [])),
     by_chain: countBy(scope, (i) => i.chains),

@@ -1,5 +1,5 @@
 import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE } from '../llm.js'
-import { baseRates, largestInScope, loadCorpus, precedents, scopeOf, vocabulary, type BaseRates, type Corpus, type Match, type Precedent } from '../corpus.js'
+import { baseRates, largestInScope, loadCorpus, loadReferences, precedents, scopeOf, vocabulary, type BaseRates, type Corpus, type Match, type Precedent, type Reference, type References } from '../corpus.js'
 import type { ServiceDef } from './types.js'
 
 /**
@@ -153,8 +153,18 @@ export type DeliveredPrecedent = {
   bridge: boolean
   relevance: number
   matched_on: string[]
+  /**
+   * What this incident can be backed by (ADR-76 iteration 2), or null where we hold nothing for it. `mechanism`
+   * is the one-line description its analysts wrote and `poc` is a test that reproduces the exploit - which is
+   * what turns a row in a table into something a reviewer can actually run against their own design.
+   */
+  reference: {
+    mechanism: string
+    source: string
+    poc: { url: string; command: string; reproduced: string | null } | null
+  } | null
 }
-const deliver = (p: Precedent): DeliveredPrecedent => ({
+const deliver = (p: Precedent, refs: References | null): DeliveredPrecedent => ({
   id: p.id,
   date: p.date,
   protocol: p.protocol,
@@ -167,7 +177,11 @@ const deliver = (p: Precedent): DeliveredPrecedent => ({
   bridge: p.bridge,
   relevance: p.score,
   matched_on: p.matched_on,
+  reference: reference(refs?.by_incident[p.id]),
 })
+
+const reference = (r: Reference | undefined): DeliveredPrecedent['reference'] =>
+  r ? { mechanism: r.mechanism, source: r.source, poc: r.poc ? { url: r.poc.url, command: r.poc.command, reproduced: r.poc.reproduced } : null } : null
 
 const PRECEDENT_ITEM = {
   type: 'object',
@@ -185,6 +199,19 @@ const PRECEDENT_ITEM = {
     bridge: { type: 'boolean' },
     relevance: { type: 'integer', description: `score: technique 4, classification 3, target type 1, chain 1` },
     matched_on: { type: 'array', items: { type: 'string' }, description: 'exactly which fields put this row here' },
+    reference: {
+      type: ['object', 'null'],
+      description: 'what this incident can be backed by, or null where nothing is held for it',
+      properties: {
+        mechanism: { type: 'string', description: 'the mechanism in one line, as the referenced analysts titled it' },
+        source: { type: 'string' },
+        poc: {
+          type: ['object', 'null'],
+          description: 'a test that reproduces the exploit against a forked chain - run it against your own design',
+          properties: { url: { type: 'string' }, command: { type: 'string' }, reproduced: { type: ['string', 'null'] } },
+        },
+      },
+    },
   },
 }
 const LOSS = {
@@ -235,6 +262,7 @@ const OUTPUT_SCHEMA = {
               share_of_corpus_pct: { type: 'number' },
               loss: LOSS,
               narrowed_incidents: { type: ['integer', 'null'], description: 'the same mechanism on your chain and target type; null when your situation named neither' },
+              with_reproduction: { type: ['integer', 'null'], description: 'how many of those incidents have a public runnable reproduction; null when no reference index is loaded' },
               recent_12m: { type: 'integer' },
               previous_12m: { type: 'integer' },
               change_pct: { type: ['integer', 'null'] },
@@ -283,14 +311,40 @@ const OUTPUT_SCHEMA = {
       },
     },
     limits: { type: 'array', items: { type: 'string' }, description: 'what this corpus cannot tell you; the same five lines with every answer' },
-    corpus: { type: 'object', required: ['built_at', 'incidents', 'source_name', 'source_url'], properties: { built_at: { type: 'string' }, incidents: { type: 'integer' }, source_name: { type: 'string' }, source_url: { type: 'string' } } },
+    corpus: {
+      type: 'object',
+      required: ['built_at', 'incidents', 'source_name', 'source_url', 'references'],
+      properties: {
+        built_at: { type: 'string' },
+        incidents: { type: 'integer' },
+        source_name: { type: 'string' },
+        source_url: { type: 'string' },
+        references: {
+          type: ['object', 'null'],
+          description: 'the reference index this answer was joined against: when it was built, how many incidents it covers, how many carry a runnable reproduction, and where those references come from',
+          properties: {
+            built_at: { type: 'string' },
+            incidents_referenced: { type: 'integer' },
+            with_reproduction: { type: 'integer' },
+            sources: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, url: { type: 'string' }, licence: { type: 'string' } } } },
+          },
+        },
+      },
+    },
     model: { type: 'string' },
   },
 }
 
 /** What the brief call sees of a row: enough to reason about, short enough that eighteen of them stay cheap. */
 const compact = (p: DeliveredPrecedent) =>
-  `${p.id} | ${p.date} | ${p.protocol} | ${p.amount_usd == null ? 'amount unstated' : `${p.amount_usd} USD`}${p.returned_usd ? ` (${p.returned_usd} returned)` : ''} | ${p.classification ?? '-'} / ${p.technique ?? '-'} | ${p.target_type ?? '-'} | ${p.chains.join(', ') || '-'}${p.bridge ? ' | bridge' : ''}`
+  [
+    `${p.id} | ${p.date} | ${p.protocol} | ${p.amount_usd == null ? 'amount unstated' : `${p.amount_usd} USD`}${p.returned_usd ? ` (${p.returned_usd} returned)` : ''} | ${p.classification ?? '-'} / ${p.technique ?? '-'} | ${p.target_type ?? '-'} | ${p.chains.join(', ') || '-'}${p.bridge ? ' | bridge' : ''}`,
+    // the one-line mechanism from the reference index, where we hold one. This is the difference between a
+    // finding written from a taxonomy label and one written from what actually happened in that incident.
+    p.reference ? `    mechanism (${p.reference.source}): ${p.reference.mechanism}${p.reference.poc ? ' [a runnable reproduction exists]' : ''}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
 
 function briefInput(situation: string, m: Match, rates: BaseRates, rows: DeliveredPrecedent[]): string {
   const s = rates.scope
@@ -307,13 +361,14 @@ function briefInput(situation: string, m: Match, rates: BaseRates, rows: Deliver
       .join('\n')}`,
     `Trend, two equal twelve-month windows: ${rates.trend.recent.incidents} incidents in ${rates.trend.recent.from}..${rates.trend.recent.to} against ${rates.trend.previous.incidents} in the twelve months before (${rates.trend.change_pct}%), while the whole corpus changed by ${rates.trend.corpus_change_pct}% over the same windows - so the part specific to this scope is ${rates.trend.excess_pct}%.`,
     `Concentration inside the scope - technique: ${rates.by_technique.map((t) => `${t.value} ${t.incidents}`).join('; ')}. Chain: ${rates.by_chain.map((t) => `${t.value} ${t.incidents}`).join('; ')}. Target type: ${rates.by_target_type.map((t) => `${t.value} ${t.incidents}`).join('; ')}. Year: ${rates.by_year.map((t) => `${t.value} ${t.incidents}`).join('; ')}.`,
-    `Incident rows, id | date | protocol | loss | classification / technique | target type | chains:\n${rows.map(compact).join('\n')}`,
+    `Incident rows, id | date | protocol | loss | classification / technique | target type | chains, each followed where known by the mechanism in one line:\n${rows.map(compact).join('\n')}`,
+    `Where a row says a runnable reproduction exists, the customer can re-run that exact exploit against their own design. Say so in the finding that rests on it: it is the most actionable thing in this answer.`,
     `What this data cannot tell anyone - do not write a finding that ignores these:\n${LIMITS.map((l) => `- ${l}`).join('\n')}`,
   ]
   return lines.filter(Boolean).join('\n\n')
 }
 
-export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): ServiceDef {
+export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus; references?: References | null } = {}): ServiceDef {
   const corpus = () => opts.corpus ?? loadCorpus()
   const c = corpus()
   // `years` is ordered by incident count, not by year, so the first entry is the busiest year and not the newest
@@ -331,6 +386,7 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
         `What you are buying is the engine over them. One model call maps your situation onto the corpus vocabulary, with the corpus's own values as an enum in a constrained decoder, so a label no incident carries cannot come back. Everything you are charged for after that is arithmetic: the scope that follows from the mapping, counts and shares, median, p90, mean and maximum loss, recovery, concentration by technique, chain, target type and year, and two equal twelve-month windows compared against the same windows over the whole corpus - because a corpus that grew from 148 to 264 incidents a year makes almost any scope look like it is rising, and excess_pct is the part that is really about you.`,
         `The mapping is capped at ${MAX_CLASSIFICATIONS} classifications and ${MAX_TECHNIQUES} techniques on purpose: a situation mapped onto everything would make the scope the whole corpus and every base rate 100%, which is a confident answer that says nothing. Where the mapping is broad, read by_technique and by_classification rather than the single scope figure - share_of_corpus_pct tells you how broad it was.`,
         `Then at most ${MAX_FINDINGS} findings: each one cites the incident ids it rests on, we check every id against the rows actually delivered, and a finding whose citations we could not find is delivered with grounded false rather than quietly kept. Every number can be re-checked against the ids in the answer, which is the point - the answer is auditable, not a verdict you have to trust.`,
+        `Where we hold one, a precedent also carries the mechanism in one line as security analysts titled it and - for 270 of the 344 referenced incidents - a Foundry test that REPRODUCES the exploit against a forked chain, with the command that runs it. That is the part you can act on directly: not a statement that oracle manipulation happens often, but this exact mechanism has a public runnable reproduction, here it is, run it against your own design. Reproductions and mechanism descriptions are referenced from SunWeb3Sec/DeFiHackLabs (Apache-2.0); we hold the pointers and the match, not their code. Every mechanism also reports with_reproduction, so you can see how much of a base rate is backed by something runnable.`,
         'Delivered with every answer: five fixed lines on what this data cannot tell you. The first is the one that matters - these are counts of recorded incidents, not probabilities, because no incident dataset holds the protocols that were never hit. A service that sells base rates without saying that is selling false precision.',
         `A situation that is not about a smart contract, protocol, bridge, exchange, wallet or comparable on-chain system is cancelled rather than answered, so you pay nothing for a mapping that would have been a stretch. Situation between ${MIN_SITUATION} and ${MAX_SITUATION} characters; a fixed price per question, no unit counting.`,
         `Powered by Claude (${MODEL}). The corpus is a build artifact with a stated build time, refreshed as the source publishes; the answer names the build it came from. Operated by Agent Souk (first_party).`,
@@ -364,8 +420,8 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
           scope: { definition: 'incidents whose classification is one of [Oracle Manipulation, Token & Share Accounting] or whose technique is one of [Spot Price Manipulation, Incorrect Share Accounting]', incidents: 318, share_of_corpus_pct: 25, loss: { with_amount: 306, total_usd: 2338266764, median_usd: 521000, p90_usd: 11539000, max_usd: 223000000, mean_usd: 7641394 } },
           narrowed: { definition: 'the same scope, target type DeFi Protocol and chain in Base', incidents: 10, loss: { with_amount: 10, total_usd: 196243000, median_usd: 1780000, p90_usd: 128000000, max_usd: 128000000, mean_usd: 19624300 } },
           by_mechanism: [
-            { value: 'Spot Price Manipulation', kind: 'technique', incidents: 131, share_of_corpus_pct: 10.3, loss: { with_amount: 128, total_usd: 829737392, median_usd: 800000, p90_usd: 11500000, max_usd: 130000000, mean_usd: 6482324 }, narrowed_incidents: 6, recent_12m: 49, previous_12m: 21, change_pct: 133, excess_pct: 48 },
-            { value: 'Incorrect Share Accounting', kind: 'technique', incidents: 44, share_of_corpus_pct: 3.5, loss: { with_amount: 42, total_usd: 68357657, median_usd: 212000, p90_usd: 3400000, max_usd: 11000000, mean_usd: 1627563 }, narrowed_incidents: 2, recent_12m: 19, previous_12m: 8, change_pct: 137, excess_pct: 52 },
+            { value: 'Spot Price Manipulation', kind: 'technique', incidents: 131, share_of_corpus_pct: 10.3, loss: { with_amount: 128, total_usd: 829737392, median_usd: 800000, p90_usd: 11500000, max_usd: 130000000, mean_usd: 6482324 }, narrowed_incidents: 6, with_reproduction: 52, recent_12m: 49, previous_12m: 21, change_pct: 133, excess_pct: 48 },
+            { value: 'Incorrect Share Accounting', kind: 'technique', incidents: 44, share_of_corpus_pct: 3.5, loss: { with_amount: 42, total_usd: 68357657, median_usd: 212000, p90_usd: 3400000, max_usd: 11000000, mean_usd: 1627563 }, narrowed_incidents: 2, with_reproduction: 17, recent_12m: 19, previous_12m: 8, change_pct: 137, excess_pct: 52 },
           ],
           by_classification: [{ value: 'Oracle Manipulation', incidents: 159, total_usd: 888721492 }],
           by_technique: [{ value: 'Spot Price Manipulation', incidents: 131, total_usd: 829737392 }],
@@ -382,8 +438,28 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
           returned_usd: 253432650,
         },
         precedents: {
-          closest: [{ id: '2026-08-27-moonwell-lending', date: '2026-08-27', protocol: 'Moonwell Lending', amount_usd: 8700000, returned_usd: null, chains: ['Base'], classification: 'Oracle Manipulation', technique: 'Spot Price Manipulation', target_type: 'DeFi Protocol', bridge: false, relevance: 9, matched_on: ['technique:Spot Price Manipulation', 'classification:Oracle Manipulation', 'target_type:DeFi Protocol', 'chain:Base'] }],
-          largest: [{ id: '2025-04-30-example-lending', date: '2025-04-30', protocol: 'a larger incident in the same scope', amount_usd: 223000000, returned_usd: null, chains: ['Ethereum'], classification: 'Oracle Manipulation', technique: 'Spot Price Manipulation', target_type: 'DeFi Protocol', bridge: false, relevance: 8, matched_on: ['technique:Spot Price Manipulation', 'classification:Oracle Manipulation', 'target_type:DeFi Protocol'] }],
+          closest: [
+            {
+              id: '2026-08-27-moonwell-lending',
+              date: '2026-08-27',
+              protocol: 'Moonwell Lending',
+              amount_usd: 8700000,
+              returned_usd: null,
+              chains: ['Base'],
+              classification: 'Oracle Manipulation',
+              technique: 'Spot Price Manipulation',
+              target_type: 'DeFi Protocol',
+              bridge: false,
+              relevance: 9,
+              matched_on: ['technique:Spot Price Manipulation', 'classification:Oracle Manipulation', 'target_type:DeFi Protocol', 'chain:Base'],
+              reference: {
+                mechanism: 'faulty oracle lets a manipulated spot quote price the collateral',
+                source: 'DeFiHackLabs',
+                poc: { url: 'https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/Moonwell_exp.sol', command: 'forge test --contracts src/test/2026-08/Moonwell_exp.sol -vvv', reproduced: '~8.7M USD' },
+              },
+            },
+          ],
+          largest: [{ id: '2025-04-30-example-lending', date: '2025-04-30', protocol: 'a larger incident in the same scope', amount_usd: 223000000, returned_usd: null, chains: ['Ethereum'], classification: 'Oracle Manipulation', technique: 'Spot Price Manipulation', target_type: 'DeFi Protocol', bridge: false, relevance: 8, matched_on: ['technique:Spot Price Manipulation', 'classification:Oracle Manipulation', 'target_type:DeFi Protocol'], reference: null }],
         },
         findings: [
           {
@@ -394,7 +470,13 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
           },
         ],
         limits: LIMITS,
-        corpus: { built_at: '2026-09-16T22:31:18.019Z', incidents: 1271, source_name: 'DefiLlama hacks', source_url: 'https://api.llama.fi/hacks' },
+        corpus: {
+          built_at: '2026-09-16T22:31:18.019Z',
+          incidents: 1271,
+          source_name: 'DefiLlama hacks',
+          source_url: 'https://api.llama.fi/hacks',
+          references: { built_at: '2026-09-16T23:20:00.000Z', incidents_referenced: 344, with_reproduction: 270, sources: [{ name: 'DeFiHackLabs', url: 'https://github.com/SunWeb3Sec/DeFiHackLabs', licence: 'Apache-2.0' }] },
+        },
         model: MODEL,
       },
       turnaround_seconds: 180,
@@ -426,6 +508,7 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
       const situation = (input.situation as string).trim()
       const hints = Array.isArray(input.chains) ? (input.chains as string[]).map((s) => s.trim()).filter(Boolean) : []
       const c = corpus()
+      const refs = opts.references !== undefined ? opts.references : loadReferences()
       const known = vocabulary(c)
 
       const hintLine = hints.length ? `The customer also named these chains: ${fence(hints.join(', '))}\n\n` : ''
@@ -456,14 +539,14 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
         throw new LlmDeclined('the situation could not be mapped onto any incident class in the corpus, so there is no scope to compute base rates over; the job is cancelled rather than answered from an empty scope. Try naming the mechanism more concretely - what the contract holds, what it reads, and who may call what.')
       }
 
-      const rates = baseRates(c, m)
+      const rates = baseRates(c, m, refs)
       const scope = scopeOf(c, m)
-      const closest = precedents(c, m, CLOSEST).map(deliver)
+      const closest = precedents(c, m, CLOSEST).map((p) => deliver(p, refs))
       const closestIds = new Set(closest.map((p) => p.id))
       const largest = largestInScope(scope, m, LARGEST + CLOSEST)
         .filter((p) => !closestIds.has(p.id))
         .slice(0, LARGEST)
-        .map(deliver)
+        .map((p) => deliver(p, refs))
       const rows = [...closest, ...largest]
       const ids = new Set(rows.map((p) => p.id))
 
@@ -491,7 +574,13 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
         precedents: { closest, largest },
         findings,
         limits: LIMITS,
-        corpus: { built_at: c.built_at, incidents: c.counts.incidents, source_name: c.source.name, source_url: c.source.url },
+        corpus: {
+          built_at: c.built_at,
+          incidents: c.counts.incidents,
+          source_name: c.source.name,
+          source_url: c.source.url,
+          references: refs ? { built_at: refs.built_at, incidents_referenced: refs.counts.incidents_referenced ?? 0, with_reproduction: refs.counts.with_reproduction ?? 0, sources: refs.sources.map((x) => ({ name: x.name, url: x.url, licence: x.licence })) } : null,
+        },
         model: mapped.completion.model,
       }
       const grounded = findings.filter((f) => f.grounded).length
@@ -513,12 +602,13 @@ export function riskPrecedent(llm: Llm, opts: { corpus?: Corpus } = {}): Service
           scope_share_of_corpus_pct: rates.scope.share_of_corpus_pct,
           narrowed_incidents: rates.narrowed?.incidents ?? null,
           precedents: rows.length,
+          precedents_with_reproduction: rows.filter((p) => p.reference?.poc).length,
           precedents_span: rows.length ? { oldest: dates[0], newest: dates[dates.length - 1] } : null,
           findings: findings.length,
           findings_grounded: grounded,
           corpus: { incidents: c.counts.incidents, built_at: c.built_at },
         },
-        message: `${rates.by_mechanism.length} mechanism(s) matched your situation; their union is ${rates.scope.incidents} recorded incidents, ${rates.scope.share_of_corpus_pct}% of the corpus${rates.narrowed ? `, and ${rates.narrowed.incidents} of those are ${rates.narrowed.definition.replace('the same scope, ', '')}` : ''}. The answer carries a separate base rate for each mechanism - incidents, share, median, p90, largest, how many are on your chain and target type, and twelve months against the twelve before - plus ${rows.length} precedent incidents with ids you can cite back, and ${findings.length} finding(s), ${grounded} of them citing a row we could confirm. Read by_mechanism rather than the union figure above, which is context only, and read limits: these are counts of recorded incidents, not probabilities.`,
+        message: `${rates.by_mechanism.length} mechanism(s) matched your situation; their union is ${rates.scope.incidents} recorded incidents, ${rates.scope.share_of_corpus_pct}% of the corpus${rates.narrowed ? `, and ${rates.narrowed.incidents} of those are ${rates.narrowed.definition.replace('the same scope, ', '')}` : ''}. The answer carries a separate base rate for each mechanism - incidents, share, median, p90, largest, how many are on your chain and target type, and twelve months against the twelve before - plus ${rows.length} precedent incidents with ids you can cite back, ${rows.filter((p) => p.reference?.poc).length} of which carry a public test that reproduces the exploit, and ${findings.length} finding(s), ${grounded} of them citing a row we could confirm. Read by_mechanism rather than the union figure above, which is context only, and read limits: these are counts of recorded incidents, not probabilities.`,
       }
     },
   }

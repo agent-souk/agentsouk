@@ -1,0 +1,5156 @@
+{
+ "object": "incident_references",
+ "built_at": "2026-09-17T00:09:05.193Z",
+ "sources": [
+  {
+   "name": "DeFiHackLabs",
+   "url": "https://github.com/SunWeb3Sec/DeFiHackLabs",
+   "licence": "Apache-2.0",
+   "attribution": "Proof-of-concept reproductions and mechanism descriptions from SunWeb3Sec/DeFiHackLabs, Apache-2.0. Referenced, not copied: this artifact holds the date, the name, the one-line mechanism description, the path of the reproduction and the command that runs it."
+  }
+ ],
+ "counts": {
+  "source_entries": 794,
+  "incidents_referenced": 344,
+  "with_reproduction": 270,
+  "source_entries_unmatched": 445,
+  "duplicate_candidates_skipped": 4,
+  "corpus_incidents": 1271
+ },
+ "by_incident": {
+  "2026-09-09-beatxswap": {
+   "mechanism": "slot0 spot-price oracle with no TWAP guard drains vesting BTX reserves",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-09/BeatXswap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-09/BeatXswap_exp.sol",
+    "command": "forge test --contracts src/test/2026-09/BeatXswap_exp.sol -vvv",
+    "reproduced": "~$63.7K USDT net profit (2,984,557 BTX / ~$77.5K drained from two vesting reserves)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-09-09",
+    "source_name": "BeatXswap",
+    "days_apart": 0
+   }
+  },
+  "2026-09-07-cozy-v2": {
+   "mechanism": "unverified UMA Optimistic Oracle trigger enables unbacked protection-token redemption",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-09/CozyFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-09/CozyFinance_exp.sol",
+    "command": "forge test --contracts src/test/2026-09/CozyFinance_exp.sol -vvv",
+    "reproduced": "~160,776 USDC.e (~$160K)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-09-07",
+    "source_name": "CozyFinance",
+    "days_apart": 0
+   }
+  },
+  "2026-09-05-reddio-redsonic": {
+   "mechanism": "cross-share-class balance double-count via permissionless registerErc20",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-09/Reddio_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-09/Reddio_exp.sol",
+    "command": "forge test --contracts src/test/2026-09/Reddio_exp.sol -vvv",
+    "reproduced": "~9.25 ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-09-05",
+    "source_name": "Reddio",
+    "days_apart": 0
+   }
+  },
+  "2026-09-05-secured-finance-lending": {
+   "mechanism": "same-block self-trade manipulates getMarketUnitPrice to fabricate collateral",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-09/SecuredFi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-09/SecuredFi_exp.sol",
+    "command": "forge test --contracts src/test/2026-09/SecuredFi_exp.sol -vvv",
+    "reproduced": "~0.9 WBTC (~$72K single-drain; ~$104K across all actors exploiting the same public bug)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-09-05",
+    "source_name": "SecuredFi",
+    "days_apart": 0
+   }
+  },
+  "2026-09-04-notional-v2": {
+   "mechanism": "ERC1155 fCash mint overflow drains escrow",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-09/NotionalFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-09/NotionalFinance_exp.sol",
+    "command": "forge test --contracts src/test/2026-09/NotionalFinance_exp.sol -vvv",
+    "reproduced": "~69,257.37 DAI + ~1,658,524.86 USDC (~$1.73M)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-09-03",
+    "source_name": "NotionalFinance",
+    "days_apart": 1
+   }
+  },
+  "2026-08-31-float-protocol": {
+   "mechanism": "Uniswap V3 spot price manipulation of Hypervisor LP shares",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-08/FloatProtocol_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/FloatProtocol_exp.sol",
+    "command": "forge test --contracts src/test/2026-08/FloatProtocol_exp.sol -vvv",
+    "reproduced": "~$28,000 (10.71 ETH)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-08-31",
+    "source_name": "FloatProtocol",
+    "days_apart": 0
+   }
+  },
+  "2026-08-30-balancer-v1": {
+   "mechanism": "joinswapPoolAmountOut rounding drain across 5 pools",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-08/BalancerV1BPool_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/BalancerV1BPool_exp.sol",
+    "command": "forge test --contracts src/test/2026-08/BalancerV1BPool_exp.sol -vvv",
+    "reproduced": "~$110,839 for this DPI/USDC/WETH/WBTC pool (~$234K aggregate across all 5 vulnerable pools)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-08-31",
+    "source_name": "BalancerV1BPool",
+    "days_apart": 1
+   }
+  },
+  "2026-08-28-ajna-v2": {
+   "mechanism": "liquidation accounting manipulation via self-controlled auction",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-08/AjnaFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/AjnaFinance_exp.sol",
+    "command": "forge test --contracts src/test/2026-08/AjnaFinance_exp.sol -vvv",
+    "reproduced": "~$124.8K for this cbETH pool (1 of 7 pools hit by the same bug the same day, ~$775K aggregate)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-08-28",
+    "source_name": "AjnaFinance",
+    "days_apart": 0
+   }
+  },
+  "2026-08-23-arrakis-v1": {
+   "mechanism": "Uniswap V3 spot-price manipulation of vault mint/burn",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-08/ArrakisGUNI_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/ArrakisGUNI_exp.sol",
+    "command": "forge test --contracts src/test/2026-08/ArrakisGUNI_exp.sol -vvv",
+    "reproduced": "~2.9414 ETH net attacker surplus (Arrakis V1 / G-UNI ENS-WETH vault)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-08-23",
+    "source_name": "ArrakisGUNI",
+    "days_apart": 0
+   }
+  },
+  "2026-08-09-usm": {
+   "mechanism": "defund() price split-invariance rounding exploit",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-08/USM_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-08/USM_exp.sol",
+    "command": "forge test --contracts src/test/2026-08/USM_exp.sol -vvv",
+    "reproduced": "~70.83 ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-08-09",
+    "source_name": "USM",
+    "days_apart": 0
+   }
+  },
+  "2026-06-30-edel": {
+   "mechanism": "xstock - Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-07/edel-xstock_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-07/edel-xstock_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-07/edel-xstock_exp.sol -vvv",
+    "reproduced": "204,215.57 USDC"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-07-01",
+    "source_name": "edel",
+    "days_apart": 1
+   }
+  },
+  "2026-06-28-aidc": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/AIDC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/AIDC_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/AIDC_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "220.13 WBNB"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-28",
+    "source_name": "AIDC",
+    "days_apart": 0
+   }
+  },
+  "2026-06-25-lixir-finance": {
+   "mechanism": "Broken Signature Verification",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/LixirPermitDrain_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/LixirPermitDrain_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/LixirPermitDrain_exp.sol -vvv",
+    "reproduced": "2.60 ETH, 4,477.72 USDC, 3,609.95 USDT, 24,182.56 LIX"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-06-25",
+    "source_name": "LixirPermitDrain",
+    "days_apart": 0
+   }
+  },
+  "2026-06-25-ocean-protocol": {
+   "mechanism": "BPool single-sided join/exit math with SideStaking gulp accounting",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/OceanBPoolSideStaking_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/OceanBPoolSideStaking_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/OceanBPoolSideStaking_exp.sol -vvv",
+    "reproduced": "127.86K mOCEAN"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-06-25",
+    "source_name": "OceanBPoolSideStaking",
+    "days_apart": 0
+   }
+  },
+  "2026-06-24-dlmc": {
+   "mechanism": "Reserve-derived livePrice manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/DLMC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/DLMC_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/DLMC_exp.sol -vvv --evm-version cancun",
+    "reproduced": "222,560.22 USDT"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-24",
+    "source_name": "DLMC",
+    "days_apart": 0
+   }
+  },
+  "2026-06-23-royal-io": {
+   "mechanism": "Zero-amount ERC1155 batch transfer inflated Royal LDA tier balance",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/RoyalRoyalties_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/RoyalRoyalties_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/RoyalRoyalties_exp.sol -vvv",
+    "reproduced": "261,162.93 USDC"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-06-23",
+    "source_name": "RoyalRoyalties",
+    "days_apart": 0
+   }
+  },
+  "2026-06-20-labubu-olpc": {
+   "mechanism": "OLPC pair reserve manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/OLPC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/OLPC_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/OLPC_exp.sol --evm-version shanghai -vvv",
+    "reproduced": "1,115,903.66 USDT"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-06-20",
+    "source_name": "OLPC",
+    "days_apart": 0
+   }
+  },
+  "2026-06-17-aztec-bridge": {
+   "mechanism": "escapeHatch Proof-Forgery (permissionless RollupProcessor exit)",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/AztecEscapeHatch_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/AztecEscapeHatch_exp.sol",
+    "command": "forge test --contracts src/test/2026-06/AztecEscapeHatch_exp.sol -vvv",
+    "reproduced": "~$2.2M (1158 ETH + 150,000 DAI + 0.4696 renBTC)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-17",
+    "source_name": "Aztec V1",
+    "days_apart": 0
+   }
+  },
+  "2026-06-17-dip": {
+   "mechanism": "Fee-on-Transfer Reserve Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/DIP_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/DIP_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/DIP_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "111,097.59 USDC"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-16",
+    "source_name": "DIP",
+    "days_apart": 1
+   }
+  },
+  "2026-06-15-thetanuts-finance": {
+   "mechanism": "Index vault component-share accounting flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/Thetanuts_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/Thetanuts_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/Thetanuts_exp.sol -vvv",
+    "reproduced": "105471.50 USDC"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-15",
+    "source_name": "Thetanuts",
+    "days_apart": 0
+   }
+  },
+  "2026-06-14-aztec-connect": {
+   "mechanism": "numRealTxs Proof/Settlement Mismatch (permissionless RollupProcessorV3)",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/AztecConnect_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/AztecConnect_exp.sol",
+    "command": "forge test --contracts src/test/2026-06/AztecConnect_exp.sol -vvv",
+    "reproduced": "~$2.19M (this PoC reproduces the 908.99 ETH leg)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-14",
+    "source_name": "Aztec Connect",
+    "days_apart": 0
+   }
+  },
+  "2026-06-09-novabox": {
+   "mechanism": "Constructor Dividend Checkpoint Bypass",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/NovaBox_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/NovaBox_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/NovaBox_exp.sol --evm-version prague -vvv",
+    "reproduced": "56.73 ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-09",
+    "source_name": "NovaBox",
+    "days_apart": 0
+   }
+  },
+  "2026-06-07-ambient": {
+   "mechanism": "Native surplus accounting flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/AmbientCrocSwapDex_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/AmbientCrocSwapDex_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-06/AmbientCrocSwapDex_exp.sol -vvv",
+    "reproduced": "67.85 ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-06-07",
+    "source_name": "AmbientCrocSwapDex",
+    "days_apart": 0
+   }
+  },
+  "2026-06-03-atm": {
+   "mechanism": "Hidden transferFrom Auto-Swap Drain",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-06/ATM_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-06/ATM_exp.sol",
+    "command": "forge test --contracts src/test/2026-06/ATM_exp.sol -vvv",
+    "reproduced": "~$243,543 USDT"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-06-04",
+    "source_name": "ATM Token",
+    "days_apart": 1
+   }
+  },
+  "2026-05-31-aros": {
+   "mechanism": "Signature Replay",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/AROS_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/AROS_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/AROS_exp.sol -vvv --evm-version prague",
+    "reproduced": "~$295K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-30",
+    "source_name": "AROS",
+    "days_apart": 1
+   }
+  },
+  "2026-05-28-dxsale": {
+   "mechanism": "Ownership Override Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/DxSale_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/DxSale_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/DxSale_exp.sol -vvv",
+    "reproduced": "~7.3M USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-28",
+    "source_name": "DxSale",
+    "days_apart": 0
+   }
+  },
+  "2026-05-26-skp": {
+   "mechanism": "Owner Backdoor LP Burn + Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/SKP_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/SKP_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/SKP_exp.sol -vvv",
+    "reproduced": "~$212K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-26",
+    "source_name": "SKP Token",
+    "days_apart": 0
+   }
+  },
+  "2026-05-25-new-market-trading": {
+   "mechanism": "SquidRouterModule Missing Caller Check",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/NewMarketTrading_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/NewMarketTrading_exp.sol",
+    "command": "FOUNDRY_EVM_VERSION=cancun forge test --contracts src/test/2026-05/NewMarketTrading_exp.sol --match-contract NewMarketTradingExploit -vv",
+    "reproduced": "~$3.98M USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-25",
+    "source_name": "New Market Trading",
+    "days_apart": 0
+   }
+  },
+  "2026-05-25-wusd-fi-glove": {
+   "mechanism": "_englove Sybil Incentive Abuse",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/WUSD_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/WUSD_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/WUSD_exp.sol -vvv",
+    "reproduced": "~$200K USD (GLOVE emissions + LP drain)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-25",
+    "source_name": "WUSD.fi",
+    "days_apart": 0
+   }
+  },
+  "2026-05-24-fractal-protocol": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/FractalProtocol_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/FractalProtocol_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/FractalProtocol_exp.sol -vvv",
+    "reproduced": "~$13.7K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-22",
+    "source_name": "FractalProtocol",
+    "days_apart": 2
+   }
+  },
+  "2026-05-23-mure": {
+   "mechanism": "Signature Verification Bypass",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/MureDistribution_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/MureDistribution_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/MureDistribution_exp.sol -vvv",
+    "reproduced": "~5.45 ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-21",
+    "source_name": "MureDistribution",
+    "days_apart": 2
+   }
+  },
+  "2026-05-19-elevatefi": {
+   "mechanism": "Reserve Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/ElevateFi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/ElevateFi_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-05/ElevateFi_exp.sol -vvv --evm-version cancun",
+    "reproduced": "~16,000 USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-19",
+    "source_name": "ElevateFi",
+    "days_apart": 0
+   }
+  },
+  "2026-05-16-adshares": {
+   "mechanism": "Insufficient Validation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/AdsharesBridge_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/AdsharesBridge_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/AdsharesBridge_exp.sol -vvv",
+    "reproduced": "~$628K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-15",
+    "source_name": "AdsharesBridge",
+    "days_apart": 1
+   }
+  },
+  "2026-05-11-huma-finance-v2": {
+   "mechanism": "Credit Approval Bypass",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/HumaCreditApprovalBypass_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/HumaCreditApprovalBypass_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/HumaCreditApprovalBypass_exp.sol -vv",
+    "reproduced": "~$101K (82,315 USDC + 19,074 USDC.e)"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-11",
+    "source_name": "HumaFinance",
+    "days_apart": 0
+   }
+  },
+  "2026-05-10-renegade": {
+   "mechanism": "Uninitialized Proxy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/Renegade_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/Renegade_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/Renegade_exp.sol -vvv",
+    "reproduced": "~$209K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-10",
+    "source_name": "Renegade",
+    "days_apart": 0
+   }
+  },
+  "2026-05-07-trustedvolumes": {
+   "mechanism": "Signature Replay",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/TrustedVolumes_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/TrustedVolumes_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/TrustedVolumes_exp.sol --match-contract TrustedVolumesExploit -vv",
+    "reproduced": "~$5.87M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-07",
+    "source_name": "TrustedVolumes",
+    "days_apart": 0
+   }
+  },
+  "2026-05-05-ekubo": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/Ekubo_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/Ekubo_exp.sol",
+    "command": "forge test --contracts src/test/2026-05/Ekubo_exp.sol -vvv",
+    "reproduced": "~$1.4M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-05-05",
+    "source_name": "Ekubo",
+    "days_apart": 0
+   }
+  },
+  "2026-05-01-sharwa-finance": {
+   "mechanism": "Hegic collateral spot price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-05/SharwaMarginTrading_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-05/SharwaMarginTrading_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-05/SharwaMarginTrading_exp.sol -vvv",
+    "reproduced": "32.85K USDC"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-05-01",
+    "source_name": "SharwaMarginTrading",
+    "days_apart": 0
+   }
+  },
+  "2026-04-28-judao": {
+   "mechanism": "JUDAO sell-hook reserve drain",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/JUDAO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/JUDAO_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/JUDAO_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "205K USDT + 36 BNB"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-04-28",
+    "source_name": "JUDAO",
+    "days_apart": 0
+   }
+  },
+  "2026-04-27-singularity-finance": {
+   "mechanism": "Oracle Misconfiguration / Share Inflation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/SingularityDynaVault_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/SingularityDynaVault_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/SingularityDynaVault_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "413.13K USDC"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-25",
+    "source_name": "SingularityDynaVault",
+    "days_apart": 2
+   }
+  },
+  "2026-04-23-giddy": {
+   "mechanism": "Incomplete Signature Coverage",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/giddyvaultv3_compound_auth_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/giddyvaultv3_compound_auth_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/giddyvaultv3_compound_auth_exp.sol -vvv --evm-version cancun",
+    "reproduced": "$1.3M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-23",
+    "source_name": "GiddyVaultV3",
+    "days_apart": 0
+   }
+  },
+  "2026-04-22-kipseli": {
+   "mechanism": "Pricing / Decimals Mismatch",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/KipseliPropAMM_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/KipseliPropAMM_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/KipseliPropAMM_exp.sol -vvv --evm-version cancun",
+    "reproduced": "0.93 cbBTC"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-21",
+    "source_name": "KipseliPropAMM",
+    "days_apart": 1
+   }
+  },
+  "2026-04-20-juicebox-v3": {
+   "mechanism": "Fake terminal loan source validation bypass",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/JuiceboxREVLoans_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/JuiceboxREVLoans_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/JuiceboxREVLoans_exp.sol -vvv",
+    "reproduced": "21.77 ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-20",
+    "source_name": "JuiceboxREVLoans",
+    "days_apart": 0
+   }
+  },
+  "2026-04-20-thetanuts-finance": {
+   "mechanism": "Vault Share Rounding Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/ThetanutsVaultShareRounding_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/ThetanutsVaultShareRounding_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/ThetanutsVaultShareRounding_exp.sol -vvv",
+    "reproduced": "0.15 WBTC"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-20",
+    "source_name": "ThetanutsVaultShareRounding",
+    "days_apart": 0
+   }
+  },
+  "2026-04-13-mona": {
+   "mechanism": "reward-farming / BurnAddress accounting exploit!",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/MONA_LisaVault_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/MONA_LisaVault_exp.sol",
+    "command": "forge test --contracts src/test/2026-04/MONA_LisaVault_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-14",
+    "source_name": "MONA LisaVault",
+    "days_apart": 1
+   }
+  },
+  "2026-04-12-subquery-network": {
+   "mechanism": "Settings access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/SubQuerySettings_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/SubQuerySettings_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/SubQuerySettings_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "218.07M SQT"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-12",
+    "source_name": "SubQuerySettings",
+    "days_apart": 0
+   }
+  },
+  "2026-04-07-squidmulticall": {
+   "mechanism": "Arbitrary Call / Wrong Approval",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-04/SquidMulticallAllowanceDrain_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-04/SquidMulticallAllowanceDrain_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-04/SquidMulticallAllowanceDrain_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "1 ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-04-07",
+    "source_name": "SquidMulticallAllowanceDrain",
+    "days_apart": 0
+   }
+  },
+  "2026-03-31-whalebit": {
+   "mechanism": "Algebra spot-price oracle manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-03/WhalebitOracleManipulation_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-03/WhalebitOracleManipulation_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-03/WhalebitOracleManipulation_exp.sol -vvv",
+    "reproduced": "824K USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2026-03-31",
+    "source_name": "WhalebitOracleManipulation",
+    "days_apart": 0
+   }
+  },
+  "2026-03-28-vtswaphook": {
+   "mechanism": "Pricing Error in UniswapV4 Hook",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-03/VTSwapHook_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-03/VTSwapHook_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-03/VTSwapHook_exp.sol -vvv --evm-version cancun",
+    "reproduced": "4,507,034.03 vATH + 2,007,935.14 ATH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-03-28",
+    "source_name": "VTSwapHook",
+    "days_apart": 0
+   }
+  },
+  "2026-03-23-bce": {
+   "mechanism": "Deflationary Token Logic Error",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-03/bce_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-03/bce_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-03/bce_exp.sol -vvv --evm-version cancun",
+    "reproduced": "~800,000 USDT"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-03-23",
+    "source_name": "BCE",
+    "days_apart": 0
+   }
+  },
+  "2026-03-02-curve-llamalend": {
+   "mechanism": "Share price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-03-02",
+    "source_name": "Curve LlamaLend",
+    "days_apart": 0
+   }
+  },
+  "2026-02-22-laxo": {
+   "mechanism": "Incorrect Burn Logic",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-02-22",
+    "source_name": "LAXO Token",
+    "days_apart": 0
+   }
+  },
+  "2026-02-15-moonwell-lending": {
+   "mechanism": "Faulty Oracle",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-02/Moonwell_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-02/Moonwell_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-02/Moonwell_exp.sol -vvv",
+    "reproduced": "1.78M USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-02-15",
+    "source_name": "Moonwell",
+    "days_apart": 0
+   }
+  },
+  "2026-01-20-synaplogic": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-01-20",
+    "source_name": "SynapLogic",
+    "days_apart": 0
+   }
+  },
+  "2026-01-19-makina": {
+   "mechanism": "Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-01-20",
+    "source_name": "Makina",
+    "days_apart": 1
+   }
+  },
+  "2026-01-10-futureswap": {
+   "mechanism": "Unit Mismatch",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-01-10",
+    "source_name": "FutureSwap",
+    "days_apart": 0
+   }
+  },
+  "2026-01-08-truebit": {
+   "mechanism": "OverFlow",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-01/Truebit_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-01/Truebit_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-01/Truebit_exp.sol -vvv",
+    "reproduced": "8540ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-01-09",
+    "source_name": "Truebit",
+    "days_apart": 1
+   }
+  },
+  "2026-01-01-prxvt": {
+   "mechanism": "Bussiness Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2026-01/PRXVT_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2026-01/PRXVT_exp.sol",
+    "command": "forge test --contracts ./src/test/2026-01/PRXVT_exp.sol -vvv --block-gas-limit 60000000 # use gas limit control iterations",
+    "reproduced": "32.8 ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2026-01-01",
+    "source_name": "PRXVT",
+    "days_apart": 0
+   }
+  },
+  "2021-12-18-grim-finance": {
+   "mechanism": "Flashloan & Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-12/Grim_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-12/Grim_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-12/Grim_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-12-18",
+    "source_name": "Grim Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-12-14-nervebridge": {
+   "mechanism": "Swap Metapool Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-12/NerveBridge_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-12/NerveBridge_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-12/NerveBridge_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-12-14",
+    "source_name": "Nerve Bridge",
+    "days_apart": 0
+   }
+  },
+  "2021-11-30-monox": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-11/Mono_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-11/Mono_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-11/Mono_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-11-30",
+    "source_name": "MonoX Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-11-23-ploutoz": {
+   "mechanism": "Flash Loan",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-11/Ploutoz_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-11/Ploutoz_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-11/Ploutoz_exp.sol -vvv --evm-version shanghai",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-11-23",
+    "source_name": "Ploutoz",
+    "days_apart": 0
+   }
+  },
+  "2021-10-27-cream-lending": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-10/Cream_2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-10/Cream_2_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-10/Cream_2_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-10-27",
+    "source_name": "CreamFinance",
+    "days_apart": 0
+   }
+  },
+  "2021-10-14-indexed-finance": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-10/IndexedFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-10/IndexedFinance_exp.sol",
+    "command": "forge test --contracts src/test/2021-10/IndexedFinance_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-10-15",
+    "source_name": "Indexed Finance",
+    "days_apart": 1
+   }
+  },
+  "2021-09-15-nowswap": {
+   "mechanism": "Incorrect calculation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-09/NowSwap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-09/NowSwap_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-09/NowSwap_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-09-15",
+    "source_name": "NowSwap Platform",
+    "days_apart": 0
+   }
+  },
+  "2021-09-12-zabu-finance": {
+   "mechanism": "Deflationary token uncompatible",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-09/ZABU_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-09/ZABU_exp.sol",
+    "command": "forge test --contracts src/test/2021-09/ZABU_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-09-12",
+    "source_name": "ZABU Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-09-04-dao-maker-vesting": {
+   "mechanism": "Bad Access Controal",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-09/DaoMaker_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-09/DaoMaker_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-09/DaoMaker_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-09-03",
+    "source_name": "DAO Maker",
+    "days_apart": 1
+   }
+  },
+  "2021-08-30-cream-lending": {
+   "mechanism": "Flashloan Attack + Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-08/Cream_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-08/Cream_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-08/Cream_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-08-30",
+    "source_name": "Cream Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-08-10-poly-network": {
+   "mechanism": "Bridge, getting around modifier through cross-chain message",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-08/PolyNetwork_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-08/PolyNetwork_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-08/PolyNetwork_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-08-11",
+    "source_name": "Poly Network",
+    "days_apart": 1
+   }
+  },
+  "2021-08-03-popsicle-finance": {
+   "mechanism": "Repeated Reward Claim - Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-08/Popsicle_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-08/Popsicle_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-08/Popsicle_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-08-04",
+    "source_name": "Popsicle",
+    "days_apart": 1
+   }
+  },
+  "2021-07-30-levyathan": {
+   "mechanism": "(I) Lost keys and minting (II) Vulnerable emergencyWithdraw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-07/Levyathan_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-07/Levyathan_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-07/Levyathan_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-07-28",
+    "source_name": "Levyathan Finance",
+    "days_apart": 2
+   }
+  },
+  "2021-07-11-chainswap-bridge": {
+   "mechanism": "Bridge, logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-07/Chainswap_exp2.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-07/Chainswap_exp2.sol",
+    "command": "forge test --contracts ./src/test/2021-07/Chainswap_exp2.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-07-10",
+    "source_name": "Chainswap",
+    "days_apart": 1
+   }
+  },
+  "2021-07-02-chainswap": {
+   "mechanism": "Bridge, logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-07/Chainswap_exp1.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-07/Chainswap_exp1.sol",
+    "command": "forge test --contracts ./src/test/2021-07/Chainswap_exp1.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-07-02",
+    "source_name": "Chainswap",
+    "days_apart": 0
+   }
+  },
+  "2021-06-28-safe-dollar": {
+   "mechanism": "Deflationary token uncompatible",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-06/SafeDollar_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-06/SafeDollar_exp.sol",
+    "command": "forge test --contracts src/test/2021-06/SafeDollar_exp.sol -vvv",
+    "reproduced": "$.2 million"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-06-28",
+    "source_name": "SafeDollar",
+    "days_apart": 0
+   }
+  },
+  "2021-06-25-xwin-finance": {
+   "mechanism": "subscription-incentive-mechanism",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-06/xWin_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-06/xWin_exp.sol",
+    "command": "forge test --contracts src/test/2021-06/xWin_exp.sol -vvv",
+    "reproduced": "~$300k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-06-25",
+    "source_name": "xWin Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-06-22-eleven-finance": {
+   "mechanism": "Doesn’t burn shares",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-06/Eleven_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-06/Eleven_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-06/Eleven_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-06-22",
+    "source_name": "Eleven Finance",
+    "days_apart": 0
+   }
+  },
+  "2021-06-07-88mph": {
+   "mechanism": "Access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-06/88mph_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-06/88mph_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-06/88mph_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-06-07",
+    "source_name": "88mph NFT",
+    "days_apart": 0
+   }
+  },
+  "2021-06-03-hunny-finance": {
+   "mechanism": "Incorrect calculation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-06/PancakeHunny_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-06/PancakeHunny_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-06/PancakeHunny_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-06-03",
+    "source_name": "PancakeHunny",
+    "days_apart": 0
+   }
+  },
+  "2021-05-28-burgerswap": {
+   "mechanism": "Mathematical flaw + Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/BurgerSwap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/BurgerSwap_exp.sol",
+    "command": "forge test --contracts src/test/2021-05/BurgerSwap_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-05-27",
+    "source_name": "BurgerSwap",
+    "days_apart": 1
+   }
+  },
+  "2021-05-19-bunny": {
+   "mechanism": "Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/PancakeBunny_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/PancakeBunny_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-05/PancakeBunny_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-05-19",
+    "source_name": "PancakeBunny",
+    "days_apart": 0
+   }
+  },
+  "2021-05-17-bearnfi": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/bEarn_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/bEarn_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-05/bEarn_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "11M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-05-16",
+    "source_name": "bEarn",
+    "days_apart": 1
+   }
+  },
+  "2021-05-08-rari-capital": {
+   "mechanism": "Cross Contract Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/RariCapital_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/RariCapital_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-05/RariCapital_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-05-09",
+    "source_name": "RariCapital",
+    "days_apart": 1
+   }
+  },
+  "2021-05-07-valuedefi": {
+   "mechanism": "Cross Contract Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/ValueDefi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/ValueDefi_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-05/ValueDefi_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-05-08",
+    "source_name": "Value Defi",
+    "days_apart": 1
+   }
+  },
+  "2021-05-02-spartan": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-05/Spartan_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-05/Spartan_exp.sol",
+    "command": "forge test --contracts src/test/2021-05/Spartan_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-05-02",
+    "source_name": "Spartan",
+    "days_apart": 0
+   }
+  },
+  "2021-04-28-uranium-finance": {
+   "mechanism": "Miscalculation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-04/Uranium_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-04/Uranium_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-04/Uranium_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-04-28",
+    "source_name": "Uranium",
+    "days_apart": 0
+   }
+  },
+  "2018-04-24-smartmesh": {
+   "mechanism": "Overflow",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2018-04/SmartMesh_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2018-04/SmartMesh_exp.sol",
+    "command": "forge test --contracts ./src/test/2018-04/SmartMesh_exp.sol -vvv",
+    "reproduced": "140M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2018-04-24",
+    "source_name": "SmartMesh",
+    "days_apart": 0
+   }
+  },
+  "2021-03-09-dodo-amm": {
+   "mechanism": "Flashloan Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-03/dodo_flashloan_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-03/dodo_flashloan_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-03/dodo_flashloan_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-03-08",
+    "source_name": "DODO",
+    "days_apart": 1
+   }
+  },
+  "2021-03-05-paid-network": {
+   "mechanism": "Private key compromised",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-03/PAID_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-03/PAID_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-03/PAID_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2021-03-05",
+    "source_name": "Paid Network",
+    "days_apart": 0
+   }
+  },
+  "2021-02-05-yearn-finance": {
+   "mechanism": "Slippage proection absent",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-02/Yearn_ydai_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-02/Yearn_ydai_exp.sol",
+    "command": "forge test --contracts ./src/test/2021-02/Yearn_ydai_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-02-04",
+    "source_name": "Yearn YDai",
+    "days_apart": 1
+   }
+  },
+  "2021-01-25-badger-dao": {
+   "mechanism": "Sandwich attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2021-01/Sushi_Badger_Digg_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2021-01/Sushi_Badger_Digg_exp.sol",
+    "command": "forge test --contracts src/test/2021-01/Sushi_Badger_Digg_exp.sol -vvvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2021-01-25",
+    "source_name": "Sushi Badger Digg",
+    "days_apart": 0
+   }
+  },
+  "2020-12-29-cover-protocol": {
+   "mechanism": "Incorrect calculation via cached data",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-12/Cover_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-12/Cover_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-12/Cover_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-12-29",
+    "source_name": "Cover Protocol",
+    "days_apart": 0
+   }
+  },
+  "2020-11-22-pickle": {
+   "mechanism": "Insufficient validation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-11/Pickle_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-11/Pickle_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-11/Pickle_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-11-21",
+    "source_name": "Pickle Finance",
+    "days_apart": 1
+   }
+  },
+  "2020-10-26-harvest-finance": {
+   "mechanism": "Flashloan Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-10/HarvestFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-10/HarvestFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-10/HarvestFinance_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-10-26",
+    "source_name": "Harvest Finance",
+    "days_apart": 0
+   }
+  },
+  "2020-08-04-opyn": {
+   "mechanism": "msgValue in loop",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-08/Opyn_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-08/Opyn_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-08/Opyn_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-08-04",
+    "source_name": "Opyn Protocol",
+    "days_apart": 0
+   }
+  },
+  "2020-06-28-balancer": {
+   "mechanism": "Token Incompatible",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-06/Balancer_20200628_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-06/Balancer_20200628_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-06/Balancer_20200628_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-06-28",
+    "source_name": "Balancer Protocol",
+    "days_apart": 0
+   }
+  },
+  "2020-06-18-bancor-v3": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-06/Bancor_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-06/Bancor_exp.sol",
+    "command": "forge test --contracts ./src/test/2020-06/Bancor_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2020-06-18",
+    "source_name": "Bancor Protocol",
+    "days_apart": 0
+   }
+  },
+  "2020-04-18-uniswap-v1": {
+   "mechanism": "ERC777 Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2020-04/uniswap-erc777.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2020-04/uniswap-erc777.sol",
+    "command": "forge test --contracts ./src/test/2020-04/uniswap-erc777.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2020-04-18",
+    "source_name": "UniSwapV1",
+    "days_apart": 0
+   }
+  },
+  "2018-10-07-spankchain": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2018-10/SpankChain_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2018-10/SpankChain_exp.sol",
+    "command": "forge test --contracts ./src/test/2018-10/SpankChain_exp.sol -vvv",
+    "reproduced": "155 $ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2018-10-07",
+    "source_name": "SpankChain",
+    "days_apart": 0
+   }
+  },
+  "2018-04-22-beautychain": {
+   "mechanism": "Integer Overflow",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2018-04/BEC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2018-04/BEC_exp.sol",
+    "command": "forge test --contracts ./src/test/2018-04/BEC_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2018-04-22",
+    "source_name": "Beauty Chain",
+    "days_apart": 0
+   }
+  },
+  "2022-11-07-moocakectx": {
+   "mechanism": "FlashLoan Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-11/MooCAKECTX_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-11/MooCAKECTX_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-11/MooCAKECTX_exp.sol -vvv",
+    "reproduced": "$140k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-11-07",
+    "source_name": "MooCAKECTX",
+    "days_apart": 0
+   }
+  },
+  "2022-10-27-team-finance": {
+   "mechanism": "Liquidity Migration Exploit",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-10/TeamFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-10/TeamFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-10/TeamFinance_exp.sol -vvv",
+    "reproduced": "Multiple Tokens ~$15.8M US$"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-27",
+    "source_name": "Team Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-10-26-n00dleswap": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "../../src/test/2022-10/N00d_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/../../src/test/2022-10/N00d_exp.sol",
+    "command": "forge test --contracts ../../src/test/2022-10/N00d_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-10-26",
+    "source_name": "N00d Token",
+    "days_apart": 0
+   }
+  },
+  "2022-10-25-ulme": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-10/ULME_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-10/ULME_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-10/ULME_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-25",
+    "source_name": "ULME",
+    "days_apart": 0
+   }
+  },
+  "2022-10-24-quickswap-market": {
+   "mechanism": "Read-only Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-10/Market_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-10/Market_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-10/Market_exp.sol -vv",
+    "reproduced": "$220k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-10-24",
+    "source_name": "Market",
+    "days_apart": 0
+   }
+  },
+  "2022-10-11-templedao": {
+   "mechanism": "Insufficient access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "../../src/test/2022-10/Templedao_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/../../src/test/2022-10/Templedao_exp.sol",
+    "command": "forge test --contracts ../../src/test/2022-10/Templedao_exp.sol -vv",
+    "reproduced": "$2.3 million"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-11",
+    "source_name": "Templedao",
+    "days_apart": 0
+   }
+  },
+  "2022-10-09-xave-finance": {
+   "mechanism": "Malicious Proposal Mint & Transfer Ownership",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "../../src/test/2022-10/XaveFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/../../src/test/2022-10/XaveFinance_exp.sol",
+    "command": "forge test --contracts ../../src/test/2022-10/XaveFinance_exp.sol -vv",
+    "reproduced": "100,000,000,000,000 RNBW"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-09",
+    "source_name": "Xave Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-10-06-res-token": {
+   "mechanism": "Token - pair manipulate",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "../../src/test/2022-10/RES_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/../../src/test/2022-10/RES_exp.sol",
+    "command": "forge test --contracts ../../src/test/2022-10/RES_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-06",
+    "source_name": "RES",
+    "days_apart": 0
+   }
+  },
+  "2022-10-02-transit-swap": {
+   "mechanism": "Incorrect owner address validation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "../../src/test/2022-10/TransitSwap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/../../src/test/2022-10/TransitSwap_exp.sol",
+    "command": "forge test --contracts ../../src/test/2022-10/TransitSwap_exp.sol -vv",
+    "reproduced": "over $21 Million"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-10-02",
+    "source_name": "Transit Swap",
+    "days_apart": 0
+   }
+  },
+  "2022-09-08-ragnarok-online-invasion": {
+   "mechanism": "Broken Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-09/ROI_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-09/ROI_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-09/ROI_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-09-08",
+    "source_name": "Ragnarok Online Invasion",
+    "days_apart": 0
+   }
+  },
+  "2022-09-08-new-free-dao": {
+   "mechanism": "Flashloans Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-09/NewFreeDAO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-09/NewFreeDAO_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-09/NewFreeDAO_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-09-08",
+    "source_name": "NewFreeDAO",
+    "days_apart": 0
+   }
+  },
+  "2022-09-02-shadowfi": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-09/Shadowfi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-09/Shadowfi_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-09/Shadowfi_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-09-02",
+    "source_name": "ShadowFi",
+    "days_apart": 0
+   }
+  },
+  "2022-09-02-bad-guys-by-rpf": {
+   "mechanism": "Business Logic Flaw : Missing Check For Number of NFT to Mint",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-09/BadGuysbyRPF_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-09/BadGuysbyRPF_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-09/BadGuysbyRPF_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-09-02",
+    "source_name": "Bad Guys by RPF",
+    "days_apart": 0
+   }
+  },
+  "2022-08-10-xstable-protocol": {
+   "mechanism": "Incorrect Logic Check",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-08/XST_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-08/XST_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-08/XST_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-08-10",
+    "source_name": "XSTABLE Protocol",
+    "days_apart": 0
+   }
+  },
+  "2022-08-07-egd-finance": {
+   "mechanism": "Flashloans & Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-08/EGD_Finance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-08/EGD_Finance_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-08/EGD_Finance_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-08-07",
+    "source_name": "EGD Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-08-01-nomad": {
+   "mechanism": "Business Logic Flaw : Incorrect acceptable merkle-root checks",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-08/NomadBridge_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-08/NomadBridge_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-08/NomadBridge_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-08-02",
+    "source_name": "Nomad Bridge",
+    "days_apart": 1
+   }
+  },
+  "2022-08-01-reaper-farm": {
+   "mechanism": "Business Logic Flaw : Lack of access control mechanism",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-08/ReaperFarm_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-08/ReaperFarm_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-08/ReaperFarm_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-08-01",
+    "source_name": "Reaper Farm",
+    "days_apart": 0
+   }
+  },
+  "2022-07-25-lpc": {
+   "mechanism": "Business Logic Flaw : Incorrect recipient balance check, did not check sender!=recipient in transfer",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-07/LPC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-07/LPC_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-07/LPC_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-07-25",
+    "source_name": "LPC",
+    "days_apart": 0
+   }
+  },
+  "2022-07-25-audius": {
+   "mechanism": "Storage Collision & Malicious Proposal",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-07/Audius_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-07/Audius_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-07/Audius_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-07-23",
+    "source_name": "Audius",
+    "days_apart": 2
+   }
+  },
+  "2022-07-13-spacegodzilla": {
+   "mechanism": "Flashloans & Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-07/SpaceGodzilla_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-07/SpaceGodzilla_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-07/SpaceGodzilla_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-07-13",
+    "source_name": "SpaceGodzilla",
+    "days_apart": 0
+   }
+  },
+  "2022-07-10-omni": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-07/Omni_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-07/Omni_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-07/Omni_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-07-10",
+    "source_name": "Omni NFT",
+    "days_apart": 0
+   }
+  },
+  "2022-07-01-quixotic": {
+   "mechanism": "Optimism NFT Marketplace",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-07/Quixotic_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-07/Quixotic_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-07/Quixotic_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-07-01",
+    "source_name": "Quixotic",
+    "days_apart": 0
+   }
+  },
+  "2022-06-26-xcarnival": {
+   "mechanism": "Infinite Number of Loans",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-06/XCarnival_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-06/XCarnival_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-06/XCarnival_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-06-26",
+    "source_name": "XCarnival",
+    "days_apart": 0
+   }
+  },
+  "2022-06-23-harmony-bridge": {
+   "mechanism": "Private key compromised",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-06/Harmony_multisig_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-06/Harmony_multisig_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-06/Harmony_multisig_exp.sol -vvvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-06-24",
+    "source_name": "Harmony's Horizon Bridge",
+    "days_apart": 1
+   }
+  },
+  "2022-05-24-hackdao": {
+   "mechanism": "Skim token balance",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-05/HackDao_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-05/HackDao_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-05/HackDao_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-05-24",
+    "source_name": "HackDao",
+    "days_apart": 0
+   }
+  },
+  "2022-05-08-fortress-loans": {
+   "mechanism": "Malicious Proposal & Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-05/FortressLoans.exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-05/FortressLoans.exp.sol",
+    "command": "forge test --contracts ./src/test/2022-05/FortressLoans.exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-05-08",
+    "source_name": "Fortress Loans",
+    "days_apart": 0
+   }
+  },
+  "2022-04-30-saddle-finance": {
+   "mechanism": "Swap Metapool Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Saddle_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Saddle_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Saddle_exp.sol -vvv",
+    "reproduced": "$10 million"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-30",
+    "source_name": "Saddle Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-05-01-rari-capital": {
+   "mechanism": "Flashloan Attack + Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Rari_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Rari_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Rari_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-04-30",
+    "source_name": "Rari Capital/Fei Protocol",
+    "days_apart": 1
+   }
+  },
+  "2022-04-28-deus-finance": {
+   "mechanism": "Flashloan & Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/deus_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/deus_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/deus_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-28",
+    "source_name": "DEUS DAO",
+    "days_apart": 0
+   }
+  },
+  "2022-04-24-wiener-doge": {
+   "mechanism": "Flashloan",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Wdoge_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Wdoge_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Wdoge_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-24",
+    "source_name": "Wiener DOGE",
+    "days_apart": 0
+   }
+  },
+  "2022-04-21-zeed-finance": {
+   "mechanism": "Incorrect calculation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Zeed_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Zeed_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Zeed_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-21",
+    "source_name": "Zeed Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-04-17-beanstalk": {
+   "mechanism": "DAO + Flashloan",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Beanstalk_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Beanstalk_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Beanstalk_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-04-16",
+    "source_name": "BeanstalkFarms",
+    "days_apart": 1
+   }
+  },
+  "2022-04-15-rikkei-finance": {
+   "mechanism": "Access control & Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Rikkei_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Rikkei_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Rikkei_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-15",
+    "source_name": "Rikkei Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-04-12-elephant-money": {
+   "mechanism": "Flashloan & Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-04/Elephant_Money_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-04/Elephant_Money_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-04/Elephant_Money_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-04-12",
+    "source_name": "ElephantMoney",
+    "days_apart": 0
+   }
+  },
+  "2022-03-27-revest-finance": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Revest_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Revest_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Revest_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-27",
+    "source_name": "Revest Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-03-26-auctus": {
+   "mechanism": "Arbitrary Call",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Auctus_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Auctus_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Auctus_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-26",
+    "source_name": "Auctus",
+    "days_apart": 0
+   }
+  },
+  "2022-03-21-one-ring-finance": {
+   "mechanism": "Flashloan & Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/OneRing_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/OneRing_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/OneRing_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-21",
+    "source_name": "OneRing Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-03-21-li-fi": {
+   "mechanism": "Bridges",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/LiFi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/LiFi_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/LiFi_exp.sol -vvvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-20",
+    "source_name": "Li.Fi",
+    "days_apart": 1
+   }
+  },
+  "2022-03-20-umbrella-network": {
+   "mechanism": "Underflow",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Umbrella_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Umbrella_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Umbrella_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-20",
+    "source_name": "Umbrella Network",
+    "days_apart": 0
+   }
+  },
+  "2022-03-15-hundred-finance": {
+   "mechanism": "ERC667 Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/HundredFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/HundredFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/HundredFinance_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-13",
+    "source_name": "Hundred Finance",
+    "days_apart": 2
+   }
+  },
+  "2022-03-15-agave": {
+   "mechanism": "ERC667 Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Agave_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Agave_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Agave_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-15",
+    "source_name": "Agave Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-03-13-paraluni-masterchef": {
+   "mechanism": "Flashloan & Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Paraluni_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Paraluni_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Paraluni_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-03-13",
+    "source_name": "Paraluni",
+    "days_apart": 0
+   }
+  },
+  "2022-03-09-fantasm-finance": {
+   "mechanism": "Business logic in mint()",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Fantasm_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Fantasm_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Fantasm_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-09",
+    "source_name": "Fantasm Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-03-05-bacon-protocol": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/Bacon_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/Bacon_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/Bacon_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-03-05",
+    "source_name": "Bacon Protocol",
+    "days_apart": 0
+   }
+  },
+  "2022-03-03-treasure": {
+   "mechanism": "Zero Fee",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-03/TreasureDAO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-03/TreasureDAO_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-03/TreasureDAO_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-03-03",
+    "source_name": "TreasureDAO",
+    "days_apart": 0
+   }
+  },
+  "2022-02-15-build-finance": {
+   "mechanism": "DAO",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-02/BuildF_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-02/BuildF_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-02/BuildF_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-02-14",
+    "source_name": "BuildFinance",
+    "days_apart": 1
+   }
+  },
+  "2022-02-06-meter": {
+   "mechanism": "Bridge",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-02/Meter_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-02/Meter_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-02/Meter_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-02-06",
+    "source_name": "Meter",
+    "days_apart": 0
+   }
+  },
+  "2022-01-28-qubit": {
+   "mechanism": "Bridge address(0).safeTransferFrom() does not revert",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-01/Qubit_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-01/Qubit_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-01/Qubit_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2022-01-28",
+    "source_name": "Qubit Finance",
+    "days_apart": 0
+   }
+  },
+  "2022-01-18-multichain": {
+   "mechanism": "Insufficient Token Validation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2022-01/Anyswap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2022-01/Anyswap_exp.sol",
+    "command": "forge test --contracts ./src/test/2022-01/Anyswap_exp.sol -vv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2022-01-18",
+    "source_name": "Multichain (Anyswap)",
+    "days_apart": 0
+   }
+  },
+  "2023-12-30-channels-finance": {
+   "mechanism": "CompoundV2 Inflation Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/ChannelsFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/ChannelsFinance_exp.sol",
+    "command": "forge test --contracts src/test/2023-12/ChannelsFinance_exp.sol -vvv",
+    "reproduced": "~320K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-12-30",
+    "source_name": "ChannelsFinance",
+    "days_apart": 0
+   }
+  },
+  "2023-12-25-telcoin": {
+   "mechanism": "Storage Collision",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/Telcoin_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/Telcoin_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/Telcoin_exp.sol -vvv",
+    "reproduced": "~1,24M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-12-25",
+    "source_name": "Telcoin",
+    "days_apart": 0
+   }
+  },
+  "2023-12-22-pine-protocol": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/PineProtocol_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/PineProtocol_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/PineProtocol_exp.sol -vvv",
+    "reproduced": "~90k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-12-22",
+    "source_name": "PineProtocol",
+    "days_apart": 0
+   }
+  },
+  "2023-12-20-transit-finance": {
+   "mechanism": "Lack of Validation Pool",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/TransitFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/TransitFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/TransitFinance_exp.sol -vvv",
+    "reproduced": "~110k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-12-20",
+    "source_name": "TransitFinance",
+    "days_apart": 0
+   }
+  },
+  "2023-12-16-gooddollar": {
+   "mechanism": "Lack of Input Validation & Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/GoodDollar_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/GoodDollar_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/GoodDollar_exp.sol -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-12-16",
+    "source_name": "GoodDollar",
+    "days_apart": 0
+   }
+  },
+  "2023-12-16-nft-trader": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/NFTTrader_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/NFTTrader_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/NFTTrader_exp.sol -vvv",
+    "reproduced": "~$3M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-12-16",
+    "source_name": "NFTTrader",
+    "days_apart": 0
+   }
+  },
+  "2023-12-06-time": {
+   "mechanism": "Arbitrary Address Spoofing Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/TIME_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/TIME_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/TIME_exp.sol -vvv",
+    "reproduced": "~84.59 ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-12-06",
+    "source_name": "TIME",
+    "days_apart": 0
+   }
+  },
+  "2023-12-06-elephantstatus": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-12/ElephantStatus_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-12/ElephantStatus_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-12/ElephantStatus_exp.sol -vvv",
+    "reproduced": "~$165k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-12-06",
+    "source_name": "ElephantStatus",
+    "days_apart": 0
+   }
+  },
+  "2023-11-25-thenftv2": {
+   "mechanism": "logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/TheNFTV2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/TheNFTV2_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/TheNFTV2_exp.sol -vvv",
+    "reproduced": "~$19K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-11-25",
+    "source_name": "TheNFTV2",
+    "days_apart": 0
+   }
+  },
+  "2023-11-22-kyberswap-elastic": {
+   "mechanism": "precision loss",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/KyberSwap_exp.eth.1.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/KyberSwap_exp.eth.1.sol",
+    "command": "forge test --contracts ./src/test/2023-11/KyberSwap_exp.eth.1.sol -vvv",
+    "reproduced": "~$48M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-11-22",
+    "source_name": "KyberSwap",
+    "days_apart": 0
+   }
+  },
+  "2023-11-10-raft": {
+   "mechanism": "Donate Inflation ExchangeRate & Rounding Error",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/Raft_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/Raft_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/Raft_exp.sol -vvv",
+    "reproduced": "~$3.2 M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-11-10",
+    "source_name": "Raft_fi",
+    "days_apart": 0
+   }
+  },
+  "2023-11-07-curve-finance-mev-bot": {
+   "mechanism": "Lack of access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/bot_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/bot_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/bot_exp.sol -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-11-07",
+    "source_name": "MEVbot",
+    "days_apart": 0
+   }
+  },
+  "2023-11-06-trustpad": {
+   "mechanism": "Lack of msg.sender address verification",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/TrustPad_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/TrustPad_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/TrustPad_exp.sol  -vvv",
+    "reproduced": "~$155K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-11-06",
+    "source_name": "TrustPad",
+    "days_apart": 0
+   }
+  },
+  "2023-11-06-thestandard-io": {
+   "mechanism": "Lack of slippage protection",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/TheStandard_io_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/TheStandard_io_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/TheStandard_io_exp.sol -vvv",
+    "reproduced": "~$290K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-11-06",
+    "source_name": "TheStandard_io",
+    "days_apart": 0
+   }
+  },
+  "2023-11-01-onyx-protocol": {
+   "mechanism": "Precission Loss Vulnerability",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-11/OnyxProtocol_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-11/OnyxProtocol_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-11/OnyxProtocol_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-11-01",
+    "source_name": "OnyxProtocol",
+    "days_apart": 0
+   }
+  },
+  "2023-10-31-unibot": {
+   "mechanism": "Arbitrary External Call",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/UniBot_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/UniBot_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/UniBot_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$83,944 USD$"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-10-31",
+    "source_name": "UniBotRouter",
+    "days_apart": 0
+   }
+  },
+  "2023-10-29-astrid-finance": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/Astrid_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/Astrid_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/Astrid_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$127ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-10-28",
+    "source_name": "AstridProtocol",
+    "days_apart": 1
+   }
+  },
+  "2023-10-23-maestro": {
+   "mechanism": "Arbitrary External Call",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/MaestroRouter2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/MaestroRouter2_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/MaestroRouter2_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$280ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-10-24",
+    "source_name": "MaestroRouter2",
+    "days_apart": 1
+   }
+  },
+  "2023-10-18-hope-lend": {
+   "mechanism": "Div Precision Loss",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/Hopelend_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/Hopelend_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/Hopelend_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$825K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-10-18",
+    "source_name": "Hopelend",
+    "days_apart": 0
+   }
+  },
+  "2023-10-18-micdao": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/MicDao_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/MicDao_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/MicDao_exp.sol -vvv",
+    "reproduced": "~$13K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-10-18",
+    "source_name": "MicDao",
+    "days_apart": 0
+   }
+  },
+  "2023-10-13-beluga": {
+   "mechanism": "Price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/BelugaDex_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/BelugaDex_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/BelugaDex_exp.sol -vvv",
+    "reproduced": "~$175K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-10-13",
+    "source_name": "BelugaDex",
+    "days_apart": 0
+   }
+  },
+  "2023-10-13-wiselending": {
+   "mechanism": "Donate Inflation ExchangeRate && Rounding Error",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/WiseLending_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/WiseLending_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/WiseLending_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$260K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-10-13",
+    "source_name": "WiseLending",
+    "days_apart": 0
+   }
+  },
+  "2023-10-13-platypus-finance": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-10/Platypus03_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-10/Platypus03_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-10/Platypus03_exp.sol -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-10-12",
+    "source_name": "Platypus",
+    "days_apart": 1
+   }
+  },
+  "2023-09-16-uniclynft": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-09/uniclyNFT_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-09/uniclyNFT_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-09/uniclyNFT_exp.sol -vvv",
+    "reproduced": "1 NFT"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-09-16",
+    "source_name": "uniclyNFT",
+    "days_apart": 0
+   }
+  },
+  "2023-09-05-floor-dao": {
+   "mechanism": "Rebasing logic issue",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-09/FloorDAO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-09/FloorDAO_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-09/FloorDAO_exp.sol -vvv",
+    "reproduced": "~$40ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-09-05",
+    "source_name": "FloorDAO",
+    "days_apart": 0
+   }
+  },
+  "2023-09-02-dappsocial": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-09/DAppSocial_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-09/DAppSocial_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-09/DAppSocial_exp.sol -vvv",
+    "reproduced": "~$16K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-09-02",
+    "source_name": "DAppSocial",
+    "days_apart": 0
+   }
+  },
+  "2023-08-29-eac": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/EAC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/EAC_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/EAC_exp.sol -vvv",
+    "reproduced": "~$29BNB"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-08-29",
+    "source_name": "EAC",
+    "days_apart": 0
+   }
+  },
+  "2023-08-27-balancer-v2": {
+   "mechanism": "Rounding Error && Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/Balancer_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/Balancer_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/Balancer_exp.sol -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-08-27",
+    "source_name": "Balancer",
+    "days_apart": 0
+   }
+  },
+  "2023-08-24-gss": {
+   "mechanism": "skim token balance",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/GSS_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/GSS_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/GSS_exp.sol -vvv",
+    "reproduced": "~$25K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-08-24",
+    "source_name": "GSS",
+    "days_apart": 0
+   }
+  },
+  "2023-08-18-exactly": {
+   "mechanism": "insufficient validation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/Exactly_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/Exactly_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/Exactly_exp.sol -vvv",
+    "reproduced": "~$7M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-08-18",
+    "source_name": "ExactlyProtocol",
+    "days_apart": 0
+   }
+  },
+  "2023-08-13-zunami-protocol": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/Zunami_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/Zunami_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/Zunami_exp.sol --evm-version 'shanghai' -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-08-14",
+    "source_name": "ZunamiProtocol",
+    "days_apart": 1
+   }
+  },
+  "2023-08-02-uwerx": {
+   "mechanism": "Fault logic",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/Uwerx_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/Uwerx_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/Uwerx_exp.sol -vvv",
+    "reproduced": "~$176ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-08-02",
+    "source_name": "Uwerx",
+    "days_apart": 0
+   }
+  },
+  "2023-08-01-neutra-finance": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/NeutraFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/NeutraFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/NeutraFinance_exp.sol -vvv",
+    "reproduced": "~$23ETH"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-08-01",
+    "source_name": "NeutraFinance",
+    "days_apart": 0
+   }
+  },
+  "2023-08-01-leetswap": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-08/Leetswap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-08/Leetswap_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-08/Leetswap_exp.sol -vvv",
+    "reproduced": "~$630K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-08-01",
+    "source_name": "LeetSwap",
+    "days_apart": 0
+   }
+  },
+  "2023-07-30-curve-dex": {
+   "mechanism": "Vyper Compiler Bug && Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Curve_exp01.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Curve_exp01.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Curve_exp01.sol -vvv",
+    "reproduced": "~ $41M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-07-30",
+    "source_name": "Curve",
+    "days_apart": 0
+   }
+  },
+  "2023-07-26-carson-defi": {
+   "mechanism": "Price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Carson_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Carson_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Carson_exp.sol -vvv",
+    "reproduced": "~$150K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-07-26",
+    "source_name": "Carson",
+    "days_apart": 0
+   }
+  },
+  "2023-07-24-palmswap": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Palmswap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Palmswap_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Palmswap_exp.sol -vvv",
+    "reproduced": "~$900K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-24",
+    "source_name": "Palmswap",
+    "days_apart": 0
+   }
+  },
+  "2023-07-20-utopia": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Utopia_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Utopia_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Utopia_exp.sol -vvv",
+    "reproduced": "~$119k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-20",
+    "source_name": "Utopia",
+    "days_apart": 0
+   }
+  },
+  "2023-07-20-ffist": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/FFIST_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/FFIST_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/FFIST_exp.sol -vvv",
+    "reproduced": "~$110k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-20",
+    "source_name": "FFIST",
+    "days_apart": 0
+   }
+  },
+  "2023-07-18-bno": {
+   "mechanism": "Invalid emergency withdraw mechanism",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/BNO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/BNO_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/BNO_exp.sol -vvv",
+    "reproduced": "~$505K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-18",
+    "source_name": "BNO",
+    "days_apart": 0
+   }
+  },
+  "2023-07-12-platypus-finance": {
+   "mechanism": "Bussiness Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Platypus02_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Platypus02_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Platypus02_exp.sol -vvv",
+    "reproduced": "~$51K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-12",
+    "source_name": "Platypus",
+    "days_apart": 0
+   }
+  },
+  "2023-07-11-libertify": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Libertify_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Libertify_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Libertify_exp.sol -vvv",
+    "reproduced": "~$452k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-11",
+    "source_name": "Libertify",
+    "days_apart": 0
+   }
+  },
+  "2023-07-10-arcadia-v1": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/ArcadiaFi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/ArcadiaFi_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/ArcadiaFi_exp.sol -vvv",
+    "reproduced": "~$400k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-07-10",
+    "source_name": "ArcadiaFi",
+    "days_apart": 0
+   }
+  },
+  "2023-07-08-civnft": {
+   "mechanism": "Lack of access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/CIVNFT_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/CIVNFT_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/CIVNFT_exp.sol -vvv",
+    "reproduced": "~$180k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-08",
+    "source_name": "CIVNFT",
+    "days_apart": 0
+   }
+  },
+  "2023-07-09-civfund": {
+   "mechanism": "Lack of access control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/Civfund_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/Civfund_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/Civfund_exp.sol -vvv",
+    "reproduced": "~$165k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-08",
+    "source_name": "Civfund",
+    "days_apart": 1
+   }
+  },
+  "2023-07-03-azukidao": {
+   "mechanism": "Invalid signature verification",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-07/AzukiDAO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-07/AzukiDAO_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-07/AzukiDAO_exp.sol -vvv",
+    "reproduced": "~$69k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-07-03",
+    "source_name": "AzukiDAO",
+    "days_apart": 0
+   }
+  },
+  "2023-06-30-biswap": {
+   "mechanism": "V3Migrator Exploit",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/Biswap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/Biswap_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/Biswap_exp.sol -vvv",
+    "reproduced": "~$72k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-30",
+    "source_name": "Biswap",
+    "days_apart": 0
+   }
+  },
+  "2023-06-27-themis-protocol": {
+   "mechanism": "Manipulation of prices using Flashloan",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/Themis_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/Themis_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/Themis_exp.sol -vvv",
+    "reproduced": "~$370k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-28",
+    "source_name": "Themis",
+    "days_apart": 1
+   }
+  },
+  "2023-06-23-shido": {
+   "mechanism": "Business Logic",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/SHIDO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/SHIDO_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/SHIDO_exp.sol -vvv",
+    "reproduced": "~997 WBNB"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-23",
+    "source_name": "SHIDO",
+    "days_apart": 0
+   }
+  },
+  "2023-06-19-ara-finance": {
+   "mechanism": "Incorrect handling of permissions",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/ARA_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/ARA_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/ARA_exp.sol -vvv",
+    "reproduced": "~$125k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-18",
+    "source_name": "ARA",
+    "days_apart": 1
+   }
+  },
+  "2023-06-17-pawnfi": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/Pawnfi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/Pawnfi_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/Pawnfi_exp.sol -vvv",
+    "reproduced": "~$820K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-17",
+    "source_name": "Pawnfi",
+    "days_apart": 0
+   }
+  },
+  "2023-06-17-midas-capital": {
+   "mechanism": "Precision Loss",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/MidasCapitalXYZ_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/MidasCapitalXYZ_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/MidasCapitalXYZ_exp.sol -vvv",
+    "reproduced": "~$600K"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-06-17",
+    "source_name": "MidasCapitalXYZ",
+    "days_apart": 0
+   }
+  },
+  "2023-06-15-cfc": {
+   "mechanism": "Uniswap Skim() token balance attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/CFC_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/CFC_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/CFC_exp.sol -vvv",
+    "reproduced": "~$16k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-15",
+    "source_name": "CFC",
+    "days_apart": 0
+   }
+  },
+  "2023-06-12-sturdy-v1": {
+   "mechanism": "Read-Only-Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/Sturdy_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/Sturdy_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/Sturdy_exp.sol -vvv",
+    "reproduced": "~$800k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-06-12",
+    "source_name": "Sturdy Finance",
+    "days_apart": 0
+   }
+  },
+  "2023-06-01-cellframe": {
+   "mechanism": "Calculation issues during liquidity migration",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-06/Cellframe_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-06/Cellframe_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-06/Cellframe_exp.sol -vvv",
+    "reproduced": "~$76k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-06-01",
+    "source_name": "Cellframenet",
+    "days_apart": 0
+   }
+  },
+  "2023-05-28-jimbos-protocol": {
+   "mechanism": "Protocol Specific Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-05/Jimbo_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-05/Jimbo_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-05/Jimbo_exp.sol -vvv",
+    "reproduced": "~$8M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-05-29",
+    "source_name": "Jimbo",
+    "days_apart": 1
+   }
+  },
+  "2023-05-06-melo": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-05/Melo_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-05/Melo_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-05/Melo_exp.sol -vvv",
+    "reproduced": "~$90k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-05-06",
+    "source_name": "Melo",
+    "days_apart": 0
+   }
+  },
+  "2023-05-01-level-perps": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-05/Level_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-05/Level_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-05/Level_exp.sol -vvv",
+    "reproduced": "~$1M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-05-02",
+    "source_name": "Level",
+    "days_apart": 1
+   }
+  },
+  "2023-04-28-0vix": {
+   "mechanism": "FlashLoan Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/0vix_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/0vix_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/0vix_exp.sol -vvv",
+    "reproduced": "~$2M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-28",
+    "source_name": "0vix",
+    "days_apart": 0
+   }
+  },
+  "2023-04-16-swapos-v2": {
+   "mechanism": "error k value Attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/Swapos_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/Swapos_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/Swapos_exp.sol -vvv",
+    "reproduced": "~$468k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-16",
+    "source_name": "Swapos V2",
+    "days_apart": 0
+   }
+  },
+  "2023-04-15-hundred-finance": {
+   "mechanism": "Donate Inflation ExchangeRate && Rounding Error",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/HundredFinance_2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/HundredFinance_2_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/HundredFinance_2_exp.sol -vvv",
+    "reproduced": "$7M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-04-15",
+    "source_name": "HundredFinance",
+    "days_apart": 0
+   }
+  },
+  "2023-04-13-yearn-finance": {
+   "mechanism": "Misconfiguration",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/YearnFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/YearnFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/YearnFinance_exp.sol -vvv",
+    "reproduced": "$11.6M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-04-13",
+    "source_name": "yearnFinance",
+    "days_apart": 0
+   }
+  },
+  "2023-04-12-metapoint": {
+   "mechanism": "Unrestricted Approval",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/MetaPoint_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/MetaPoint_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/MetaPoint_exp.sol -vvv",
+    "reproduced": "$820k(2500BNB)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-12",
+    "source_name": "MetaPoint",
+    "days_apart": 0
+   }
+  },
+  "2023-04-11-paribus": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/Paribus_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/Paribus_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/Paribus_exp.sol -vvv",
+    "reproduced": "$100k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-11",
+    "source_name": "Paribus",
+    "days_apart": 0
+   }
+  },
+  "2023-04-10-sushiswap": {
+   "mechanism": "Unchecked User Input",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/Sushi_Router_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/Sushi_Router_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/Sushi_Router_exp.sol -vvv",
+    "reproduced": ">$3.3M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-09",
+    "source_name": "SushiSwap",
+    "days_apart": 1
+   }
+  },
+  "2023-04-04-sentiment": {
+   "mechanism": "Read-Only-Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/Sentiment_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/Sentiment_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/Sentiment_exp.sol -vvv",
+    "reproduced": "$1M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2023-04-05",
+    "source_name": "Sentiment",
+    "days_apart": 1
+   }
+  },
+  "2023-04-02-allbridge-core": {
+   "mechanism": "FlashLoan price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-04/Allbridge_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-04/Allbridge_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-04/Allbridge_exp.sol -vvv",
+    "reproduced": "$550k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-04-02",
+    "source_name": "Allbridge",
+    "days_apart": 0
+   }
+  },
+  "2023-03-28-safemoon": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2023-03/safeMoon_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2023-03/safeMoon_exp.sol",
+    "command": "forge test --contracts ./src/test/2023-03/safeMoon_exp.sol -vvv",
+    "reproduced": "$180k"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2023-03-28",
+    "source_name": "SafeMoon Hack",
+    "days_apart": 0
+   }
+  },
+  "2024-12-27-bizness": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-12/Bizness_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-12/Bizness_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-12/Bizness_exp.sol -vvv",
+    "reproduced": "15.7k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-12-27",
+    "source_name": "Bizness",
+    "days_apart": 0
+   }
+  },
+  "2024-12-18-slurpycoin": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-12/SlurpyCoin_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-12/SlurpyCoin_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-12/SlurpyCoin_exp.sol -vvv",
+    "reproduced": "3k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-12-18",
+    "source_name": "SlurpyCoin",
+    "days_apart": 0
+   }
+  },
+  "2024-12-16-btc24h": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-12/BTC24H_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-12/BTC24H_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-12/BTC24H_exp.sol -vvv",
+    "reproduced": "~ $85.7K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-12-16",
+    "source_name": "BTC24H",
+    "days_apart": 0
+   }
+  },
+  "2024-12-14-jhy-token": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-12/JHY_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-12/JHY_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-12/JHY_exp.sol -vvv",
+    "reproduced": "11k BSC-USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-12-14",
+    "source_name": "JHY",
+    "days_apart": 0
+   }
+  },
+  "2024-12-10-labubu-token": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-12/LABUBU_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-12/LABUBU_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-12/LABUBU_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-12-10",
+    "source_name": "LABUBU Token",
+    "days_apart": 0
+   }
+  },
+  "2024-11-26-nftg": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/NFTG_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/NFTG_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/NFTG_exp.sol -vvv",
+    "reproduced": "10k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-26",
+    "source_name": "NFTG",
+    "days_apart": 0
+   }
+  },
+  "2024-11-24-proxy-b7e1": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/proxy_b7e1_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/proxy_b7e1_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/proxy_b7e1_exp.sol -vvv --via-ir",
+    "reproduced": "8.5k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-24",
+    "source_name": "Proxy_b7e1",
+    "days_apart": 0
+   }
+  },
+  "2024-11-23-ak1111": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/Ak1111_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/Ak1111_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/Ak1111_exp.sol -vvv",
+    "reproduced": "31.5K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-23",
+    "source_name": "Ak1111",
+    "days_apart": 0
+   }
+  },
+  "2024-11-21-matez": {
+   "mechanism": "Integer Truncation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/Matez_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/Matez_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/Matez_exp.sol -vvv",
+    "reproduced": "80k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-21",
+    "source_name": "Matez",
+    "days_apart": 0
+   }
+  },
+  "2024-11-20-mainnetsettler": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/MainnetSettler_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/MainnetSettler_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/MainnetSettler_exp.sol -vvv --evm-version cancun",
+    "reproduced": "$66K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-20",
+    "source_name": "MainnetSettler",
+    "days_apart": 0
+   }
+  },
+  "2024-11-17-mft": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/MFT_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/MFT_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/MFT_exp.sol -vvv",
+    "reproduced": "33.7k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-17",
+    "source_name": "MFT",
+    "days_apart": 0
+   }
+  },
+  "2024-11-14-veth": {
+   "mechanism": "Vulnerable Price Dependency",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/vETH_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/vETH_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/vETH_exp.sol -vvv",
+    "reproduced": "447k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-14",
+    "source_name": "vETH",
+    "days_apart": 0
+   }
+  },
+  "2024-11-11-deltaprime": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/DeltaPrime_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/DeltaPrime_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/DeltaPrime_exp.sol -vvv",
+    "reproduced": "$12.9 K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-11",
+    "source_name": "DeltaPrime",
+    "days_apart": 0
+   }
+  },
+  "2024-11-09-x319": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/X319_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/X319_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/X319_exp.sol -vvv",
+    "reproduced": "$12.9 K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-09",
+    "source_name": "X319",
+    "days_apart": 0
+   }
+  },
+  "2024-11-07-chisale": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/ChiSale_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/ChiSale_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/ChiSale_exp.sol -vvv",
+    "reproduced": "$16.3 K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-07",
+    "source_name": "ChiSale",
+    "days_apart": 0
+   }
+  },
+  "2024-11-07-cow": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/CoW_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/CoW_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/CoW_exp.sol -vvv",
+    "reproduced": "$59 K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-07",
+    "source_name": "CoW",
+    "days_apart": 0
+   }
+  },
+  "2024-11-07-vrug": {
+   "mechanism": "Rug pull",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/VRug_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/VRug_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/VRug_exp.sol -vvv",
+    "reproduced": "$8.4 K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-07",
+    "source_name": "VRug",
+    "days_apart": 0
+   }
+  },
+  "2024-11-05-rpp": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-11/RPP_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-11/RPP_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-11/RPP_exp.sol -vvv",
+    "reproduced": "~ $14.1K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-11-05",
+    "source_name": "RPP",
+    "days_apart": 0
+   }
+  },
+  "2024-10-29-bubai": {
+   "mechanism": "Rug pull",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-10/BUBAI_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-10/BUBAI_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-10/BUBAI_exp.sol -vvv",
+    "reproduced": "$131K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-10-29",
+    "source_name": "BUBAI",
+    "days_apart": 0
+   }
+  },
+  "2024-10-22-erc20transfer": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-10/Erc20transfer_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-10/Erc20transfer_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-10/Erc20transfer_exp.sol -vvv",
+    "reproduced": "$14,773.35"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-10-22",
+    "source_name": "Erc20transfer",
+    "days_apart": 0
+   }
+  },
+  "2024-10-22-vista-finance": {
+   "mechanism": "flashmint receive error",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-10/VISTA_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-10/VISTA_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-10/VISTA_exp.sol -vvv --evm-version cancun",
+    "reproduced": "$28,000"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-10-22",
+    "source_name": "Vista",
+    "days_apart": 0
+   }
+  },
+  "2024-10-14-leadblock-s-morpho-blue-market": {
+   "mechanism": "Overpriced Asset in Oracle",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-10/MorphoBlue_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-10/MorphoBlue_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-10/MorphoBlue_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "$230,000"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-10-13",
+    "source_name": "MorphoBlue",
+    "days_apart": 1
+   }
+  },
+  "2024-10-01-firetoken": {
+   "mechanism": "Pair Manipulation With Transfer Function",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-10/FireToken_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-10/FireToken_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-10/FireToken_exp.sol -vvv",
+    "reproduced": "8.45 ETH (~$20K USD)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-10-01",
+    "source_name": "FireToken",
+    "days_apart": 0
+   }
+  },
+  "2024-09-26-onyx-v2": {
+   "mechanism": "Fake Market",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-09-26",
+    "source_name": "OnyxDAO",
+    "days_apart": 0
+   }
+  },
+  "2024-09-23-bankroll-network": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-09-23",
+    "source_name": "Bankroll_Network",
+    "days_apart": 0
+   }
+  },
+  "2024-09-20-doggo": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-09/DOGGO_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-09/DOGGO_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-09/DOGGO_exp.sol -vvv",
+    "reproduced": "7K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-09-20",
+    "source_name": "DOGGO",
+    "days_apart": 0
+   }
+  },
+  "2024-09-16-wxeta": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-09/WXETA_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-09/WXETA_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-09/WXETA_exp.sol -vvv",
+    "reproduced": "110K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-09-15",
+    "source_name": "WXETA",
+    "days_apart": 1
+   }
+  },
+  "2024-09-13-otsea": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-09-13",
+    "source_name": "OTSeaStaking",
+    "days_apart": 0
+   }
+  },
+  "2024-09-10-caterpillar-coin": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-09-10",
+    "source_name": "Caterpillar_Coin_CUT",
+    "days_apart": 0
+   }
+  },
+  "2024-09-03-penpie": {
+   "mechanism": "Reentrancy and Reward Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-09-03",
+    "source_name": "Penpiexyz_io",
+    "days_apart": 0
+   }
+  },
+  "2024-09-02-pythia": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-09/Pythia_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-09/Pythia_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-09/Pythia_exp.sol -vvv",
+    "reproduced": "21 ETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-09-02",
+    "source_name": "Pythia",
+    "days_apart": 0
+   }
+  },
+  "2024-08-28-aave": {
+   "mechanism": "Arbitrary Call Error",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-08-28",
+    "source_name": "AAVE",
+    "days_apart": 0
+   }
+  },
+  "2024-08-16-zenterest": {
+   "mechanism": "Price Out Of Date",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-08-16",
+    "source_name": "Zenterest",
+    "days_apart": 0
+   }
+  },
+  "2024-08-12-ivest": {
+   "mechanism": "Business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-08-12",
+    "source_name": "iVest",
+    "days_apart": 0
+   }
+  },
+  "2024-08-01-convergence": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-08-01",
+    "source_name": "Convergence",
+    "days_apart": 0
+   }
+  },
+  "2024-07-24-spectra-finance": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-07-24",
+    "source_name": "Spectra_finance",
+    "days_apart": 0
+   }
+  },
+  "2024-07-16-lifi-finance": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-07-16",
+    "source_name": "Lifiprotocol",
+    "days_apart": 0
+   }
+  },
+  "2024-07-15-minterest": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-07-14",
+    "source_name": "Minterest",
+    "days_apart": 1
+   }
+  },
+  "2024-07-12-dough-finance": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-07-12",
+    "source_name": "DoughFina",
+    "days_apart": 0
+   }
+  },
+  "2024-07-05-defiplaza": {
+   "mechanism": "loss of precision",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-07-05",
+    "source_name": "DeFiPlaza",
+    "days_apart": 0
+   }
+  },
+  "2024-06-27-apemaga": {
+   "mechanism": "business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-06-27",
+    "source_name": "APEMAGA",
+    "days_apart": 0
+   }
+  },
+  "2024-06-16-wifcoin": {
+   "mechanism": "business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-06-16",
+    "source_name": "WIFCOIN_ETH",
+    "days_apart": 0
+   }
+  },
+  "2024-06-10-jokinthebox": {
+   "mechanism": "business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-06-11",
+    "source_name": "JokInTheBox",
+    "days_apart": 1
+   }
+  },
+  "2024-06-10-uwu-lend": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2024-06/UwuLend_First_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2024-06/UwuLend_First_exp.sol",
+    "command": "forge test --contracts ./src/test/2024-06/UwuLend_First_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "19.3M"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-06-10",
+    "source_name": "UwULend",
+    "days_apart": 0
+   }
+  },
+  "2024-06-07-steamswap": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-06-06",
+    "source_name": "SteamSwap",
+    "days_apart": 1
+   }
+  },
+  "2024-06-02-velocore-v2": {
+   "mechanism": "lack-of-access-control",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-06-01",
+    "source_name": "VeloCore",
+    "days_apart": 1
+   }
+  },
+  "2024-05-31-mixedswaprouter": {
+   "mechanism": "Arbitrary Call",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-31",
+    "source_name": "MixedSwapRouter",
+    "days_apart": 0
+   }
+  },
+  "2024-05-29-scroll-token": {
+   "mechanism": "Integer Underflow",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-29",
+    "source_name": "SCROLL",
+    "days_apart": 0
+   }
+  },
+  "2024-05-29-metadragon": {
+   "mechanism": "Lack of Access Control",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-29",
+    "source_name": "MetaDragon",
+    "days_apart": 0
+   }
+  },
+  "2024-05-28-orion-protocol": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-05-28",
+    "source_name": "Tradeonorion",
+    "days_apart": 0
+   }
+  },
+  "2024-05-28-excommunity": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-28",
+    "source_name": "EXcommunity",
+    "days_apart": 0
+   }
+  },
+  "2024-05-26-normie": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-26",
+    "source_name": "NORMIE",
+    "days_apart": 0
+   }
+  },
+  "2024-05-15-sonne-finance": {
+   "mechanism": "Precision loss",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-14",
+    "source_name": "Sonne Finance",
+    "days_apart": 1
+   }
+  },
+  "2024-05-14-predy-finance": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-05-14",
+    "source_name": "PredyFinance",
+    "days_apart": 0
+   }
+  },
+  "2024-05-10-tsuru": {
+   "mechanism": "Insufficient Validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-10",
+    "source_name": "TSURU",
+    "days_apart": 0
+   }
+  },
+  "2024-05-08-gpu": {
+   "mechanism": "self transfer",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-08",
+    "source_name": "GPU",
+    "days_apart": 0
+   }
+  },
+  "2024-05-07-saturn": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-05-07",
+    "source_name": "SATURN",
+    "days_apart": 0
+   }
+  },
+  "2024-04-30-yield-protocol": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-30",
+    "source_name": "Yield",
+    "days_apart": 0
+   }
+  },
+  "2024-04-30-pike-v1": {
+   "mechanism": "Uninitialized Proxy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-04-30",
+    "source_name": "PikeFinance",
+    "days_apart": 0
+   }
+  },
+  "2024-04-27-bnbx": {
+   "mechanism": "precission loss",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-27",
+    "source_name": "BNBX",
+    "days_apart": 0
+   }
+  },
+  "2024-04-24-xbridge": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-24",
+    "source_name": "XBridge",
+    "days_apart": 0
+   }
+  },
+  "2024-04-24-yiedl": {
+   "mechanism": "Input Validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-24",
+    "source_name": "YIEDL",
+    "days_apart": 0
+   }
+  },
+  "2024-04-22-z123": {
+   "mechanism": "price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-22",
+    "source_name": "Z123",
+    "days_apart": 0
+   }
+  },
+  "2024-04-20-rico": {
+   "mechanism": "Arbitrary Call",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-20",
+    "source_name": "Rico",
+    "days_apart": 0
+   }
+  },
+  "2024-04-19-hedgey": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-04-19",
+    "source_name": "HedgeyFinance",
+    "days_apart": 0
+   }
+  },
+  "2024-04-15-chainge-finance": {
+   "mechanism": "Arbitrary External Call",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-04-15",
+    "source_name": "ChaingeFinance",
+    "days_apart": 0
+   }
+  },
+  "2024-04-12-sumer-money": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-12",
+    "source_name": "SumerMoney",
+    "days_apart": 0
+   }
+  },
+  "2024-04-08-squid": {
+   "mechanism": "sandwich attack",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-08",
+    "source_name": "SQUID",
+    "days_apart": 0
+   }
+  },
+  "2024-04-01-openleverage": {
+   "mechanism": "business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-04-01",
+    "source_name": "OpenLeverage",
+    "days_apart": 0
+   }
+  },
+  "2024-03-29-ethfin": {
+   "mechanism": "lack of access control",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-29",
+    "source_name": "ETHFIN",
+    "days_apart": 0
+   }
+  },
+  "2024-03-29-lava": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-03-28",
+    "source_name": "LavaLending",
+    "days_apart": 1
+   }
+  },
+  "2024-03-25-zongzifa": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-03-25",
+    "source_name": "ZongZi",
+    "days_apart": 0
+   }
+  },
+  "2024-03-20-paraswap": {
+   "mechanism": "Incorrect Access Control",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-20",
+    "source_name": "Paraswap",
+    "days_apart": 0
+   }
+  },
+  "2024-03-12-bbt": {
+   "mechanism": "business logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-12",
+    "source_name": "BBT",
+    "days_apart": 0
+   }
+  },
+  "2024-03-09-juice-finance": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-09",
+    "source_name": "Juice",
+    "days_apart": 0
+   }
+  },
+  "2024-03-08-unizen": {
+   "mechanism": "unverified external call",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-03-09",
+    "source_name": "UnizenIO",
+    "days_apart": 1
+   }
+  },
+  "2024-03-07-ght": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-07",
+    "source_name": "GHT",
+    "days_apart": 0
+   }
+  },
+  "2024-03-06-alp": {
+   "mechanism": "Public internal function",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-06",
+    "source_name": "ALP",
+    "days_apart": 0
+   }
+  },
+  "2024-03-05-woofi-swap": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-03-05",
+    "source_name": "Woofi",
+    "days_apart": 0
+   }
+  },
+  "2024-02-28-seneca": {
+   "mechanism": "Arbitrary External Call Vulnerability",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-28",
+    "source_name": "Seneca",
+    "days_apart": 0
+   }
+  },
+  "2024-02-28-smoofs": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-02-28",
+    "source_name": "SMOOFSStaking",
+    "days_apart": 0
+   }
+  },
+  "2024-02-24-zoomercoin": {
+   "mechanism": "Business Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-02-23",
+    "source_name": "Zoomer",
+    "days_apart": 1
+   }
+  },
+  "2024-02-24-blueberry": {
+   "mechanism": "logic flaw",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-02-23",
+    "source_name": "BlueberryProtocol",
+    "days_apart": 1
+   }
+  },
+  "2024-02-22-swarm-markets": {
+   "mechanism": "lack of validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-22",
+    "source_name": "SwarmMarkets",
+    "days_apart": 0
+   }
+  },
+  "2024-02-21-deeznutz-404": {
+   "mechanism": "lack of validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-21",
+    "source_name": "DeezNutz 404",
+    "days_apart": 0
+   }
+  },
+  "2024-02-21-gain": {
+   "mechanism": "bad function implementation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-21",
+    "source_name": "GAIN",
+    "days_apart": 0
+   }
+  },
+  "2024-02-19-ruggedart": {
+   "mechanism": "reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-19",
+    "source_name": "RuggedArt",
+    "days_apart": 0
+   }
+  },
+  "2024-02-16-particletrade": {
+   "mechanism": "lack of validation data",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-16",
+    "source_name": "ParticleTrade",
+    "days_apart": 0
+   }
+  },
+  "2024-02-15-dualpools": {
+   "mechanism": "precision truncation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-15",
+    "source_name": "DualPools",
+    "days_apart": 0
+   }
+  },
+  "2024-02-15-miner": {
+   "mechanism": "lack of validation dst address",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-02-15",
+    "source_name": "Miner",
+    "days_apart": 0
+   }
+  },
+  "2024-02-01-affine-protocol": {
+   "mechanism": "lack of validation userData",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-02-01",
+    "source_name": "AffineDeFi",
+    "days_apart": 0
+   }
+  },
+  "2024-01-29-barley-finance": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-01-28",
+    "source_name": "BarleyFinance",
+    "days_apart": 1
+   }
+  },
+  "2024-01-12-wise-lending-v1": {
+   "mechanism": "Bad HealthFactor Check",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-01-12",
+    "source_name": "WiseLending",
+    "days_apart": 0
+   }
+  },
+  "2024-01-04-gamma": {
+   "mechanism": "Price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name",
+    "source_date": "2024-01-04",
+    "source_name": "Gamma",
+    "days_apart": 0
+   }
+  },
+  "2024-01-02-radiant-v2": {
+   "mechanism": "Loss of Precision",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-01-02",
+    "source_name": "RadiantCapital",
+    "days_apart": 0
+   }
+  },
+  "2023-12-31-orbit-bridge": {
+   "mechanism": "Incorrect input validation",
+   "source": "DeFiHackLabs",
+   "poc": null,
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2024-01-01",
+    "source_name": "OrbitChain",
+    "days_apart": 1
+   }
+  },
+  "2025-11-10-drlvaultv3": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-11/DRLVaultV3_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-11/DRLVaultV3_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-11/DRLVaultV3_exp.sol -vvv",
+    "reproduced": "100k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-11-10",
+    "source_name": "DRLVaultV3",
+    "days_apart": 0
+   }
+  },
+  "2025-11-04-moonwell-lending": {
+   "mechanism": "Faulty Oracle",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-11/Moonwell_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-11/Moonwell_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-11/Moonwell_exp.sol -vvv",
+    "reproduced": "1M USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-11-04",
+    "source_name": "Moonwell",
+    "days_apart": 0
+   }
+  },
+  "2025-11-03-balancer-v2": {
+   "mechanism": "Precision Loss",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-11/BalancerV2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-11/BalancerV2_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-11/BalancerV2_exp.sol --via-ir -vvv",
+    "reproduced": "120M USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-11-03",
+    "source_name": "BalancerV2",
+    "days_apart": 0
+   }
+  },
+  "2025-10-20-sharwa-finance": {
+   "mechanism": "Post Insolvency Check",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-10/SharwaFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-10/SharwaFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-10/SharwaFinance_exp.sol -vvv",
+    "reproduced": "146,000 USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-10-20",
+    "source_name": "SharwaFinance",
+    "days_apart": 0
+   }
+  },
+  "2025-10-07-tokenholder": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-10/TokenHolder_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-10/TokenHolder_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-10/TokenHolder_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "20 WBNB"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-10-07",
+    "source_name": "TokenHolder",
+    "days_apart": 0
+   }
+  },
+  "2025-10-04-abracadabra-spell": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-10/Abracadabra_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-10/Abracadabra_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-10/Abracadabra_exp.sol -vv",
+    "reproduced": "1.8M USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-10-04",
+    "source_name": "Abracadabra",
+    "days_apart": 0
+   }
+  },
+  "2025-09-12-kame-aggregator": {
+   "mechanism": "Arbitary External Call",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-09/Kame_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-09/Kame_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-09/Kame_exp.sol -vvv",
+    "reproduced": "18167.8 USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-09-13",
+    "source_name": "Kame",
+    "days_apart": 1
+   }
+  },
+  "2025-08-13-coinbase": {
+   "mechanism": "Misconfiguration",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-08/coinbase_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-08/coinbase_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-08/coinbase_exp.sol -vvv --evm-version cancun",
+    "reproduced": "300k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-08-13",
+    "source_name": "coinbase",
+    "days_apart": 0
+   }
+  },
+  "2025-08-13-grizzifi": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-08/Grizzifi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-08/Grizzifi_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-08/Grizzifi_exp.sol -vvv",
+    "reproduced": "61k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-08-13",
+    "source_name": "Grizzifi",
+    "days_apart": 0
+   }
+  },
+  "2025-07-28-superrare": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-07/SuperRare_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-07/SuperRare_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-07/SuperRare_exp.sol -vvv",
+    "reproduced": "730K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-07-28",
+    "source_name": "SuperRare",
+    "days_apart": 0
+   }
+  },
+  "2025-07-20-stepp2p": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-07/Stepp2p_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-07/Stepp2p_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-07/Stepp2p_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "43k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-07-20",
+    "source_name": "Stepp2p",
+    "days_apart": 0
+   }
+  },
+  "2025-07-05-rant": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-07/RANTToken_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-07/RANTToken_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-07/RANTToken_exp.sol -vvv",
+    "reproduced": "~ $204K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-07-05",
+    "source_name": "RANT",
+    "days_apart": 0
+   }
+  },
+  "2025-06-25-resupply": {
+   "mechanism": "Share price manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-06/ResupplyFi_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-06/ResupplyFi_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-06/ResupplyFi_exp.sol -vvv",
+    "reproduced": "9.6M USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-06-26",
+    "source_name": "ResupplyFi",
+    "days_apart": 1
+   }
+  },
+  "2025-06-25-silo-finance": {
+   "mechanism": "Arbitrary Call",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-06/SiloFinance_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-06/SiloFinance_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-06/SiloFinance_exp.sol -vvv",
+    "reproduced": "500,000+ USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-06-25",
+    "source_name": "SiloFinance",
+    "days_apart": 0
+   }
+  },
+  "2025-06-19-bankroll-network": {
+   "mechanism": "Incorrect dividends calculation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-06/BankrollStack_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-06/BankrollStack_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-06/BankrollStack_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "5k USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-06-19",
+    "source_name": "BankrollStack",
+    "days_apart": 0
+   }
+  },
+  "2025-06-17-meta-pool": {
+   "mechanism": "Infinite Mint via unvalidated ERC4626 mint",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-06/MetaPool_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-06/MetaPool_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-06/MetaPool_exp.sol -vvv",
+    "reproduced": "25k USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-06-17",
+    "source_name": "MetaPool",
+    "days_apart": 0
+   }
+  },
+  "2025-06-15-fixedtokenbswap": {
+   "mechanism": "Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-06/FixedTokenBSwap_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-06/FixedTokenBSwap_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-06/FixedTokenBSwap_exp.sol -vvv",
+    "reproduced": "2.2K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-06-15",
+    "source_name": "FixedTokenBSwap",
+    "days_apart": 0
+   }
+  },
+  "2025-05-28-cork-v1": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-05/Corkprotocol_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-05/Corkprotocol_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-05/Corkprotocol_exp.sol -vvv --via-ir --evm-version cancun",
+    "reproduced": "12M USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-05-28",
+    "source_name": "Corkprotocol",
+    "days_apart": 0
+   }
+  },
+  "2025-05-20-irys-ai": {
+   "mechanism": "rug pull",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-05/IRYSAI_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-05/IRYSAI_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-05/IRYSAI_exp.sol -vvv",
+    "reproduced": "69.6K USD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-05-20",
+    "source_name": "IRYSAI",
+    "days_apart": 0
+   }
+  },
+  "2025-04-27-aventa": {
+   "mechanism": "Claim Accounting",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-04/AventaRewardClaim_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-04/AventaRewardClaim_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-04/AventaRewardClaim_exp.sol -vvv --evm-version cancun",
+    "reproduced": "16,019,528 AVENTA"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-04-27",
+    "source_name": "AventaRewardClaim",
+    "days_apart": 0
+   }
+  },
+  "2025-04-26-impermax-v3": {
+   "mechanism": "FlashLoan Price Oracle Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-04/ImpermaxV3_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-04/ImpermaxV3_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-04/ImpermaxV3_exp.sol -vvv",
+    "reproduced": "62,628.66 USD"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-04-26",
+    "source_name": "ImpermaxV3",
+    "days_apart": 0
+   }
+  },
+  "2025-04-04-airwa": {
+   "mechanism": "Access Control",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-04/AIRWA_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-04/AIRWA_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-04/AIRWA_exp.sol -vvv",
+    "reproduced": "$33.6K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-04-04",
+    "source_name": "AIRWA",
+    "days_apart": 0
+   }
+  },
+  "2025-03-28-alkimiya": {
+   "mechanism": "unsafecast",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-03/Alkimiya_io_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-03/Alkimiya_io_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-03/Alkimiya_io_exp.sol -vvv",
+    "reproduced": "~ 95.5 K (1.14015390 WBTC)"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-03-28",
+    "source_name": "Alkimiya_IO",
+    "days_apart": 0
+   }
+  },
+  "2025-03-20-bbxtoken": {
+   "mechanism": "Price Manipulation",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-03/BBXToken_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-03/BBXToken_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-03/BBXToken_exp.sol -vvv",
+    "reproduced": "11902 BUSD"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-03-20",
+    "source_name": "BBXToken",
+    "days_apart": 0
+   }
+  },
+  "2025-03-07-1inch-swap": {
+   "mechanism": "Arbitrary Yul Calldata",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-03/OneInchFusionV1SettlementHack.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-03/OneInchFusionV1SettlementHack.sol",
+    "command": "forge test --contracts ./src/test/2025-03/OneInchFusionV1SettlementHack.sol -vvv",
+    "reproduced": "4.5M"
+   },
+   "matched": {
+    "on": "date+name-contains",
+    "source_date": "2025-03-05",
+    "source_name": "1inch FusionV1 Settlement",
+    "days_apart": 2
+   }
+  },
+  "2025-02-22-unverified-35bc": {
+   "mechanism": "Reentrancy",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-02/unverified_35bc_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-02/unverified_35bc_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-02/unverified_35bc_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-02-22",
+    "source_name": "Unverified_35bc",
+    "days_apart": 0
+   }
+  },
+  "2025-02-21-stepheronfts": {
+   "mechanism": "Reentrancy On Sell NFT",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-02/StepHeroNFTs_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-02/StepHeroNFTs_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-02/StepHeroNFTs_exp.sol -vvv",
+    "reproduced": null
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-02-21",
+    "source_name": "StepHeroNFTs",
+    "days_apart": 0
+   }
+  },
+  "2025-02-21-bybit": {
+   "mechanism": "Phishing attack",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-02/Bybit_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-02/Bybit_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-02/Bybit_exp.sol -vvv",
+    "reproduced": "1.5B"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-02-21",
+    "source_name": "Bybit",
+    "days_apart": 0
+   }
+  },
+  "2025-02-11-four-meme": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-02/FourMeme_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-02/FourMeme_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-02/FourMeme_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "~186k"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-02-11",
+    "source_name": "FourMeme",
+    "days_apart": 0
+   }
+  },
+  "2025-01-13-mosca2": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-01/Mosca2_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-01/Mosca2_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-01/Mosca2_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "37.6K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-01-13",
+    "source_name": "Mosca2",
+    "days_apart": 0
+   }
+  },
+  "2025-01-12-unilend-v2": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-01/Unilend_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-01/Unilend_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-01/Unilend_exp.sol -vvv",
+    "reproduced": "60 stETH"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-01-12",
+    "source_name": "Unilend",
+    "days_apart": 0
+   }
+  },
+  "2025-01-06-mosca": {
+   "mechanism": "Logic Flaw",
+   "source": "DeFiHackLabs",
+   "poc": {
+    "path": "src/test/2025-01/Mosca_exp.sol",
+    "url": "https://github.com/SunWeb3Sec/DeFiHackLabs/blob/main/src/test/2025-01/Mosca_exp.sol",
+    "command": "forge test --contracts ./src/test/2025-01/Mosca_exp.sol -vvv --evm-version shanghai",
+    "reproduced": "19K"
+   },
+   "matched": {
+    "on": "date+name",
+    "source_date": "2025-01-06",
+    "source_name": "Mosca",
+    "days_apart": 0
+   }
+  }
+ }
+}

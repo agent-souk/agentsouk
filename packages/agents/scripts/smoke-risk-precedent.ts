@@ -66,11 +66,11 @@ console.log(`\nscope:   ${s.incidents} incidents (${s.share_of_corpus_pct}% of t
 console.log(`         median ${usd(s.loss.median_usd)}, p90 ${usd(s.loss.p90_usd)}, max ${usd(s.loss.max_usd)}, total ${usd(s.loss.total_usd)}, recovered ${usd(o.base_rates.returned_usd)}`)
 if (o.base_rates.narrowed) console.log(`narrowed: ${o.base_rates.narrowed.incidents} incidents (${o.base_rates.narrowed.definition}), median ${usd(o.base_rates.narrowed.loss.median_usd)}, max ${usd(o.base_rates.narrowed.loss.max_usd)}`)
 console.log('\nper mechanism - the figures the findings are written from:')
-for (const x of o.base_rates.by_mechanism) console.log(`  ${x.value.slice(0, 30).padEnd(30)} ${x.kind.padEnd(14)} ${String(x.incidents).padStart(4)} inc (${String(x.share_of_corpus_pct).padStart(4)}%)  median ${usd(x.loss.median_usd).padStart(8)}  max ${usd(x.loss.max_usd).padStart(8)}  yours ${String(x.narrowed_incidents).padStart(3)}  ${String(x.recent_12m).padStart(3)}/${String(x.previous_12m).padStart(3)} = ${String(x.change_pct).padStart(5)}% (excess ${x.excess_pct}%)`)
+for (const x of o.base_rates.by_mechanism) console.log(`  ${x.value.slice(0, 30).padEnd(30)} ${x.kind.padEnd(14)} ${String(x.incidents).padStart(4)} inc (${String(x.share_of_corpus_pct).padStart(4)}%)  median ${usd(x.loss.median_usd).padStart(8)}  max ${usd(x.loss.max_usd).padStart(8)}  yours ${String(x.narrowed_incidents).padStart(3)}  repro ${String(x.with_reproduction).padStart(3)}  ${String(x.recent_12m).padStart(3)}/${String(x.previous_12m).padStart(3)} = ${String(x.change_pct).padStart(5)}%`)
 const t = o.base_rates.trend
 console.log(`trend:   ${t.recent.incidents} in ${t.recent.from}..${t.recent.to} against ${t.previous.incidents} before = ${t.change_pct}%, corpus ${t.corpus_change_pct}%, excess ${t.excess_pct}%`)
 console.log(`\nprecedents, closest ${o.precedents.closest.length}:`)
-for (const p of o.precedents.closest) console.log(`  ${String(p.relevance).padStart(2)} ${p.date} ${p.protocol.slice(0, 26).padEnd(26)} ${usd(p.amount_usd).padStart(8)}  ${(p.technique ?? '-').slice(0, 30)}`)
+for (const p of o.precedents.closest) console.log(`  ${String(p.relevance).padStart(2)} ${p.date} ${p.protocol.slice(0, 22).padEnd(22)} ${usd(p.amount_usd).padStart(8)}  ${(p.technique ?? '-').slice(0, 26).padEnd(26)} ${p.reference ? (p.reference.poc ? 'RUNNABLE: ' : 'mech: ') + p.reference.mechanism.slice(0, 64) : ''}`)
 console.log(`precedents, largest ${o.precedents.largest.length}:`)
 for (const p of o.precedents.largest) console.log(`  ${String(p.relevance).padStart(2)} ${p.date} ${p.protocol.slice(0, 26).padEnd(26)} ${usd(p.amount_usd).padStart(8)}  ${(p.technique ?? '-').slice(0, 30)}`)
 console.log(`\nfindings ${o.findings.length}:`)
