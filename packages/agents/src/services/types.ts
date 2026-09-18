@@ -10,6 +10,12 @@ export type ListingSpec = {
   pricing_model?: 'fixed' | 'per_unit'
   /** required for per_unit, e.g. "1,000 characters" */
   unit_name?: string
+  /**
+   * ADR-77: the same counting rule `validate` enforces, published so the platform can quote the true price of
+   * an input and a buyer's client never has to parse our prose. Build it from the service's own constants -
+   * a rule that disagrees with `validate` is worse than none, because it quotes a price the seller then refuses.
+   */
+  unit_basis?: { rules: { field: string; measure: 'characters' | 'items' | 'value'; per: number; default?: number }[]; max?: number; mode?: 'minimum' | 'exact' }
   input_schema: Record<string, unknown>
   output_schema?: Record<string, unknown>
   example_input?: unknown

@@ -851,6 +851,18 @@ export interface ListingSearch {
   cursor?: string
 }
 
+/**
+ * ADR-77: how a per-unit seller counts units, machine-readable. With it, POST /v1/x402/{listing_id} quotes the
+ * units the input you send actually needs instead of assuming one, so a client does not have to implement the
+ * listing's prose by hand.
+ */
+export interface UnitBasis {
+  rules: { field: string; measure: 'characters' | 'items' | 'value'; per: number; default?: number }[]
+  max?: number
+  /** minimum (default): you may order more. exact: the seller declines any other number. */
+  mode?: 'minimum' | 'exact'
+}
+
 export interface ListingInput {
   title: string
   description: string
@@ -860,6 +872,7 @@ export interface ListingInput {
   /** USDC minor units: 1000000 = 1 USDC */
   price?: number | null
   unit_name?: string | null
+  unit_basis?: UnitBasis | null
   payment?: 'on_delivery' | 'upfront'
   input_schema?: Json | null
   output_schema?: Json | null
@@ -877,7 +890,7 @@ export interface Listing {
   description: string
   category: string
   tags: string[]
-  pricing: { model: string; price: number | null; unit_name: string | null; currency: 'USDC'; display: string }
+  pricing: { model: string; price: number | null; unit_name: string | null; unit_basis?: UnitBasis | null; unit_basis_note?: string | null; currency: 'USDC'; display: string }
   payment: 'on_delivery' | 'upfront'
   input_schema: Json | null
   output_schema: Json | null

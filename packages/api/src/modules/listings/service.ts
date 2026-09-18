@@ -12,6 +12,7 @@ import { relevanceScore, searchTermGroups, searchTerms } from '../../lib/search.
 import { publishFeed } from '../../events/bus.js'
 import { assertUpfrontAllowed, assertWalletAddress } from '../agents/service.js'
 import { isCompletedJob, isSellerFailure } from '../jobs/outcomes.js'
+import { UnitBasisSchema, type UnitBasis } from './units.js'
 import type { Agent } from '../../middleware/auth.js'
 
 export type Listing = typeof listings.$inferSelect
@@ -70,6 +71,7 @@ export type CreateListingInput = {
   pricing_model: PricingModel
   price?: number | null
   unit_name?: string | null
+  unit_basis?: UnitBasis | null
   payment?: PaymentTiming
   input_schema?: Record<string, unknown> | null
   output_schema?: Record<string, unknown> | null
@@ -100,6 +102,27 @@ function validatePricing(model: PricingModel, price: number | null | undefined, 
     return { price, unitName: unitName.trim().toLowerCase().slice(0, 32) }
   }
   return { price, unitName: null }
+}
+
+/**
+ * ADR-77: the unit rule, checked as strictly as the price it decides. Only per-unit listings may carry one, and
+ * a rule that measures a field the published input_schema does not have would never fire - which is worse than
+ * no rule at all, because the listing would claim a machine-readable price it does not actually apply.
+ */
+function validateUnitBasis(model: PricingModel, basis: UnitBasis | null | undefined, inputSchema: Record<string, unknown> | null | undefined): UnitBasis | null {
+  if (basis === undefined || basis === null) return null
+  if (model !== 'per_unit') throw errors.validation('unit_basis describes how units are counted, so it only applies to pricing_model "per_unit".', 'unit_basis', 'Remove unit_basis, or price the listing per_unit.')
+  const parsed = UnitBasisSchema.safeParse(basis)
+  if (!parsed.success) throw errors.validation(`unit_basis is not valid: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`, 'unit_basis')
+  const props = isSchemaObject(inputSchema) ? (inputSchema as { properties?: Record<string, unknown> }).properties : undefined
+  if (props && typeof props === 'object') {
+    for (const rule of parsed.data.rules) {
+      if (!(rule.field in props)) {
+        throw errors.validation(`unit_basis measures "${rule.field}", which input_schema does not describe.`, 'unit_basis', `A rule for a field buyers cannot send never applies. Known fields: ${Object.keys(props).join(', ') || '(none)'}.`)
+      }
+    }
+  }
+  return parsed.data
 }
 
 /** Free fixed/per-unit listings can be sold without a wallet; everything else gets paid, so a wallet is needed. */
@@ -157,6 +180,7 @@ async function createListingLocked(env: Env, seller: Agent, input: CreateListing
     pricingModel: input.pricing_model,
     price,
     unitName,
+    unitBasis: validateUnitBasis(input.pricing_model, input.unit_basis, input.input_schema),
     payment,
     inputSchema: input.input_schema ?? null,
     outputSchema: input.output_schema ?? null,
@@ -196,6 +220,12 @@ async function updateListingLocked(env: Env, seller: Agent, id: string, patch: U
     set.pricingModel = model
     set.price = v.price
     set.unitName = v.unitName
+    // a listing that stops being per-unit keeps no rule for counting units
+    if (model !== 'per_unit') set.unitBasis = null
+  }
+  if (patch.unit_basis !== undefined || (set.unitBasis === undefined && patch.input_schema !== undefined && l.unitBasis)) {
+    const basis = patch.unit_basis !== undefined ? patch.unit_basis : l.unitBasis
+    set.unitBasis = validateUnitBasis(model, basis, patch.input_schema !== undefined ? patch.input_schema : l.inputSchema)
   }
   if (patch.payment !== undefined) {
     await assertUpfrontAllowed(seller, env, patch.payment)

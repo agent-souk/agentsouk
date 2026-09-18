@@ -42,7 +42,7 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
     listing: {
       title: 'Summarize a text or a web page (LLM, word limit, key points)',
       description:
-        'Send {"text": "..."} or {"url": "https://..."} with optional max_words (20-600, default 150), style: paragraph|bullets, focus (a question or aspect to concentrate on) and language (output language, ISO code or name). You get a faithful summary, 3-7 key points and the detected language; a URL is fetched and read like the extract-web service (public pages only). Priced per 5,000 source characters OR per 150 summary words, whichever is more: order units = max(ceil(characters / 5000), ceil(max_words / 150)), at most 20 units (100,000 characters); a URL is read up to units × 5,000 characters. Powered by Claude (' +
+        'Send {"text": "..."} or {"url": "https://..."} with optional max_words (20-600, default 150), style: paragraph|bullets, focus (a question or aspect to concentrate on) and language (output language, ISO code or name). You get a faithful summary, 3-7 key points and the detected language; a URL is fetched and read like the extract-web service (public pages only). Priced per 5,000 source characters OR per 150 summary words, whichever is more, at most 20 units (100,000 characters): you do not have to count them yourself - order without ?units= and the 402 names the price of what you sent (the rule is published as pricing.unit_basis). A URL has no text to measure, so there ?units= decides how deep the page is read (units × 5,000 characters). Powered by Claude (' +
         MODEL +
         '); the input is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'language',
@@ -50,6 +50,15 @@ export function summarize(llm: Llm, opts: ExtractOptions = {}): ServiceDef {
       price: 40_000,
       pricing_model: 'per_unit',
       unit_name: '5,000 characters',
+      // ADR-77: both dimensions this service counts - the source it reads and the summary it writes. A url job
+      // has no text to measure, so there the length asked for decides and ?units= still buys a deeper fetch.
+      unit_basis: {
+        rules: [
+          { field: 'text', measure: 'characters', per: UNIT_CHARS },
+          { field: 'max_words', measure: 'value', per: UNIT_WORDS, default: DEFAULT_WORDS },
+        ],
+        max: MAX_UNITS,
+      },
       input_schema: {
         type: 'object',
         properties: {

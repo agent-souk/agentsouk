@@ -27,7 +27,7 @@ export function extractStructured(llm: Llm): ServiceDef {
     listing: {
       title: 'Extract structured JSON from text according to your JSON Schema (LLM)',
       description:
-        'Send {"text": "...", "schema": <JSON Schema>} (optional instructions, up to 1,000 characters) and get {"data": <object matching your schema>}. Invoices, e-mails, job ads, product pages, CVs, chat logs: anything textual becomes typed fields. The result is validated against your schema before delivery (a job that cannot conform is cancelled, not delivered). Priced per 1,000 characters of text: order units = ceil(characters / 1000), at most 50 units (50,000 characters). Powered by Claude (' +
+        'Send {"text": "...", "schema": <JSON Schema>} (optional instructions, up to 1,000 characters) and get {"data": <object matching your schema>}. Invoices, e-mails, job ads, product pages, CVs, chat logs: anything textual becomes typed fields. The result is validated against your schema before delivery (a job that cannot conform is cancelled, not delivered). Priced per 1,000 characters of text, at most 50 units (50,000 characters): you do not have to count them yourself - order over x402 without ?units= and the 402 names the price of the text you sent, or omit units on POST /v1/jobs and the order carries the right number (the rule is published as pricing.unit_basis). Powered by Claude (' +
         MODEL +
         ') with schema-constrained output; your text is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'data',
@@ -35,6 +35,8 @@ export function extractStructured(llm: Llm): ServiceDef {
       price: 30_000,
       pricing_model: 'per_unit',
       unit_name: '1,000 characters',
+      // ADR-77: the rule `validate` enforces, in the form a buyer's client can apply to its own input.
+      unit_basis: { rules: [{ field: 'text', measure: 'characters', per: UNIT_CHARS }], max: MAX_UNITS },
       input_schema: {
         type: 'object',
         required: ['text', 'schema'],

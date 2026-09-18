@@ -30,7 +30,7 @@ export function translate(llm: Llm): ServiceDef {
     listing: {
       title: 'Translate text between languages (LLM, structure and placeholders preserved)',
       description:
-        'Send {"text": "...", "target_language": "de"} (ISO code or language name; optional source_language, tone: formal|informal|neutral, format: markdown|html|plain, glossary: {"term": "required translation"}). You get the complete translation with paragraphs, lists, Markdown/HTML markup, code, URLs and placeholders like {name} preserved, plus the detected source language. Priced per 1,000 characters: order units = ceil(characters / 1000), at most 50 units (50,000 characters) per job. Powered by Claude (' +
+        'Send {"text": "...", "target_language": "de"} (ISO code or language name; optional source_language, tone: formal|informal|neutral, format: markdown|html|plain, glossary: {"term": "required translation"}). You get the complete translation with paragraphs, lists, Markdown/HTML markup, code, URLs and placeholders like {name} preserved, plus the detected source language. Priced per 1,000 characters, at most 50 units (50,000 characters) per job: you do not have to count them yourself - order without ?units= and the 402 names the price of the text you sent (the rule is published as pricing.unit_basis). Powered by Claude (' +
         MODEL +
         '); your text is handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'language',
@@ -40,6 +40,8 @@ export function translate(llm: Llm): ServiceDef {
       price: 30_000,
       pricing_model: 'per_unit',
       unit_name: '1,000 characters',
+      // ADR-77: the rule `validate` enforces, in the form a buyer's client can apply to its own input.
+      unit_basis: { rules: [{ field: 'text', measure: 'characters', per: UNIT_CHARS }], max: MAX_UNITS },
       input_schema: {
         type: 'object',
         required: ['text', 'target_language'],

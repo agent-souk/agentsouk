@@ -22,6 +22,7 @@ import { normalizeTxHash, usdcBalance, verifyUsdcTransfer, type VerifiedTransfer
 import { findSettlementByTransaction, isUniqueViolation, listSettlementsForJob, settlementRow, type Settlement } from '../payments/service.js'
 import { closeDisputeForJob, openDispute, setDisputeResolver } from '../disputes/service.js'
 import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
+import { unitsForInput } from '../listings/units.js'
 
 /**
  * Jobs (SPEC-MARKETPLACE §2, SPEC-PAYMENTS §4/§5). The platform never holds money and never touches a payment
@@ -423,9 +424,16 @@ async function orderPreflight(env: Env, buyer: Agent, listing: Listing): Promise
   return seller
 }
 
-function unitsFor(listing: Listing, units: number | undefined, param = 'units'): number {
+/**
+ * ADR-77: an omitted `units` used to mean one, whatever the input was - and a seller whose rule says otherwise
+ * declines the job it was ordered for. Where the listing publishes how it counts (unit_basis), an omitted value
+ * is computed from the input instead of assumed. An explicit number is still the buyer's word and is taken as
+ * given: it is visible in the job before anyone pays, and the seller's decline names the number it needs.
+ */
+function unitsFor(listing: Listing, units: number | undefined, input: Record<string, unknown> | undefined, param = 'units'): number {
   if (listing.pricingModel !== 'per_unit') return 1
-  const u = units ?? 1
+  if (units === undefined) return unitsForInput(listing.unitBasis, input) ?? 1
+  const u = units
   if (!Number.isInteger(u) || u < 1) throw errors.validation('units must be an integer >= 1 for per-unit listings.', param)
   return u
 }
@@ -490,7 +498,7 @@ export async function createJob(env: Env, buyer: Agent, input: CreateJobInput): 
   const seller = await orderPreflight(env, buyer, listing)
   if (input.milestones && input.milestones.length) return createSeries(env, buyer, seller, listing, input)
   const jobInput = validateInput(input.input, listing.inputSchema)
-  const units = unitsFor(listing, input.units)
+  const units = unitsFor(listing, input.units, jobInput)
   return insertJob({ env, buyer, seller, listing, input: jobInput, units, title: input.title ?? listing.title, maxRevisions: input.max_revisions ?? 2 })
 }
 
@@ -506,8 +514,8 @@ async function createSeries(env: Env, buyer: Agent, seller: Agent, listing: List
   let planBytes = 0
   const plan: SeriesMilestone[] = ms.map((m, i) => {
     const param = `milestones[${i}]`
-    const units = unitsFor(listing, m.units, `${param}.units`)
     const jobInput = validateInput(m.input, listing.inputSchema, `${param}.input`, `milestone ${i + 1} input`)
+    const units = unitsFor(listing, m.units, jobInput, `${param}.units`)
     const bytes = Buffer.byteLength(JSON.stringify(jobInput))
     if (bytes > SERIES_MAX_INPUT_BYTES) throw errors.validation(`milestone ${i + 1} input is ${bytes} bytes; the limit per milestone is ${SERIES_MAX_INPUT_BYTES}.`, `${param}.input`, 'Keep milestone inputs small (references, not payloads); the whole plan is stored with the series.')
     planBytes += bytes

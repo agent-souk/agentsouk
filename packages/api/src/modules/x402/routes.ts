@@ -18,6 +18,7 @@ import { createAgent, recoverKeys } from '../agents/service.js'
 import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyDigestSignature } from '../payments/evm-signature.js'
 import { abandonUnsettledPurchase, acceptDelivery, createJob, payJob } from '../jobs/service.js'
+import { unitBasisSentence, unitsForInput } from '../listings/units.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import { authorizationUsed, usdcBalance } from '../payments/chain.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
@@ -322,8 +323,17 @@ export async function x402Index(base: string, env: Env) {
       price: listing.price,
       price_display: formatUsdc(listing.price),
       pricing_model: listing.pricingModel,
-      // ADR-61: a per-unit price without its unit told a wallet-only buyer a number and not what it buys
-      ...(listing.pricingModel === 'per_unit' ? { unit_name: listing.unitName, price_note: `${formatUsdc(listing.price)} per ${listing.unitName}; pass ?units=N on the POST, the 402 states the total for N units (default 1).` } : {}),
+      // ADR-61: a per-unit price without its unit told a wallet-only buyer a number and not what it buys.
+      // ADR-77: and a unit without its counting rule told it a number it could not apply to its own input.
+      ...(listing.pricingModel === 'per_unit'
+        ? {
+            unit_name: listing.unitName,
+            unit_basis: listing.unitBasis ?? null,
+            price_note: listing.unitBasis
+              ? `${formatUsdc(listing.price)} per ${listing.unitName}. Just POST your input: the 402 counts the units it needs (${unitBasisSentence(listing.unitBasis, listing.unitName)}) and names the total. ?units=N still works as a floor.`
+              : `${formatUsdc(listing.price)} per ${listing.unitName}; pass ?units=N on the POST, the 402 states the total for N units (default 1).`,
+          }
+        : {}),
       pay_to: seller.walletAddress,
       seller: seller.handle,
       input_schema: listing.inputSchema ?? null,
@@ -391,7 +401,7 @@ export function x402Routes() {
     async (c) => {
       const requestedEnv = c.req.valid('query').env
       const { listing_id } = c.req.valid('param')
-      const units = c.req.valid('query').units ?? 1
+      const requestedUnits = c.req.valid('query').units
       const input = (c.req.valid('json') ?? {}) as Record<string, unknown>
 
       // ADR-65: the listing id names the environment (ids are unique across both), so the URL a catalogue holds
@@ -419,6 +429,18 @@ export function x402Routes() {
           `Order it the ordinary way: POST ${base()}/v1/jobs, then pay when the seller accepts. GET ${base()}/v1/x402 lists what can be bought here in one call.`,
         )
       }
+      // ADR-77: how many units this input costs, from the rule the seller publishes on the listing - not the
+      // flat 1 this endpoint assumed until now. `?units=` still works and is a floor, never a discount: a
+      // client that asks for fewer units than its own input needs used to be quoted the cheap price, pay it,
+      // and then be declined by the seller ("order 2 units for 1316 characters"), which is what happened to
+      // every purchase the only paying stranger made on 2026-09-17. The 402 is a quote the buyer signs or
+      // walks away from, so naming the true total here takes nothing from anyone.
+      const needed = listing.pricingModel === 'per_unit' ? unitsForInput(listing.unitBasis, input) : null
+      // `exact` sellers decline an over-ordered job as firmly as an under-ordered one (exploit-chain, ADR-75),
+      // so for them the rule is the whole answer; otherwise it is a floor under what the buyer asked for.
+      const units = needed == null ? (requestedUnits ?? 1) : listing.unitBasis?.mode === 'exact' ? needed : Math.max(requestedUnits ?? 1, needed)
+      /** true when the published rule, not the buyer's parameter, decided how many units this costs */
+      const unitsFromRule = needed != null && units !== (requestedUnits ?? 1)
       const price = (listing.price ?? 0) * (listing.pricingModel === 'per_unit' ? units : 1)
       if (price <= 0) throw errors.state('x402_needs_a_price', 'This listing is free; there is nothing to pay.', 'Order it the ordinary way with POST /v1/jobs.')
       const payTo = seller.walletAddress
@@ -427,13 +449,17 @@ export function x402Routes() {
       const resourceUrl = `${base()}/v1/x402/${listing.id}`
       // the 402 names what the amount buys: for a per-unit listing the unit and how many of it (ADR-61); the
       // resource block also names the service, its topics and an icon for the catalogues (ADR-65)
-      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, service: serviceMetadata(base(), listing.tags), description: listing.pricingModel === 'per_unit' ? `${listing.title} (${units} × ${listing.unitName ?? 'unit'} at ${formatUsdc(listing.price ?? 0)} each)` : listing.title })
+      const unitsNote = unitsFromRule ? ` - ${units} because ${unitBasisSentence(listing.unitBasis, listing.unitName)?.replace(/;.*$/, '') ?? 'your input needs them'}` : ''
+      const terms = paymentTerms({ env, amount: price, payTo, resourceUrl, service: serviceMetadata(base(), listing.tags), description: listing.pricingModel === 'per_unit' ? `${listing.title} (${units} × ${listing.unitName ?? 'unit'} at ${formatUsdc(listing.price ?? 0)} each${unitsNote})` : listing.title })
       // ADR-50: v2 clients send the signed authorization in PAYMENT-SIGNATURE, v1 clients in X-PAYMENT. The
       // payload inside is the same shape, so one reader serves both generations.
       const header = c.req.header('payment-signature') ?? c.req.header('x-payment')
       if (!header) {
         recordX402('terms', c.req.header('user-agent'))
-        const error = `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing.`
+        const error =
+          `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing.` +
+          // ADR-77: a price that is higher than the listing's headline number has to say why in the same breath.
+          (unitsFromRule ? ` This amount is for ${units} × ${listing.unitName ?? 'unit'}, counted from the input you sent (${unitBasisSentence(listing.unitBasis, listing.unitName)}). Sending a smaller input costs less; ordering fewer units than it needs would only be declined by the seller.` : '')
         // The whole object goes in the PAYMENT-REQUIRED header, because that is where a v2 client looks; the body
         // carries the SAME terms in the v1 shape, because that is where the older generation looks. Emitting the
         // v2 object into the body alone - which is what this endpoint did until ADR-50 - is the one combination

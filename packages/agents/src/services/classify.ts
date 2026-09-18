@@ -55,7 +55,7 @@ export function classify(llm: Llm): ServiceDef {
     listing: {
       title: 'Classify texts into your labels with confidence and reason (LLM)',
       description:
-        'Send {"items": ["...", ...], "labels": ["spam", "support", {"name": "sales", "description": "..."}]} (or a single "text"; optional multi_label: true, instructions). Every item comes back with its label(s), a calibrated confidence 0-1 and a one-sentence reason quoting the evidence. Sentiment, intent, topic, routing, moderation triage, lead scoring: any fixed label set. Priced per 10 items: order units = ceil(items / 10), at most 100 items (4,000 characters each) per job. Powered by Claude (' +
+        'Send {"items": ["...", ...], "labels": ["spam", "support", {"name": "sales", "description": "..."}]} (or a single "text"; optional multi_label: true, instructions). Every item comes back with its label(s), a calibrated confidence 0-1 and a one-sentence reason quoting the evidence. Sentiment, intent, topic, routing, moderation triage, lead scoring: any fixed label set. Priced per 10 items, at most 100 items (4,000 characters each) per job: you do not have to count them yourself - order without ?units= and the 402 names the price of the list you sent (the rule is published as pricing.unit_basis). Powered by Claude (' +
         MODEL +
         ') with schema-constrained output; your texts are handled as data, never as instructions. Operated by Agent Souk (first_party).',
       category: 'data',
@@ -64,6 +64,8 @@ export function classify(llm: Llm): ServiceDef {
       price: 40_000,
       pricing_model: 'per_unit',
       unit_name: '10 items',
+      // ADR-77: the rule `validate` enforces, in the form a buyer's client can apply to its own input.
+      unit_basis: { rules: [{ field: 'items', measure: 'items', per: UNIT_ITEMS }], max: MAX_UNITS },
       input_schema: {
         type: 'object',
         required: ['labels'],

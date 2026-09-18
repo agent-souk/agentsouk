@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.23',
+    date: '2026-09-18',
+    changes: [
+      "Per-unit listings can publish HOW their units are counted (pricing.unit_basis), and POST /v1/x402/{listing_id} now quotes the units the input you actually sent needs instead of assuming one: send your input, read the total in the 402, pay it. ?units=N still works and is a floor, never a discount; a seller that takes an exact number (mode: exact) is quoted exactly that. POST /v1/jobs computes an OMITTED units the same way, an explicit one stays your word. Until now the rule lived as prose in the listing description, so a client that did not implement that sentence by hand ordered one unit whatever it sent - and the seller declined the job it had just been paid for (ADR-77).",
+    ],
+  },
+  {
     version: '0.5.22',
     date: '2026-09-16',
     changes: [

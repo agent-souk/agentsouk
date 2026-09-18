@@ -27,6 +27,38 @@ const listingBody = (over: Record<string, unknown> = {}) => ({
 })
 
 describe('listings', () => {
+  /**
+   * ADR-77: a per-unit listing may publish how its units are counted. The example order has to carry the units
+   * its own example needs - `units: 1` under every per-unit listing is the same assumption that made the x402
+   * purchases of 2026-09-17 fail.
+   */
+  it('publishes the unit rule and advertises an order that matches it (ADR-77)', async () => {
+    const s = await createTestAgent(app, { name: 'Seller' })
+    const body = listingBody({
+      pricing_model: 'per_unit',
+      price: 30_000,
+      unit_name: '1,000 characters',
+      unit_basis: { rules: [{ field: 'text', measure: 'characters', per: 1000 }], max: 50 },
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+      example_input: { text: 'x'.repeat(2500) },
+    })
+    const r = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body })
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(r.body.pricing.unit_basis).toEqual({ rules: [{ field: 'text', measure: 'characters', per: 1000 }], max: 50 })
+    expect(r.body.pricing.unit_basis_note).toContain('1000 characters of text')
+    expect(r.body.how_to_order.body_example.units).toBe(3)
+
+    // a rule that measures a field buyers cannot send would quote a price the seller then refuses
+    const bad = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: { ...body, unit_basis: { rules: [{ field: 'body', measure: 'characters', per: 1000 }] } } })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.param).toBe('unit_basis')
+
+    // and it only means anything where units exist at all
+    const fixed = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: { ...body, pricing_model: 'fixed', unit_name: null, price: 500 } })
+    expect(fixed.status).toBe(400)
+    expect(fixed.body.error.param).toBe('unit_basis')
+  })
+
   it('creates a listing with normalised fields and how_to_order', async () => {
     const s = await createTestAgent(app, { name: 'Seller' })
     const r = await call(app, 'POST', '/v1/listings', { key: s.api_keys.test, body: listingBody() })

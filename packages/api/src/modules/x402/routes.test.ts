@@ -190,6 +190,93 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(required.resource.description).toContain('3 × page')
   })
 
+  /**
+   * ADR-77. The night of 2026-09-17: the only paying stranger sent four texts of 1,122-2,009 characters to
+   * extract-structured, whose unit had just become 1,000 characters (ADR-72). Its client sends no ?units=, so
+   * the 402 quoted one unit, it paid, and the seller declined all four ("order 2 units for 1316 characters").
+   * With the rule published on the listing, the same request is quoted for what it actually needs.
+   */
+  it('quotes the units the sent input needs instead of assuming one (ADR-77)', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Services' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: seller.api_keys.test,
+      body: {
+        title: 'Extract structured JSON',
+        description: 'Extract structured JSON from text according to your JSON Schema.',
+        category: 'data',
+        pricing_model: 'per_unit',
+        price: 30_000,
+        unit_name: '1,000 characters',
+        unit_basis: { rules: [{ field: 'text', measure: 'characters', per: 1000 }], max: 50 },
+        input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' }, schema: { type: 'object' } } },
+        turnaround_seconds: 600,
+        accept_timeout_seconds: 600,
+      },
+    })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    expect(l.body.pricing.unit_basis).toMatchObject({ rules: [{ field: 'text', per: 1000 }] })
+
+    const terms = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: { text: 'x'.repeat(1316), schema: { type: 'object' } } })
+    expect(terms.status).toBe(402)
+    const required = JSON.parse(Buffer.from(terms.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(required.accepts[0].amount).toBe('60000') // two units, not one
+    expect(required.resource.description).toContain('2 × 1,000 characters')
+    expect(String(terms.body.error)).toContain('counted from the input you sent')
+
+    // and the whole purchase goes through at that price, without the buyer knowing the rule
+    const pk = pkOf('7')
+    const wallet = addr(pk)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, 60_000) }) }))
+    const runtime = deliverWhenOrdered(seller, l.body.id, { data: { ok: true } })
+    const paid = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, {
+      body: { text: 'x'.repeat(1316), schema: { type: 'object' } },
+      headers: { 'payment-signature': paymentHeader(pk, seller.wallet_address!, 60_000) },
+    })
+    await runtime.done
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200)
+    const job = await db().query.jobs.findFirst({ where: eq(jobs.listingId, l.body.id) })
+    expect(job!.units).toBe(2)
+  })
+
+  it('quotes a smaller amount when the seller takes an exact number of units (ADR-75 services)', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Chains' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: seller.api_keys.test,
+      body: {
+        title: 'Exploit chain',
+        description: 'Turns a DeFi incident report into an ordered attack chain with verbatim evidence.',
+        category: 'security',
+        pricing_model: 'per_unit',
+        price: 30_000,
+        unit_name: '500 characters',
+        unit_basis: { rules: [{ field: 'text', measure: 'characters', per: 500 }], max: 40, mode: 'exact' },
+        input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+        turnaround_seconds: 600,
+      },
+    })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    // the buyer asks for forty units for a short text; this seller declines that as firmly as too few, so the
+    // quote is the number it will actually take
+    const terms = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test&units=40`, { body: { text: 'x'.repeat(900) } })
+    expect(terms.status).toBe(402)
+    const required = JSON.parse(Buffer.from(terms.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(required.accepts[0].amount).toBe('60000')
+    expect(required.resource.description).toContain('2 × 500 characters')
+  })
+
+  it('leaves a listing without a published rule exactly as it was', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Pages 2' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', { key: seller.api_keys.test, body: { title: 'OCR a scan', description: 'Optical character recognition of scanned pages, one price per page.', category: 'documents', pricing_model: 'per_unit', price: 20_000, unit_name: 'page', turnaround_seconds: 600 } })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    expect(l.body.pricing.unit_basis).toBe(null)
+    const one = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: { scan: 'x'.repeat(50_000) } })
+    const required = JSON.parse(Buffer.from(one.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(required.accepts[0].amount).toBe('20000')
+  })
+
   it('charges nothing when the seller never delivers', async () => {
     const { seller, listingId } = await firstPartySeller()
     let settleCalls = 0

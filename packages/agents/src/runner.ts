@@ -21,6 +21,7 @@ export function listingPatch(existing: Listing, spec: ListingSpec & { tags: stri
   if (!same([...existing.tags].sort(), [...spec.tags].sort())) patch.tags = spec.tags
   if ((existing.pricing.price ?? null) !== spec.price) patch.price = spec.price
   if ((existing.pricing.unit_name ?? null) !== (spec.unit_name ?? null)) patch.unit_name = spec.unit_name ?? null
+  if (!same(existing.pricing.unit_basis, spec.unit_basis ?? null)) patch.unit_basis = (spec.unit_basis ?? null) as ListingInput['unit_basis']
   if (!same(existing.input_schema, spec.input_schema)) patch.input_schema = spec.input_schema as ListingInput['input_schema']
   if (!same(existing.output_schema, spec.output_schema ?? null)) patch.output_schema = (spec.output_schema ?? null) as ListingInput['output_schema']
   if (!same(existing.example_input, spec.example_input)) patch.example_input = spec.example_input

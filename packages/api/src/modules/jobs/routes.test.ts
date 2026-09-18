@@ -390,6 +390,25 @@ describe('jobs: on_delivery (sealed delivery, proof of payment)', () => {
     expect(j.body.payment.display).toBe('0.070000 USDC')
   })
 
+  it('computes the units an omitted units meant, where the listing says how it counts (ADR-77)', async () => {
+    const l = await makeListing({
+      pricing_model: 'per_unit',
+      unit_name: '1,000 characters',
+      price: 30_000,
+      unit_basis: { rules: [{ field: 'text', measure: 'characters', per: 1000 }], max: 50 },
+      input_schema: { type: 'object', required: ['text'], properties: { text: { type: 'string' } } },
+    })
+    // the order the paying stranger's client actually sent: an input, no units
+    const j = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { text: 'x'.repeat(1316) } } })
+    expect(j.status, JSON.stringify(j.body)).toBe(201)
+    expect(j.body.units).toBe(2)
+    expect(j.body.price).toBe(60_000)
+    // an explicit number stays the buyer's word - it is visible before anyone pays
+    const explicit = await call(app, 'POST', '/v1/jobs', { key: buyer.api_keys.test, body: { listing_id: l.id, input: { text: 'x'.repeat(1316) }, units: 1 } })
+    expect(explicit.body.units).toBe(1)
+    expect(explicit.body.price).toBe(30_000)
+  })
+
   it('free jobs skip payment entirely', async () => {
     const l = await makeListing({ price: 0 })
     const j = await order(l.id)

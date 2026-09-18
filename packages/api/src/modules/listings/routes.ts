@@ -9,6 +9,7 @@ import { errors } from '../../lib/errors.js'
 import { PAYMENT_TIMINGS, PRICING_MODELS, type Env } from '../../db/schema.js'
 import { formatUsdc } from '../payments/x402.js'
 import { archiveListing, createListing, getListing, listMyListings, searchListings, sellersById, updateListing, WHAT_SELLS, type Listing } from './service.js'
+import { unitBasisSentence, unitsForInput, UnitBasisSchema } from './units.js'
 import { reputationsById, suggestedExposure, type ReputationRow } from '../reviews/service.js'
 import { recordSearch } from '../demand/service.js'
 
@@ -25,6 +26,11 @@ const ListingBody = z
     pricing_model: z.enum(PRICING_MODELS).openapi({ description: 'fixed = price per job; per_unit = price × units (set unit_name); quote = you quote each job.' }),
     price: z.number().int().min(0).max(1_000_000_000_000).nullable().optional().openapi({ description: 'USDC minor units (6 decimals): 1000000 = 1 USDC, 10000 = 0.01 USDC. 0 = free. Omit for quote.', example: 250000 }),
     unit_name: z.string().max(32).nullable().optional().openapi({ example: '1k_tokens' }),
+    unit_basis: UnitBasisSchema.nullable().optional().openapi({
+      description:
+        'per_unit only (ADR-77): how your units are counted, so a buyer can compute the price of its own input instead of reading your description. With it set, the x402 402 quotes the units the sent input needs and how_to_order carries the right units for your example.',
+      example: { rules: [{ field: 'text', measure: 'characters', per: 1000 }], max: 50 },
+    }),
     payment: z.enum(PAYMENT_TIMINGS).optional().openapi({ description: 'on_delivery (default): you deliver sealed, the buyer pays, then it is revealed. upfront: the buyer pays after you accept (live: trust tier >= 1 only).' }),
     input_schema: JsonSchemaObject.nullable().optional(),
     output_schema: JsonSchemaObject.nullable().optional(),
@@ -91,6 +97,8 @@ export const ListingView = z
       model: z.enum(PRICING_MODELS),
       price: z.number().int().nullable().openapi({ description: 'USDC minor units.' }),
       unit_name: z.string().nullable(),
+      unit_basis: UnitBasisSchema.nullable().openapi({ description: 'ADR-77: how units are counted for this listing, machine-readable. null = the seller did not publish a rule, so units are whatever the buyer orders.' }),
+      unit_basis_note: z.string().nullable().openapi({ description: 'The same rule as one sentence, for a buyer that reads prose.' }),
       currency: z.literal('USDC'),
       display: z.string().openapi({ example: '0.250000 USDC per job' }),
     }),
@@ -181,7 +189,10 @@ export function toListingView(l: Listing, seller: Agent | undefined, opts: { tru
   const description = opts.truncate && l.description.length > 500 ? l.description.slice(0, 497) + '...' : l.description
   // never advertise a body the API would reject: required fields the example leaves out get placeholders
   const bodyExample: Record<string, unknown> = { listing_id: l.id, input: exampleInputFor(l.inputSchema, l.exampleInput) }
-  if (l.pricingModel === 'per_unit') bodyExample.units = 1
+  // ADR-77: the advertised order has to be an order the seller would take. `units: 1` was printed under every
+  // per-unit listing whatever the example held, which is exactly the assumption that made the x402 buyer's
+  // purchases fail; with a published rule the example carries the units its own input needs.
+  if (l.pricingModel === 'per_unit') bodyExample.units = unitsForInput(l.unitBasis, bodyExample.input as Record<string, unknown>) ?? 1
   return {
     object: 'listing',
     id: l.id,
@@ -189,7 +200,7 @@ export function toListingView(l: Listing, seller: Agent | undefined, opts: { tru
     description,
     category: l.category,
     tags: l.tags,
-    pricing: { model: l.pricingModel, price: l.price, unit_name: l.unitName, currency: 'USDC', display: priceDisplay(l) },
+    pricing: { model: l.pricingModel, price: l.price, unit_name: l.unitName, unit_basis: l.unitBasis ?? null, unit_basis_note: unitBasisSentence(l.unitBasis, l.unitName), currency: 'USDC', display: priceDisplay(l) },
     payment: l.payment,
     input_schema: l.inputSchema ?? null,
     output_schema: l.outputSchema ?? null,

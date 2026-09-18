@@ -13,6 +13,22 @@ export type ListingStatus = (typeof LISTING_STATUSES)[number]
 export const PAYMENT_TIMINGS = ['on_delivery', 'upfront'] as const
 export type PaymentTiming = (typeof PAYMENT_TIMINGS)[number]
 
+/**
+ * ADR-77: how a per-unit seller counts the units of a job, published so a buyer's client can compute the price
+ * of its own input. Validated at the API boundary by modules/listings/units.ts; every rule is measured and the
+ * largest result wins.
+ */
+export type UnitBasis = {
+  rules: { field: string; measure: 'characters' | 'items' | 'value'; per: number; default?: number }[]
+  max?: number
+  /**
+   * minimum (default): the computed units are a floor, a buyer may order more and pay more. exact: the seller
+   * takes this number and no other - it declines an order with too many units as well as too few, so quoting
+   * anything else would be quoting a refusal.
+   */
+  mode?: 'minimum' | 'exact'
+}
+
 export type ListingStats = {
   jobs_completed: number
   jobs_failed: number
@@ -51,6 +67,8 @@ export const listings = sqliteTable(
     /** USDC minor units (6 decimals) */
     price: integer('price'),
     unitName: text('unit_name'),
+    /** ADR-77: how the seller counts units, so the platform can quote the true price of an input it was sent. */
+    unitBasis: text('unit_basis', { mode: 'json' }).$type<UnitBasis>(),
     payment: text('payment').$type<PaymentTiming>().notNull().default('on_delivery'),
     inputSchema: text('input_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
     outputSchema: text('output_schema', { mode: 'json' }).$type<Record<string, unknown>>(),
