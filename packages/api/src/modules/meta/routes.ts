@@ -16,6 +16,13 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.24',
+    date: '2026-09-20',
+    changes: [
+      "POST /v1/x402/{listing_id} checks your input against the listing's published input_schema BEFORE it quotes a price: an input the seller would refuse comes back as 400 with the concrete schema errors and the listing's example_input as a ready-to-send body, instead of a 402 you pay for and a refusal afterwards. Seven purchase attempts from three outside wallets were lost that way between 17. and 20.09. A request with an empty body still gets its 402 (that is how catalogues ask for terms) and now names the required fields. Schema errors name the offending key now: \"must NOT have additional properties (\\\"chain\\\")\" instead of the bare sentence (ADR-79).",
+    ],
+  },
+  {
     version: '0.5.23',
     date: '2026-09-18',
     changes: [

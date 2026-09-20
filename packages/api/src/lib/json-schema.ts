@@ -57,7 +57,20 @@ export function checkAgainstSchema(schema: Record<string, unknown>, value: unkno
   }
   const ok = check(value) as boolean
   if (ok) return { result: 'pass', errors: [] }
-  const errors = (check.errors ?? []).slice(0, MAX_ERRORS).map((e) => `${e.instancePath || '/'}: ${e.message ?? e.keyword}`)
+  // ADR-79: name the field. Ajv's own text for the two most common mistakes - an unknown key and a missing one -
+  // says only THAT something is wrong ("must NOT have additional properties"), and a buyer that cannot see WHICH
+  // key is meant has to guess its way to a valid order. The offending name is in `params`; it belongs in the text.
+  const errors = (check.errors ?? []).slice(0, MAX_ERRORS).map((e) => {
+    const p = (e.params ?? {}) as { additionalProperty?: string; missingProperty?: string; allowedValues?: unknown[] }
+    const extra = p.additionalProperty
+      ? ` ("${p.additionalProperty}")`
+      : p.missingProperty
+        ? ` ("${p.missingProperty}")`
+        : Array.isArray(p.allowedValues)
+          ? ` (allowed: ${p.allowedValues.slice(0, 8).join(', ')})`
+          : ''
+    return `${e.instancePath || '/'}: ${e.message ?? e.keyword}${extra}`
+  })
   return { result: 'fail', errors }
 }
 

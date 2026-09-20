@@ -19,6 +19,7 @@ import { normalizeEvmAddress } from '../payments/address.js'
 import { verifyDigestSignature } from '../payments/evm-signature.js'
 import { abandonUnsettledPurchase, acceptDelivery, createJob, payJob } from '../jobs/service.js'
 import { unitBasisSentence, unitsForInput } from '../listings/units.js'
+import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
 import { authorizationUsed, usdcBalance } from '../payments/chain.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
@@ -345,6 +346,31 @@ export async function x402Index(base: string, env: Env) {
   }
 }
 
+/** The field names a buyer must send, as the listing's own published schema names them (ADR-79). */
+function requiredFields(listing: { inputSchema?: Record<string, unknown> | null }): string[] {
+  const req = (listing.inputSchema as { required?: unknown } | null | undefined)?.required
+  return Array.isArray(req) ? req.filter((k): k is string => typeof k === 'string').slice(0, 8) : []
+}
+
+/**
+ * ADR-79: does this body satisfy the listing's own published contract? The x402 endpoint sells only listings
+ * Agent Souk operates itself (x402_first_party_only), so the schema checked here is always one we maintain - no
+ * third-party seller's tolerance is narrowed by this. The answer costs the buyer nothing: no job, no charge, and
+ * the error carries the example body it should have sent.
+ */
+function assertOrderableInput(input: Record<string, unknown>, listing: { inputSchema?: Record<string, unknown> | null; exampleInput?: unknown }): void {
+  const schema = listing.inputSchema
+  if (!isSchemaObject(schema)) return
+  const check = checkAgainstSchema(schema, input)
+  if (check.result !== 'fail') return
+  throw errors.validation(
+    `input does not match this listing's input_schema: ${check.errors.slice(0, 3).join('; ')}.`,
+    'input',
+    `Nothing was charged and no job was created. The listing's input_schema and example_input are in GET ${config().PUBLIC_BASE_URL.replace(/\/$/, '')}/v1/x402 (and in the bazaar extension of the 402 you just read); send the example shape.`,
+    { errors: check.errors, ...(listing.exampleInput ? { example_input: listing.exampleInput } : {}) },
+  )
+}
+
 export function x402Routes() {
   const r = new OpenAPIHono<AppEnv>()
   const base = () => config().PUBLIC_BASE_URL.replace(/\/$/, '')
@@ -429,6 +455,15 @@ export function x402Routes() {
           `Order it the ordinary way: POST ${base()}/v1/jobs, then pay when the seller accepts. GET ${base()}/v1/x402 lists what can be bought here in one call.`,
         )
       }
+      // ADR-79: an input this endpoint already knows the seller will refuse must not be answered with a price.
+      // Until now the body was first validated inside createJob - AFTER the 402, after the buyer had signed an
+      // authorization and sent it. Three wallets paid that way for nothing on 17./19./20.09. ("input is missing
+      // required field(s): token"), and a sandbox agent working through the catalogue lost four more orders to
+      // the same wall ("unknown field(s): chain", "situation must be a string of at least 40 characters") - all
+      // of it already written in the published input_schema. An empty body still gets its 402: that is how
+      // catalogue crawlers ask for terms, and losing them would cost more than this fixes.
+      if (Object.keys(input).length > 0) assertOrderableInput(input, listing)
+
       // ADR-77: how many units this input costs, from the rule the seller publishes on the listing - not the
       // flat 1 this endpoint assumed until now. `?units=` still works and is a floor, never a discount: a
       // client that asks for fewer units than its own input needs used to be quoted the cheap price, pay it,
@@ -459,7 +494,10 @@ export function x402Routes() {
         const error =
           `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing.` +
           // ADR-77: a price that is higher than the listing's headline number has to say why in the same breath.
-          (unitsFromRule ? ` This amount is for ${units} × ${listing.unitName ?? 'unit'}, counted from the input you sent (${unitBasisSentence(listing.unitBasis, listing.unitName)}). Sending a smaller input costs less; ordering fewer units than it needs would only be declined by the seller.` : '')
+          (unitsFromRule ? ` This amount is for ${units} × ${listing.unitName ?? 'unit'}, counted from the input you sent (${unitBasisSentence(listing.unitBasis, listing.unitName)}). Sending a smaller input costs less; ordering fewer units than it needs would only be declined by the seller.` : '') +
+          // ADR-79: a terms request with no body is how a catalogue asks, and it still gets its 402 - but a buyer
+          // that reads this and then sends nothing pays for a refusal. Name the fields here, where it is free.
+          (Object.keys(input).length === 0 ? ` Send the listing input in the body of the paid request${requiredFields(listing).length ? `: required field(s) ${requiredFields(listing).join(', ')}` : ''}; the input_schema and a ready example are in GET ${base()}/v1/x402.` : '')
         // The whole object goes in the PAYMENT-REQUIRED header, because that is where a v2 client looks; the body
         // carries the SAME terms in the v1 shape, because that is where the older generation looks. Emitting the
         // v2 object into the body alone - which is what this endpoint did until ADR-50 - is the one combination
@@ -476,6 +514,7 @@ export function x402Routes() {
       let payer: string | null = null
       let jobId: string | null = null
       try {
+      assertOrderableInput(input, listing)
       const payment = parsePaymentHeader(header)
       const auth = payment.payload.authorization
       payer = auth.from

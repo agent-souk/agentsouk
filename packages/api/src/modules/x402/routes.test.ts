@@ -277,6 +277,72 @@ describe('x402 endpoint for platform-operated listings (ADR-48)', () => {
     expect(required.accepts[0].amount).toBe('20000')
   })
 
+  /**
+   * ADR-79. Three wallets signed a payment for an input the platform already knew it would refuse and got their
+   * 400 only afterwards; a sandbox agent lost four more orders the same way, every one of them to a rule its
+   * listing publishes. The refusal now comes before the price, and it carries the shape that would have worked.
+   */
+  it('refuses an input its own schema rejects instead of quoting a price for it (ADR-79)', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Chains 79' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: seller.api_keys.test,
+      body: {
+        title: 'Exploit chain',
+        description: 'Turns a DeFi incident report into an ordered attack chain with verbatim evidence.',
+        category: 'security',
+        pricing_model: 'fixed',
+        price: 30_000,
+        input_schema: { type: 'object', required: ['text'], additionalProperties: false, properties: { text: { type: 'string', minLength: 40 }, note: { type: 'string' } } },
+        example_input: { text: 'x'.repeat(60) },
+        turnaround_seconds: 600,
+      },
+    })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+
+    // the field the sandbox agent invented on 2026-09-20: rejected by additionalProperties, named in the answer
+    const unknownField = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: { text: 'y'.repeat(60), chain: 'base' } })
+    expect(unknownField.status).toBe(400)
+    expect(unknownField.body.error.code).toBe('invalid_request')
+    expect(String(unknownField.body.error.message)).toContain('input_schema')
+    expect(String(unknownField.body.error.hint)).toContain('Nothing was charged')
+    expect(unknownField.body.error.details.example_input).toEqual({ text: 'x'.repeat(60) })
+    expect(unknownField.body.error.details.errors.join(' ')).toContain('chain')
+
+    // and the too-short field risk-precedent declined for
+    const tooShort = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: { text: 'too short' } })
+    expect(tooShort.status).toBe(400)
+
+    // a valid body is still quoted exactly as before
+    const ok = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: { text: 'z'.repeat(60) } })
+    expect(ok.status).toBe(402)
+
+    // AND an empty body keeps its 402: that is how catalogue crawlers ask for terms
+    const probe = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, { body: {} })
+    expect(probe.status).toBe(402)
+    expect(String(probe.body.error)).toContain('required field(s) text')
+  })
+
+  it('records a paid attempt whose input the schema rejects, without creating a job (ADR-79)', async () => {
+    const seller = await createTestAgent(app, { name: 'Souk Strict' })
+    await db().update(agents).set({ firstParty: true }).where(eq(agents.id, seller.agent.id))
+    const l = await call(app, 'POST', '/v1/listings', {
+      key: seller.api_keys.test,
+      body: { title: 'Token snapshot', description: 'On-chain facts for one ERC-20 token on Base.', category: 'finance', pricing_model: 'fixed', price: 10_000, input_schema: { type: 'object', required: ['token'], properties: { token: { type: 'string' } } }, example_input: { token: 'weth' }, turnaround_seconds: 600 },
+    })
+    expect(l.status, JSON.stringify(l.body)).toBe(201)
+    const pk = pkOf('2')
+    // the shape the paying stranger actually sent on 17. and 19.09.: an order body, not the listing input
+    const r = await call(app, 'POST', `/v1/x402/${l.body.id}?env=test`, {
+      body: { listing_id: l.body.id, input: { token: 'weth' } },
+      headers: { 'x-payment': paymentHeader(pk, seller.wallet_address!, 10_000) },
+    })
+    expect(r.status).toBe(400)
+    expect(String(r.body.error.message)).toContain('input_schema')
+    const job = await db().query.jobs.findFirst({ where: eq(jobs.listingId, l.body.id) })
+    expect(job, 'no job may exist for an input the platform refused').toBeUndefined()
+  })
+
   it('charges nothing when the seller never delivers', async () => {
     const { seller, listingId } = await firstPartySeller()
     let settleCalls = 0
