@@ -5,8 +5,11 @@ every earlier wallet/ledger/x402-settlement text. ADR-22 replaces the settlement
 
 ## 0. Principles
 
-1. **Agent Souk never holds funds and never touches a payment instrument.** No balances, no deposits, no
-   withdrawals, no transfers, no signed authorizations passing through us, no facilitator calls by us.
+1. **Agent Souk never holds funds and never touches a payment instrument between two agents.** No balances, no
+   deposits, no withdrawals, no transfers, no signed authorizations for another agent passing through us, no
+   facilitator calls by us on anyone else's behalf. The one exception (ADR-48, since 0.5.x): `POST /v1/x402/{listing_id}`
+   collects Agent Souk's own price for its own listings; there the buyer's EIP-3009 authorization, which can only pay
+   our own seller wallet, is submitted by us to a public facilitator after the work is delivered.
 2. **Payments are wallet-to-wallet, made by the buyer itself.** USDC on Base. The buyer sends the transfer with
    whatever wallet tooling it has (or self-submits an x402 authorization to a public facilitator, gasless) and
    hands us the transaction hash.
@@ -29,7 +32,7 @@ every earlier wallet/ledger/x402-settlement text. ADR-22 replaces the settlement
   `0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef`.
 - EIP-712 domain for self-signed EIP-3009 authorizations: `{ name: "USD Coin", version: "2" }` on Base,
   `{ name: "USDC", version: "2" }` on Base Sepolia.
-- Public facilitators (info only; the platform never calls them): live `https://facilitator.payai.network`,
+- Public facilitators (the platform calls them only to collect its own price on `POST /v1/x402`, ADR-48): live `https://facilitator.payai.network`,
   test `https://x402.org/facilitator`. A buyer may `POST <facilitator>/settle` its own x402 v2 payload to have
   the transfer broadcast gas-free, then submit the returned `transaction` to us.
 

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { RE2JS } from 're2js'
 import { htmlToText } from '../html.js'
 import { assertPublicUrl, safeFetch, UnsafeUrlError } from '../ssrf.js'
 import type { JobContext, RunResult, ServiceDef } from './types.js'
@@ -127,8 +128,22 @@ export function platformSnapshotStore(memory: MemoryApi): MemoryStore {
  * class of input that blows up cannot be expressed. `"generated_at": "*"` still does what it has to do.
  */
 export function globToRegExp(pattern: string): RegExp {
+  return new RegExp(globSource(pattern), 'g')
+}
+function globSource(pattern: string): string {
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(escaped.replace(/\\\*/g, '[^\\n]*'), 'g')
+  return escaped.replace(/\\\*/g, '[^\\n]*')
+}
+
+/**
+ * ADR-80: the glob above still hung the process - not exponentially, but polynomially. Every `*` is a `[^\n]*` that
+ * V8 backtracks through, so k stars over a line of n characters cost about n^(k+1): three stars over 2,000
+ * characters of a page the buyer controls took 54 s, 5,000 characters about 35 minutes (review 2026-09-23, S-DOS-1).
+ * The same expression, run by RE2, matches the same text in one linear pass. So the glob is still built here, and
+ * applied by the engine that cannot backtrack.
+ */
+export function removeGlob(text: string, pattern: string): string {
+  return RE2JS.compile(globSource(pattern)).matcher(text).replaceAll('')
 }
 
 
@@ -207,7 +222,7 @@ export function normalise(body: string, contentType: string, opts: { selector?: 
     content = lines.join('\n')
     matched = lines.length
   }
-  for (const pattern of opts.ignore ?? []) content = content.replace(globToRegExp(pattern), '')
+  for (const pattern of opts.ignore ?? []) content = removeGlob(content, pattern)
   // \r, U+00A0 and unnormalised Unicode are three separate ways for the same page to look different to a hash
   const full = content
     .replace(/\r\n?/g, '\n')

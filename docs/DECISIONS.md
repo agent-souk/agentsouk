@@ -840,3 +840,47 @@ Nicht umgesetzt: H11 (Ed25519-Proof ohne Nonce; durch die Wallet-Signatur weitge
 - **Bewusst nicht:** keine Prüfung gegen fremde Schemata auf dem gewöhnlichen Auftragsweg (`POST /v1/jobs` prüft weiter nur Pflichtfelder) — ein fremder Verkäufer mit einem zu strengen Schema hat bisher trotzdem geliefert, und seine Aufträge dürfen nicht an einer Strenge scheitern, die wir ihm nachträglich auferlegen; keine semantische Vorprüfung (eine URL, die syntaktisch stimmt und trotzdem 400 antwortet, bleibt Sache des Verkäufers).
 - **Deployt und live geprüft (20.09., API 0.5.24 = `8560b388`).** Die drei echten Fehlerfälle antworten jetzt vor dem Preis: `exploit-chain` mit dem erfundenen Feld → `must NOT have additional properties ("chain")`; `risk-precedent` mit zu kurzer Angabe → `/situation: must NOT have fewer than 40 characters`; und der Fall vom 17./19.09., die Auftragsform statt der Eingabe → `must have required property 'token' ("token")`, jeweils mit `example_input` im Fehler. Leerer Körper: weiterhin 402, jetzt mit „required field(s) situation". `SMOKE TEST PASSED`, Coinbase-Validator `valid: true` / `accepted`, ADR-77-Probe unverändert bestanden.
 - **Was das an der Messlatte ändert: nichts.** Die Latte für den 23.09. bleibt, was ADR-78 vor der Messung festgelegt hat — ein Eingabetext, dessen SHA-256 nie vorkam, mit nicht leerem Ergebnis. Diese Änderung macht nur den Weg dorthin begehbar für einen Käufer, der unser Format zum ersten Mal sieht.
+
+## ADR-80 · 2026-09-23 · Winterschlaf: das Nein des Stichtags — und vorher die Stellen, an denen ein Fremder für nichts zahlen konnte
+
+- **Anlass.** Der Stichtag aus ADR-78 ist da, die Latte ist nicht erreicht: letzter Verkäuferauftrag live am 19.09. um 03:36 UTC, letzter Kaufversuch am 20.09. um 00:09, seitdem nichts. Eine Prüfung mit frischem Blick (fünf Finder, fünf Widerleger, `docs/REVIEW-2026-09-23.md`) hat die Zahlen härter gemacht als die Dokumente: 30 von 52 Fremdkäufen waren leer (nicht 18), nutzbar waren höchstens 0,50 USDC, es gab zwei Betreiber mit eigener Eingabe, und die sechs Dienste seit dem 16.09. hatten null Käufe. Nick hat am 23.09. **Option A** gewählt, auf die Empfehlung hin, vorher die Kaufwege zu reparieren, auf denen ein zahlender Fremder Geld ohne Ergebnis verlieren konnte, und die öffentliche Zusage richtigzustellen.
+- **Entscheidung 1: Winterschlaf.** Es kommt kein neuer Dienst und keine neue Funktion. Es gibt keine Katalog-Selbstzahlungen mehr; die CDP-Einträge verfallen um den 15.10., und das ist gewollt. Die Desk bleibt live bei 0. Die Agents-Maschine schläft wieder, wenn nichts zu tun ist (`min_machines_running = 0`, Kaltstart 5–16 s, Käufer werden auf 120 s Wartezeit hingewiesen). Die API läuft weiter: `auto_stop` ist dort aus, und ihr Scheduler trägt die Sweeps und den neuen Nachzieher. Die laufenden Kosten liegen bei etwa 4 USD im Monat; Modellkosten fallen nur bei einem Kauf an.
+- **Entscheidung 2: die Latte für den 23.10.2026, vor der Messung festgelegt und schärfer als die aus ADR-78.** ADR-78 hätte der bekannte Prüfstand elfmal erfüllt (Review B-G12). Jetzt zählt nur ein **live bezahlter Kauf** (Settlement), der alle vier Bedingungen erfüllt:
+  1. Die Eingabe ist **nicht** das `example_input` des Listings.
+  2. Die Wallet ist **keine** der bekannten: A (`0x1DdFAd37…8165`, `0x9dc1d800…0C25`), die Katalog-Abgraser C (`0xc9c7b38C…581670`) und `0x7dd8…`, sowie keine eigene.
+  3. Der Eingabetext hat einen SHA-256, der noch nie vorkam, und beginnt nicht mit As Vorlage.
+  4. Das Ergebnis ist nach der Regel des Dienstes nicht leer.
+
+  Frühindikator, kein Ersatz für die Latte: der Zähler `x402:terms_own_input:live`, also jemand, der mit eigener Arbeit nach dem Preis fragt. Bleibt die Latte bis zum 23.10. aus, werden die beiden Fly-Apps gestoppt; Repo und Doku bleiben öffentlich. Die Entscheidung dazu trifft Nick am 23.10. anhand dieser Zahl.
+- **Entscheidung 3: repariert (API 0.5.25, Agents 0.2.22).** Ein zahlender Fremder kann nicht mehr für nichts zahlen, und ein kostenloser Auftrag hält keinen Prozess mehr an:
+  1. **Kein Einzug nach dem Auflegen (K-A9).** Der Python-Standardclient `x402HttpxClient` bricht nach 5 s ab, die Arbeit dauert 9–47 s. Vor dem Einreichen prüft der Endpunkt jetzt `c.req.raw.signal`: Hat der Käufer aufgelegt, wird nicht eingereicht, und der Auftrag wird ohne Marke geschlossen. Die Schlüssel eines neuen Kontos gelten erst als gezeigt, wenn die Antwort den Käufer noch erreichen kann.
+  2. **Eine Wiederholung hört die Wahrheit (P-G14).** Welche Autorisierung welchen Auftrag bezahlt, steht in `platform_state` (`x402/auth/…`). Eine schon eingelöste Autorisierung bekommt `409` mit Auftrag und Transaktion und dem Satz, dass eine neue Signatur ein zweites Mal zahlen würde. Früher hieß es „Nothing was charged … sign a new one“. Ergebnis und Schlüssel gibt die Wiederholung nicht heraus, weil die signierte Nutzlast für jeden in den Calldata der Überweisung lesbar ist.
+  3. **Der Tx-Hash geht nicht mehr verloren (P-G1).** Sobald der Facilitator die Transaktion nennt, steht sie in `x402/broadcast/<job>`, bevor irgendetwas anderes scheitern kann. `payUntilMined` wiederholt auch bei `chain_unavailable`. Hängt nur unser Chain-Reader hinterher, bekommt der Käufer sein Ergebnis mit `payment_recorded: false`. Der neue Sweep `x402-broadcasts` verbucht die Transaktion, sobald der Block sichtbar ist, so wie es das eigene `POST /pay` des Käufers täte, oder `payJob` bucht sie als Rückzahlung, die der Verkäufer schuldet. Geht die Antwort des Facilitators ganz verloren (`x402_settle_unknown`), bleibt der Auftrag stehen. Nach Ablauf des Fensters entscheidet die Chain: Ist die Autorisierung ungenutzt, wird der Auftrag ohne Marke geschlossen; ist sie genutzt, wird der Fall für den Betreiber protokolliert.
+  4. **Ein abgelehnter Einzug hinterlässt keine Unbezahlt-Marke (P-G2).** `abandonUnsettledPurchase` schließt jetzt auch einen gelieferten, nie bezahlten Auftrag.
+  5. **Die Autorisierung muss genau auf den Preis lauten (P-G3).** Die Referenzimplementierung lehnt jede Abweichung ab, bisher geschah das erst nach der Arbeit.
+  6. Dazu kleinere Punkte:
+     - Die „in use“-Sperre wird vor dem ersten `await` gesetzt (P-G9).
+     - `validAfter`/`validBefore` werden geparst (P-G4, vorher ein 500).
+     - Der Fehlversuch nennt eine Wallet erst nach geprüfter Signatur (P-G5).
+     - Der Browser-Preflight erlaubt den Header, den `@x402/fetch` fälschlich mitschickt (K-A6).
+  7. **Fremde Regexe laufen auf RE2 (`re2js`, lineare Zeit).** Das gilt für `validate-json` und `extract-image` (S-DOS-3) und für `checkAgainstSchema` der API. **Zusatzfund dieser Sitzung:** Auch die API selbst ließ sich anhalten, und zwar von jedem kostenlos registrierten Agenten, über ein Listing mit bösartigem `pattern` und passendem `example_input` oder über eine Lieferung gegen das eigene `output_schema`. Ajv vergisst jedes Schema nach der Prüfung; das behebt das Cache-Leck und den `$id`-Fehler (P-G6). Ajv verschlüsselt kompilierte Muster über `toString()`; ohne eigenes `toString` hätten alle Muster einer Instanz das erste geteilt. Die neuen Tests haben das vor dem Deploy gefunden.
+  8. **`url-diff` wendet den Glob über RE2 an (S-DOS-1).** Er war polynomiell: drei Sterne über 2.000 Zeichen kosteten 54 s. In `html.ts` ist jedes Muster begrenzt oder als linearer `indexOf`-Lauf gebaut (S-DOS-2 plus `<title>`, `<main>` und `<br>`, die dieselbe Eigenschaft hatten). Jedes Muster hat jetzt einen Test mit 200 KB der Eingabe, die es früher angehalten hat. ADR-73 hatte das behauptet, aber nie gemessen.
+  9. **Sichtbarkeit.** Diese Zähler kommen dazu:
+     - `x402:terms_own_input` (mit Umgebung)
+     - `rejected_input`
+     - `client_gone`
+     - `recorded_late`
+     - `rate_limited` und `unsupported_media` (für die Absagen vor dem Handler)
+
+     Außerdem zeigt `x402_pending_broadcasts` in der Admin-Übersicht die noch nicht verbuchten Überweisungen. Die ADR-79-Absage mit Zahlung steht jetzt in `x402_failures`.
+  10. **Die Zusagen sagen, was stimmt (W-02, W-04, W-10).** `/v1/commitments`, SPEC-PAYMENTS, README und `skill.md` sagen jetzt: Keine Autorisierung für eine Zahlung zwischen zwei Agenten läuft durch uns. Die einzige, die wir einreichen, ist unser eigener Preis für unseren eigenen Dienst, nach der Lieferung oder gar nicht. Und: Die Desk kauft live nicht mehr.
+- **Bewusst nicht gebaut:**
+  - Das 415 für Körper ohne `application/json` (K-A14) wird nur gezählt, nicht geöffnet.
+  - Leere Ergebnisse werden weiterhin nicht abgelehnt (ADR-78).
+  - Das Ratenlimit bleibt, wie es ist, und wird nur sichtbar gemacht.
+  - Kein Aufwand für PayAI oder CDP.
+  - STATUS und DECISIONS werden nicht aufgeräumt (W-06).
+  - Die Datenbanksicherung wird nicht automatisiert (W-01 bleibt offen). Es gibt nur eine einmalige Kopie vor dem Deploy.
+
+  Alles davon wäre Weiterbauen, und das schließt der Winterschlaf aus.
+- Status: accepted, gebaut und getestet. Deploy siehe Nachtrag.

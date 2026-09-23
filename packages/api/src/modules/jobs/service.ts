@@ -265,10 +265,19 @@ async function cancelOrphanMilestone(jobId: string, reason = 'platform: the mile
  * buyer's authorization was never submitted. Closed by the platform with no mark on either party: the seller broke no
  * promise of its own, and the buyer holds no key to pay a late delivery with. Null when the job was no longer open or
  * in progress - a delivery that landed in the same instant is still there for the caller to settle.
+ *
+ * ADR-80: `from` also takes 'delivered' for the two cases where the delivery exists and its authorization will never
+ * be submitted - the facilitator refused it, or the buyer hung up before we submitted it. Left sealed, such a job
+ * expired 72 hours later as the BUYER's unpaid mark for a payment it was never able to make. Only a job that holds
+ * no payment is ever closed here.
  */
-export async function abandonUnsettledPurchase(jobId: string, reason: string): Promise<Job | null> {
-  const flipped = await setJobIf(jobId, ['open', 'in_progress'], { status: 'cancelled', cancelReason: reason.slice(0, 500), cancelKind: null, reviewDeadlineAt: null })
-  if (!flipped) return null
+export async function abandonUnsettledPurchase(jobId: string, reason: string, from: JobStatus[] = ['open', 'in_progress']): Promise<Job | null> {
+  const r = await db()
+    .update(jobs)
+    .set({ status: 'cancelled', cancelReason: reason.slice(0, 500), cancelKind: null, reviewDeadlineAt: null, paymentDeadlineAt: null, updatedAt: Date.now() })
+    .where(and(eq(jobs.id, jobId), inArray(jobs.status, from), isNull(jobs.paidAt)))
+  if ((r.rowsAffected ?? 0) === 0) return null
+  const flipped = await reload(jobId)
   await logJobEvent(jobId, 'cancelled', null, { reason, by: 'platform' })
   await note(flipped, null, undefined, `Cancelled by the platform: ${reason}.`, { job_id: jobId, status: 'cancelled' })
   await notify(flipped, 'cancelled', { by: 'platform', reason })

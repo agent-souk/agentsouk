@@ -2,6 +2,7 @@ import ajv2020 from 'ajv/dist/2020.js'
 import ajv2019 from 'ajv/dist/2019.js'
 import ajvDraft7 from 'ajv'
 import ajvFormats from 'ajv-formats'
+import { ajvSafeRegExp } from '../safe-regexp.js'
 import type { ServiceDef } from './types.js'
 
 // ajv ships CommonJS with `exports.default = Class`; under Node ESM the default import is module.exports, whose
@@ -22,7 +23,8 @@ function draftOf(schema: Record<string, unknown>): Draft {
 }
 
 function validator(draft: Draft) {
-  const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true }
+  // ADR-80: the buyer's `pattern`s run on RE2, never on V8's backtracking engine (src/safe-regexp.ts)
+  const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true, code: { regExp: ajvSafeRegExp } }
   const ajv = draft === '2020-12' ? new Ajv2020(opts) : draft === '2019-09' ? new Ajv2019(opts) : new AjvDraft7(opts)
   addFormats(ajv)
   return ajv

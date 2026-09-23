@@ -38,3 +38,43 @@ describe('validateJson service', () => {
     expect(r.message).toContain('1 of 2')
   })
 })
+
+/** ADR-80: the buyer's `pattern` runs on RE2. `^(a+)+$` against 30 characters took 8.7 s in V8, and 40 would take hours. */
+describe('validateDocuments against a pattern written to hang it (ADR-80)', () => {
+  it('answers a catastrophic pattern at once, with the right verdict', () => {
+    const schema = { type: 'object', properties: { s: { type: 'string', pattern: '^(a+)+$' } } }
+    const t = Date.now()
+    const r = validateDocuments(schema, [{ s: 'a'.repeat(5000) + '!' }, { s: 'a'.repeat(5000) }])
+    expect(Date.now() - t).toBeLessThan(1000)
+    expect(r.schema_error).toBeNull()
+    expect(r.results.map((x) => x.valid)).toEqual([false, true])
+  })
+
+  it('runs patternProperties on the same engine', () => {
+    const schema = { type: 'object', patternProperties: { '^(a|a)+$': { type: 'number' } } }
+    const t = Date.now()
+    const r = validateDocuments(schema, [{ ['a'.repeat(3000) + '!']: 'not a number' }])
+    expect(Date.now() - t).toBeLessThan(1000)
+    expect(r.results[0]!.valid).toBe(true) // the key does not match, so the string value is not checked
+  })
+
+  it('keeps ordinary patterns working, searched anywhere as JSON Schema says', () => {
+    const schema = { type: 'object', properties: { zip: { type: 'string', pattern: '\\d{5}' }, id: { type: 'string', pattern: '^[A-Z]{3}-\\d+$' } } }
+    const r = validateDocuments(schema, [{ zip: 'D-12345', id: 'ABC-42' }, { zip: '1234', id: 'abc-42' }])
+    expect(r.results.map((x) => x.valid)).toEqual([true, false])
+    expect(r.results[1]!.errors.map((e) => e.path).sort()).toEqual(['/id', '/zip'])
+  })
+
+  it('reads ECMA-262 pattern syntax the way JSON Schema writes it (unicode escapes, named groups)', () => {
+    const schema = { type: 'object', properties: { a: { type: 'string', pattern: '^\\u0041+$' }, y: { type: 'string', pattern: '^(?<year>\\d{4})-' } } }
+    const r = validateDocuments(schema, [{ a: 'AAA', y: '2026-09' }, { a: 'B', y: '26-09' }])
+    expect(r.schema_error).toBeNull()
+    expect(r.results.map((x) => x.valid)).toEqual([true, false])
+  })
+
+  it('reports a pattern RE2 cannot run (lookahead, backreference) as a schema that does not compile', () => {
+    const r = validateDocuments({ type: 'string', pattern: '^(?=a)a$' }, ['a'])
+    expect(r.schema_error).toBeTruthy()
+    expect(r.results).toEqual([])
+  })
+})

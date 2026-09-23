@@ -5,6 +5,7 @@ import { safeFetch } from '../ssrf.js'
 import { parseLooseJson } from './extract-structured.js'
 import type { ServiceDef } from './types.js'
 import { validateDocuments } from './validate-json.js'
+import { safeRegExp } from '../safe-regexp.js'
 
 /**
  * ADR-70: the tenth first-party x402 service and the third sibling of extract-web and extract-pdf - the family the
@@ -335,7 +336,8 @@ export function pruneToSchema(schema: Record<string, unknown>, value: unknown): 
   const properties = props as Record<string, Record<string, unknown>>
   const patterns = Object.keys((schema.patternProperties ?? {}) as Record<string, unknown>).flatMap((p) => {
     try {
-      return [new RegExp(p)]
+      // ADR-80: the buyer's pattern, run on RE2 - over keys the buyer's image steers (src/safe-regexp.ts)
+      return [safeRegExp(p)]
     } catch {
       return []
     }

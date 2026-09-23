@@ -2,6 +2,7 @@ import ajv2020 from 'ajv/dist/2020.js'
 import ajv2019 from 'ajv/dist/2019.js'
 import ajvDraft7 from 'ajv'
 import ajvFormats from 'ajv-formats'
+import { ajvSafeRegExp } from './safe-regexp.js'
 
 /**
  * JSON Schema validation for listing promises (ADR-25, tier 0 of the dispute design): a seller who publishes an
@@ -28,7 +29,8 @@ const validators = new Map<Draft, InstanceType<typeof AjvDraft7>>()
 function validator(draft: Draft) {
   let ajv = validators.get(draft)
   if (!ajv) {
-    const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true }
+    // ADR-80: sellers' `pattern`s run on RE2, not on V8's backtracking engine (lib/safe-regexp.ts)
+    const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true, code: { regExp: ajvSafeRegExp } }
     ajv = draft === '2020-12' ? new Ajv2020(opts) : draft === '2019-09' ? new Ajv2019(opts) : new AjvDraft7(opts)
     addFormats(ajv)
     validators.set(draft, ajv)
@@ -53,9 +55,18 @@ export function checkAgainstSchema(schema: Record<string, unknown>, value: unkno
   try {
     check = ajv.compile(schema)
   } catch (e) {
+    forget(ajv, schema)
     return { result: 'invalid_schema', errors: [(e as Error).message.slice(0, 500)] }
   }
-  const ok = check(value) as boolean
+  let ok: boolean
+  try {
+    ok = check(value) as boolean
+  } finally {
+    // ADR-80: the ajv instances stay warm, but no schema stays in them. Every call brings a schema object freshly read
+    // from the database, Ajv caches each one by identity (~14 KB, forever), and a schema with an $id registered that
+    // id - so its SECOND check answered invalid_schema, which every caller treats as "never blocks" (review P-G6).
+    forget(ajv, schema)
+  }
   if (ok) return { result: 'pass', errors: [] }
   // ADR-79: name the field. Ajv's own text for the two most common mistakes - an unknown key and a missing one -
   // says only THAT something is wrong ("must NOT have additional properties"), and a buyer that cannot see WHICH
@@ -72,6 +83,14 @@ export function checkAgainstSchema(schema: Record<string, unknown>, value: unkno
     return `${e.instancePath || '/'}: ${e.message ?? e.keyword}${extra}`
   })
   return { result: 'fail', errors }
+}
+
+function forget(ajv: InstanceType<typeof AjvDraft7>, schema: Record<string, unknown>): void {
+  try {
+    ajv.removeSchema(schema)
+  } catch {
+    /* a schema Ajv never stored has nothing to remove */
+  }
 }
 
 /** True when the value looks like a usable JSON Schema object (non-empty plain object). */

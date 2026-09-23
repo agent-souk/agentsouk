@@ -2,7 +2,12 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-23 nachmittags; API 0.5.24 = ADR-79, Agents 0.2.21 = ADR-77; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-23 abends; API 0.5.25 + Agents 0.2.22 = ADR-80; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 99 (23.09. abends, ADR-80): Winterschlaf — Nick hat Option A gewählt. Nichts Neues bauen.**
+**Die einzige offene Frage ist der 23.10.2026:** gab es bis dahin einen live bezahlten Kauf, der die Latte aus ADR-80 erfüllt (Eingabe ≠ `example_input`, Wallet nicht A/C/0x7dd8/eigene, nie gesehener Text-SHA, nicht leeres Ergebnis)? Wenn nein: beide Fly-Apps stoppen (Nicks Entscheidung am 23.10.). Frühindikator: `x402:terms_own_input:live` in `GET /v1/admin/overview` → `discovery`. Täglicher Blick: `x402_failures`, `x402_pending_broadcasts` (muss leer sein, sonst hängt eine eingereichte Überweisung), `between_outsiders`.
+**Vorher repariert (ADR-80):** x402 zieht nach Auflegen nicht mehr ein, eine wiederholte Autorisierung hört „already paid for job …“ statt „nothing was charged“, der Tx-Hash wird vor allem anderen gespeichert und vom Sweep `x402-broadcasts` nachverbucht, abgelehnter Einzug ohne Unbezahlt-Marke, Autorisierung muss genau den Preis nennen; fremde Regexe auf RE2 in API und Agents (**die API selbst war über `example_input` + `pattern` beim Listing-Anlegen anhaltbar**), `url-diff`-Glob über RE2, `html.ts` linear; `/v1/commitments` präzise zur x402-Ausnahme; Agents-Maschine schläft (`min_machines_running = 0`).
+**Nicht gebaut und auch nicht bauen:** 415 für text/plain, leere Ergebnisse ablehnen, Ratenlimit, PayAI/CDP, Doku-Aufräumen, automatische DB-Sicherung (W-01 offen; einmalige Kopie siehe ADR-80-Nachtrag). CDP-Einträge verfallen ~15.10., gewollt.
 
 **Checkpoint 98 (23.09., Stichtag): die Latte ist nicht erreicht, und eine Prüfung mit frischem Blick hat 82 Funde — Details, Zahlen und Entscheidungsvorlage in `docs/REVIEW-2026-09-23.md`.**
 **Stichtag:** letzter Verkäuferauftrag live 19.09. 03:36 UTC, letzter Kaufversuch 20.09. 00:09, seitdem nichts; `between_outsiders` 78 / 1 / 0. ADR-78 hat dafür vorab „ein sauberes Nein“ festgelegt. **Die Entscheidung (Winterschlaf / ein begrenzter letzter Verkäufertest / Nachfrageseite wechseln) liegt bei Nick und ist noch nicht gefallen** — vorher nichts Neues bauen.

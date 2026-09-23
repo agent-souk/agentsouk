@@ -121,8 +121,31 @@ export function recordMcpCall(rpcMethod: unknown, toolName: unknown, ua: string 
  * that would not broadcast). Without them the only way to tell whether anybody has tried is to go looking for
  * side effects in the job table, which is how we ended up diagnosing this marketplace from our own test traffic.
  */
-export function recordX402(stage: 'terms' | 'paid' | 'refused' | 'catalogued' | 'catalog_rejected', ua: string | undefined | null, now = Date.now()) {
-  count(`x402:${stage}`, ua, now)
+/**
+ * ADR-80: the stages that tell a buyer apart from a crawler carry the environment, because the one question these
+ * counters have to answer during the hibernation - did anybody with work of their own ask for a price on live? - was
+ * unanswerable when sandbox and live were summed (x402:paid showed 21 in a week that had 19 live purchases).
+ */
+export type X402Stage =
+  | 'terms'
+  | 'paid'
+  | 'refused'
+  | 'catalogued'
+  | 'catalog_rejected'
+  /** a 402 for a non-empty body that is not the listing's own example_input: somebody with work in hand */
+  | 'terms_own_input'
+  /** the input failed the listing's published schema before any price was named (ADR-79) */
+  | 'rejected_input'
+  /** the buyer hung up before its authorization was submitted, so it was not (ADR-80) */
+  | 'client_gone'
+  /** a broadcast transfer the request could not record, recorded later by the sweep */
+  | 'recorded_late'
+  /** answered before the handler ran: rate limit, wrong media type, malformed JSON */
+  | 'rate_limited'
+  | 'unsupported_media'
+  | 'bad_request'
+export function recordX402(stage: X402Stage, ua: string | undefined | null, now = Date.now(), env?: 'live' | 'test') {
+  count(env ? `x402:${stage}:${env}` : `x402:${stage}`, ua, now)
 }
 
 export type McpCall = { id: unknown; method: unknown; name: unknown }

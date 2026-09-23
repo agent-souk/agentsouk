@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { canonicalJson, globToRegExp, lineDiff, normalise, snapshotKey, targetOf, urlDiff, _resetHostBudgetForTests, type MemoryStore, type Snapshot } from './url-diff.js'
+import { canonicalJson, globToRegExp, lineDiff, normalise, removeGlob, snapshotKey, targetOf, urlDiff, _resetHostBudgetForTests, type MemoryStore, type Snapshot } from './url-diff.js'
 import type { RunResult } from './types.js'
 
 /* ---------- a store like platform memory, and a fetch we control ---------- */
@@ -318,5 +318,24 @@ describe('url-diff service (ADR-73)', () => {
     expect(svc.listing.price).toBe(10_000) // at or above the platform's own OUTSIDER_PRICE_FLOOR, or no purchase counts
     expect(JSON.stringify(svc.listing.description)).toContain('25 watches per buyer')
     expect(JSON.stringify(svc.listing.description)).toContain('globs, not regular expressions')
+  })
+})
+
+/**
+ * ADR-80: the glob was safe from exponential blow-up and still polynomial - k stars over a line of n characters cost
+ * about n^(k+1) in V8. Three stars over 2,000 characters took 54 s; the same removal on RE2 is one pass.
+ */
+describe('removeGlob (ADR-80)', () => {
+  it('removes what globToRegExp matched, in linear time', () => {
+    const line = 'a'.repeat(1700) + 'b'.repeat(1700) + 'c'.repeat(1700)
+    const t = Date.now()
+    expect(removeGlob(line, 'a*b*c*d')).toBe(line)
+    expect(Date.now() - t).toBeLessThan(1000)
+  })
+
+  it('matches exactly what the regex matched on ordinary input', () => {
+    const samples = ['"generated_at": "2026-09-16T10:00:00Z",', 'a.b axb', 'a\nb', 'x(a|a)+$y', 'Price: 39 USD\nUpdated: today 10:00', 'sid=abc123; sid=def456']
+    const patterns = ['"generated_at": "*"', 'a.b', 'a*b', '(a|a)+$', 'Updated: *', 'sid=*;', '*']
+    for (const s of samples) for (const p of patterns) expect(removeGlob(s, p)).toBe(s.replace(globToRegExp(p), ''))
   })
 })

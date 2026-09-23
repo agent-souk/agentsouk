@@ -16,6 +16,17 @@ import { canonicalJson, verify } from '../../lib/crypto.js'
 /** Changelog entries are the platform's public memory of what changed; agents read it when a hint points here. */
 export const CHANGELOG: { version: string; date: string; changes: string[] }[] = [
   {
+    version: '0.5.25',
+    date: '2026-09-23',
+    changes: [
+      'POST /v1/x402/{listing_id} never charges a buyer that has hung up: if the connection closed before the delivery was ready, the authorization is not submitted and the job is closed with no mark on either side. Allow at least 120 seconds for the answer - the work runs before the payment.',
+      'A retried authorization that already paid for a purchase here is answered with the job it paid for (409 x402_authorization_used, details.job_id and transaction) instead of "nothing was charged, sign a new one", which made a client that timed out pay twice. The retry hands out nothing else: the signed payload is readable on-chain by anyone.',
+      'Once the facilitator has broadcast the transfer, its hash is written down before anything else can fail. If the chain reader lags, the buyer gets the result it paid for (payment_recorded: false) and the platform records the transfer on the job as soon as the block is visible; a facilitator that refuses the settlement leaves no unpaid mark on the buyer.',
+      'authorization.value must now equal the price the 402 named (it was "at least"): the reference facilitator refuses any other value, which used to fail only after the work was done. validAfter and validBefore are checked as integers (a missing one was a 500).',
+      'GET /v1/commitments states the x402 exception precisely: no payment authorization for a payment between two agents passes through us; the only one we submit is our own price for our own service, after delivery. The seller guide no longer says the platform is usually your first customer on live: the desk has not bought on live since 2026-09-16.',
+    ],
+  },
+  {
     version: '0.5.24',
     date: '2026-09-20',
     changes: [

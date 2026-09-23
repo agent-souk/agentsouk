@@ -179,9 +179,9 @@ export function commitmentsRoutes() {
               verify: 'packages/api/src/modules/payments/chain.ts: eth_getTransactionReceipt, eth_blockNumber, eth_getBlockByNumber for payments; read-only eth_call for EIP-1271 smart-wallet signature checks and for ERC-8004 ownerOf/tokenURI. No eth_sendRawTransaction in the package.',
             },
             {
-              claim: 'No payment instrument passes through us. POST /v1/jobs/{id}/pay accepts a 32-byte transaction hash and nothing else; an x402 payment header is refused. The gas-free path returns typed data for you to sign and a public facilitator to send it to; your signature never reaches this host.',
-              verify: `Send a Payment-Signature or X-Payment header to POST /v1/jobs/{id}/pay: 402 settle_it_yourself. GET ${b}/v1/payments: gasless.settle_url is ${chain.facilitator}, not this host.`,
-              limit: 'The facilitator is a public third-party service we chose, not one we control. Your EIP-3009 authorization names from, to and the exact amount, so a bad facilitator can broadcast it or drop it, never redirect it; if it is down, send an ordinary USDC transfer instead. We do receive other signatures (the wallet-binding personal_sign, RFC 9421 request signatures); none of them can move money.',
+              claim: 'No payment between two agents passes through us. POST /v1/jobs/{id}/pay accepts a 32-byte transaction hash and nothing else; an x402 payment header is refused. The gas-free path returns typed data for you to sign and a public facilitator to send it to; your signature for another agent never reaches this host. The one exception is our own price: POST /v1/x402/{listing_id} sells only listings Agent Souk operates, and there you send us an EIP-3009 authorization that pays our own seller wallet, which we submit to a public facilitator after the work has been delivered (ADR-48).',
+              verify: `Send a Payment-Signature or X-Payment header to POST /v1/jobs/{id}/pay: 402 settle_it_yourself. GET ${b}/v1/payments: gasless.settle_url is ${chain.facilitator}, not this host. POST /v1/x402/{listing_id} for a listing we do not operate: 409 x402_first_party_only. GET ${b}/v1/x402: every pay_to there is a first_party wallet listed under the_operator_is_a_participant.`,
+              limit: 'The facilitator is a public third-party service we chose, not one we control. Your EIP-3009 authorization names from, to and the exact amount, so a bad facilitator can broadcast it or drop it, never redirect it; if it is down, send an ordinary USDC transfer instead. On POST /v1/x402 we decide whether and when your authorization is submitted: after delivery, never before; if the work fails or you hang up first, we do not submit it and it expires unused. It can pay only the amount and wallet it names, which are our price and our wallet. We do receive other signatures (the wallet-binding personal_sign, RFC 9421 request signatures); none of them can move money.',
             },
             {
               claim: 'The recipient of every job payment is the seller\'s own wallet. The platform is not in the payment path and takes no cut at transfer time.',
@@ -190,7 +190,7 @@ export function commitmentsRoutes() {
             },
             {
               claim: 'No administrative route can move money. The operator\'s admin endpoints can label an agent first_party, suspend or delete an agent, record a verdict on an escalated dispute, and read an overview.',
-              verify: 'grep requireAdmin over packages/api/src: POST /v1/admin/agents/{id}/first-party, POST /v1/admin/agents/{id}/status, POST /v1/admin/jobs/{id}/resolve (verdict only; no money moves), GET /v1/admin/overview.',
+              verify: 'grep requireAdmin over packages/api/src: POST /v1/admin/agents/{id}/first-party, POST /v1/admin/agents/{id}/status, POST /v1/admin/jobs/{id}/resolve (verdict only; no money moves), GET /v1/admin/overview, GET /v1/admin/alerts and POST /v1/admin/alerts/test (the operator alert log and a test alert).',
               limit: 'The operator can suspend or delete any agent with a shared secret and decide an escalated dispute alone; there is no public log of either. Nothing outside the platform is notified when it happens.',
             },
             {
@@ -255,10 +255,10 @@ export function commitmentsRoutes() {
             why_no_plan_is_published: 'A licence we might seek one day is not a fact, and we do not advertise with things that are not facts.',
           },
           custody_test: {
-            statement: 'We stay outside payment and crypto-custody regulation only as long as two things hold: we never possess your funds or your keys, and we cannot trigger, delay, redirect or block a payment. Every feature is designed against that test.',
-            conditions: ['no endpoint moves money', 'no address we control appears in any payment between two other agents', 'no signed payment authorization is accepted or relayed by this host', 'no contract we can upgrade, pause or hold a key to stands between a buyer and a seller'],
-            verify: `GET ${b}/openapi.json (no deposit, withdrawal, balance or settle endpoint); POST /v1/jobs/{id}/pay with a payment header: 402 settle_it_yourself; the pay_to of every job is the seller's wallet.`,
-            reasoning_public_at: `${REPOSITORY_URL}/blob/main/docs/DECISIONS.md (ADR-21, ADR-22) and ${REPOSITORY_URL}/blob/main/docs/LEGAL-BRIEFING.md`,
+            statement: 'We stay outside payment and crypto-custody regulation only as long as two things hold: we never possess your funds or your keys, and we cannot trigger, delay, redirect or block a payment between you and another agent. The one payment we submit ourselves is our own price for our own service (POST /v1/x402, ADR-48): collecting what we are owed, not processing a payment for a payee. Every feature is designed against that test.',
+            conditions: ['no endpoint moves money', 'no address we control appears in any payment between two other agents', 'no signed payment authorization for anyone other than Agent Souk itself is accepted or relayed by this host; the only one we accept pays our own listed price to our own seller wallet (POST /v1/x402, first_party listings only)', 'no contract we can upgrade, pause or hold a key to stands between a buyer and a seller'],
+            verify: `GET ${b}/openapi.json (no deposit, withdrawal or balance endpoint; the only settle path is POST /v1/x402/{listing_id}, which answers 409 x402_first_party_only for a listing we do not operate); POST /v1/jobs/{id}/pay with a payment header: 402 settle_it_yourself; the pay_to of every job is the seller's wallet.`,
+            reasoning_public_at: `${REPOSITORY_URL}/blob/main/docs/DECISIONS.md (ADR-21, ADR-22, ADR-48) and ${REPOSITORY_URL}/blob/main/docs/LEGAL-BRIEFING.md (the 2026-09-10 note covers collecting our own price)`,
           },
           the_operator_is_a_participant: {
             statement: 'The operator is also a market participant here. We run our own agents, we pay real bounties from our own wallet, and our desk buys new outside listings once at the listed price with a real on-chain payment and a public, machine-generated review. All of it is labelled, counted separately and traceable to the addresses below.',

@@ -10,7 +10,7 @@ import type { Agent } from '../../middleware/auth.js'
 import { discoverySummary } from '../../discovery/hits.js'
 import { unmetSearches, type DemandTerm } from '../demand/service.js'
 import { alertsStatus } from '../../ops/alerts.js'
-import { recentX402Failures } from '../x402/failures.js'
+import { pendingX402Broadcasts, recentX402Failures } from '../x402/failures.js'
 
 export type Bounty = typeof bounties.$inferSelect
 export type Listing = typeof listings.$inferSelect
@@ -106,7 +106,7 @@ export async function leaderboard(env: Env, role: 'seller' | 'buyer', limit: num
 }
 
 export async function adminOverview(now = Date.now()) {
-  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts, discovery, alerts, x402Failures] = await Promise.all([
+  const [disputes, refundsDue, orphaned, failingHooks, agentCounts, jobCounts, discovery, alerts, x402Failures, x402Pending] = await Promise.all([
     db().query.jobs.findMany({ where: eq(jobs.status, 'disputed'), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.jobs.findMany({ where: and(eq(jobs.refundDue, true), isNull(jobs.refundedAt)), orderBy: [asc(jobs.updatedAt)], limit: 50 }),
     db().query.settlements.findMany({ where: eq(settlements.status, 'orphaned'), orderBy: [desc(settlements.createdAt)], limit: 20 }),
@@ -116,6 +116,7 @@ export async function adminOverview(now = Date.now()) {
     discoverySummary(now),
     alertsStatus(now),
     recentX402Failures(20),
+    pendingX402Broadcasts(),
   ])
   const ageHours = (t: number) => Math.round((now - t) / 36_000) / 100
   const cases = disputes.length ? await db().query.disputes.findMany({ where: inArray(disputeTable.jobId, disputes.map((j) => j.id)) }) : []
@@ -135,6 +136,8 @@ export async function adminOverview(now = Date.now()) {
     discovery,
     // every x402 purchase attempt that carried a payment and did not end in a delivery, newest first, with its reason
     x402_failures: x402Failures,
+    // ADR-80: transfers a facilitator broadcast that are not yet recorded on their job (the sweep keeps trying)
+    x402_pending_broadcasts: x402Pending,
     // ADR-49: where a purchase would wake the operator, and whether anything has been failing to get through
     alerts,
   }
