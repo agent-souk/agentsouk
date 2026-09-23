@@ -2,7 +2,13 @@
 
 ## Name: Agent Souk · Pakete `agentsouk` (npm, PyPI) · API `https://api.agentsouk.dev` · Keys `as_live_` / `as_test_` (ADR-19)
 
-## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-20 nachmittags; API 0.5.24 = ADR-79, Agents 0.2.21 = ADR-77; SDKs 0.4.2, Plugin/Extension 0.3.8)
+## FÜR DIE NÄCHSTE SITZUNG (Übergabe 2026-09-23 nachmittags; API 0.5.24 = ADR-79, Agents 0.2.21 = ADR-77; SDKs 0.4.2, Plugin/Extension 0.3.8)
+
+**Checkpoint 98 (23.09., Stichtag): die Latte ist nicht erreicht, und eine Prüfung mit frischem Blick hat 82 Funde — Details, Zahlen und Entscheidungsvorlage in `docs/REVIEW-2026-09-23.md`.**
+**Stichtag:** letzter Verkäuferauftrag live 19.09. 03:36 UTC, letzter Kaufversuch 20.09. 00:09, seitdem nichts; `between_outsiders` 78 / 1 / 0. ADR-78 hat dafür vorab „ein sauberes Nein“ festgelegt. **Die Entscheidung (Winterschlaf / ein begrenzter letzter Verkäufertest / Nachfrageseite wechseln) liegt bei Nick und ist noch nicht gefallen** — vorher nichts Neues bauen.
+**Korrekturen an früheren Checkpoints (gemessen und gegengeprüft):** leere Fremdkäufe **30 von 52**, nicht 18; nutzbarer Fremdumsatz höchstens 0,50 USDC; nur **zwei** Betreiber mit eigener Eingabe (A: 47 Käufe, B: einer); `0xc9c71670` ist **kein** Sandbox-Käufer (Checkpoint 92 irrt), sondern ein Live-Katalog-Abgraser, der nur unser `example_input` kauft; „jeder Käufer kam über einen Katalog“ ist nicht gemessen (kein Referrer gespeichert).
+**Gilt unabhängig von der Entscheidung, solange `/v1/x402` offen ist:** ein fremder Käufer kann zahlen und kein Ergebnis bekommen (Python-Standardclient bricht nach 5 s ab, wir rechnen trotzdem ab; die Wiederholung hört „Nothing was charged“ und zahlt doppelt; ein Fehler nach dem Broadcast verwirft den Tx-Hash) — und ein einziger kostenloser Auftrag blockiert alle 13 Dienste (Regex aus `validate-json`, Globs aus `url-diff`, `html.ts`). Beheben oder auslisten. Außerdem: `/v1/commitments` sagt, keine signierte Autorisierung laufe durch uns — `/v1/x402` tut genau das; keine DB-Sicherung außer 5 Tagen Fly-Snapshots.
+**Code-Stand:** unverändert, Typecheck sauber, 680 Tests grün.
 
 **Checkpoint 97 (20.09. nachmittags, ADR-79): die Absage kommt jetzt vor dem Preis — sieben verlorene Kaufversuche an einer Regel, die im eigenen Schema stand.**
 Nick bekam nachts Alarme. Quelle war **nicht** live, sondern der Sandkasten: `moneyagent` (registriert 04:46 UTC, Familie seit 08.09.) hat von 04:52 bis 11:58 den Katalog durchprobiert — **21 Aufträge, 15 bezahlt (0,32 Test-USDC)**, und dreimal meldete die Anlage **„An outsider ordered from an outsider"**. Im Sandkasten steht `between_outsiders` trotzdem bei **29 Bestellungen von 8 Wallets, 0 abgeschlossen**: vier wurden abgeschlossen und disqualifiziert (2× kein Geld bewegt, 2× unser Faucet). Live unverändert 86/87, seit dem Prüfstand um 00:09 (neun kaputte Zahlungs-Payloads in 1,4 s gegen `exploit-chain`, alle korrekt abgewiesen, Wallet hält 0 USDC) nichts Neues.
