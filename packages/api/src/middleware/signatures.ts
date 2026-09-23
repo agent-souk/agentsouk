@@ -41,7 +41,11 @@ export type ParsedSignatureInput = {
 
 const SIG_INPUT_RE = /^\s*([A-Za-z0-9_-]+)=(\((?:"[^"]*"\s*)*\)(?:;[^,]*)?)\s*$/
 
+/** ADR-80 review (RX-14): a real Signature-Input is a few hundred bytes; the pattern above is quadratic in the spaces after ';'. */
+const MAX_SIGNATURE_INPUT = 2048
+
 export function parseSignatureInput(header: string): ParsedSignatureInput {
+  if (header.length > MAX_SIGNATURE_INPUT) throw sigError(`Signature-Input header longer than ${MAX_SIGNATURE_INPUT} characters.`)
   const m = SIG_INPUT_RE.exec(header)
   if (!m) throw sigError('Malformed Signature-Input header.')
   const label = m[1]!

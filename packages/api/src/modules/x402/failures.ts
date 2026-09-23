@@ -25,7 +25,7 @@ export async function noteX402Failure(f: X402Failure): Promise<void> {
   await db().insert(platformState).values({ key: `${PREFIX}${ulid()}`, value: f, createdAt: Date.now() })
   const rows = await db().select({ key: platformState.key }).from(platformState).where(sql`${platformState.key} like ${PREFIX + '%'}`).orderBy(asc(platformState.key))
   if (rows.length > KEPT) await db().delete(platformState).where(inArray(platformState.key, rows.slice(0, rows.length - KEPT).map((r) => r.key)))
-  await raiseX402Failure({ env: f.env, payer: f.payer, listingTitle: f.listing_title, code: f.code, status: f.status, message: f.message, jobId: f.job_id }).catch((err) => log.warn({ err }, 'x402: operator alert about a failed purchase failed'))
+  await raiseX402Failure({ env: f.env, payer: f.payer, listingTitle: f.listing_title, code: f.code, status: f.status, message: f.message, jobId: f.job_id, transaction: f.transaction ?? null }).catch((err) => log.warn({ err }, 'x402: operator alert about a failed purchase failed'))
 }
 
 /** The newest failed purchase attempts, for the operator view. */
@@ -63,6 +63,10 @@ export async function savePendingBroadcast(b: PendingBroadcast): Promise<void> {
 }
 export async function dropPendingBroadcast(jobId: string): Promise<void> {
   await db().delete(platformState).where(eq(platformState.key, broadcastKey(jobId)))
+}
+export async function pendingBroadcastFor(jobId: string): Promise<PendingBroadcast | null> {
+  const row = await db().query.platformState.findFirst({ where: eq(platformState.key, broadcastKey(jobId)) })
+  return (row?.value as PendingBroadcast | undefined) ?? null
 }
 /** For the operator view: broadcast transfers not yet recorded on their job. */
 export async function pendingX402Broadcasts(): Promise<PendingBroadcast[]> {

@@ -13,7 +13,7 @@ import { canonicalJson } from '../../lib/crypto.js'
 import { registerSweep } from '../../lib/scheduler.js'
 import { recordX402 } from '../../discovery/hits.js'
 import { raiseX402Purchase } from '../../ops/alerts.js'
-import { dropPendingBroadcast, noteX402Failure, pendingX402Broadcasts, savePendingBroadcast } from './failures.js'
+import { dropPendingBroadcast, noteX402Failure, pendingBroadcastFor, pendingX402Broadcasts, savePendingBroadcast } from './failures.js'
 import { bazaarExtension, serviceMetadata } from './bazaar.js'
 import { ownershipProofs } from '../../discovery/ownership.js'
 import { rateLimit } from '../../middleware/ratelimit.js'
@@ -24,7 +24,7 @@ import { abandonUnsettledPurchase, acceptDelivery, createJob, payJob } from '../
 import { unitBasisSentence, unitsForInput } from '../listings/units.js'
 import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
 import { assertNotSanctioned } from '../payments/sanctions.js'
-import { authorizationUsed, usdcBalance } from '../payments/chain.js'
+import { authorizationUsed, findAuthorizationTransaction, usdcBalance } from '../payments/chain.js'
 import { CHAINS, encodePaymentRequiredHeader, formatUsdc, networkFor, paymentRequiredV1, paymentTerms, transferAuthorizationDigest, type PaymentRequiredV2, type RequirementsV2 } from '../payments/x402.js'
 
 /**
@@ -155,8 +155,19 @@ async function authorizationUse(env: Env, from: string, nonce: string): Promise<
 }
 async function saveAuthorizationUse(env: Env, from: string, nonce: string, value: AuthorizationUse): Promise<void> {
   const key = authUseKey(env, from, nonce)
+  // a use that names a transaction is the record of money that moved: it is never replaced by a later attempt
+  const known = await authorizationUse(env, from, nonce)
+  if (known?.transaction && known.transaction !== value.transaction) return
   await db().insert(platformState).values({ key, value, createdAt: Date.now() }).onConflictDoUpdate({ target: platformState.key, set: { value } })
 }
+
+/**
+ * ADR-80: how long a buyer's client must be willing to wait for the answer: the endpoint waits up to 90 s for the
+ * delivery, the facilitator up to 60 s for the settlement, and the platform up to 60 s more for the block, plus
+ * margin. Named where a buyer reads BEFORE paying (the 402, GET /v1/x402, skill.md) - the Python x402 client's default
+ * of 5 s used to give up after the work had started, and until 0.5.25 the payment was taken anyway.
+ */
+export const X402_ANSWER_WITHIN_SECONDS = 240
 
 /** A purchase still inside its own request gets this long before the sweep touches its transfer (payUntilMined waits 60 s). */
 export const X402_RECONCILE_AFTER_MS = 180_000
@@ -177,10 +188,24 @@ export async function reconcileX402Broadcasts(now = Date.now()): Promise<void> {
         await dropPendingBroadcast(b.job_id)
         continue
       }
-      if (used === true && b.attempts === 0) {
-        log.error({ broadcast: b }, 'x402: an authorization was used on-chain after the facilitator answer was lost; find the transaction and POST it to /v1/jobs/{id}/pay as the buyer')
-        await savePendingBroadcast({ ...b, attempts: 1, last_error: 'authorization used on-chain; transaction hash unknown' })
+      if (used !== true) continue // the node did not answer: ask again on the next sweep
+      // Used. If the same authorization paid another purchase here (a retry), this job was never paid and is closed.
+      const use = await authorizationUse(b.env, b.payer, b.nonce)
+      if (use?.transaction && use.job_id !== b.job_id) {
+        await abandonUnsettledPurchase(b.job_id, `platform: the buyer's authorization paid job ${use.job_id} instead; this job was never paid`, ['delivered'])
+        await dropPendingBroadcast(b.job_id)
+        continue
       }
+      // Otherwise it paid THIS job under a hash we never heard: the chain's own log names it, and the entry becomes an
+      // ordinary broadcast that the branch below records on the next sweep.
+      const found = await findAuthorizationTransaction(b.env, b.payer, b.nonce, Math.min(200_000, Math.ceil((now - Date.parse(b.at)) / 2_000) + 5_000))
+      if (found) {
+        await savePendingBroadcast({ ...b, transaction: found, attempts: b.attempts + 1, last_error: undefined })
+        await saveAuthorizationUse(b.env, b.payer, b.nonce, { job_id: b.job_id, listing_id: b.listing_id, at: b.at, transaction: found })
+        continue
+      }
+      if (b.attempts === 0) log.error({ broadcast: b }, 'x402: an authorization was used on-chain, and its AuthorizationUsed log was not found; left for the operator')
+      await savePendingBroadcast({ ...b, attempts: b.attempts + 1, last_error: 'authorization used on-chain; transaction not found in the logs yet' })
       continue
     }
     const buyer = await db().query.agents.findFirst({ where: eq(agents.id, b.buyer_agent_id) })
@@ -306,7 +331,7 @@ async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resou
     log.error({ err: e, facilitator: chain.facilitator, resource: resource.url }, 'x402 settle: no answer from the facilitator')
     throw new ApiError('payment_error', 'x402_settle_unknown', 'The facilitator did not answer, so it is not known whether your payment was submitted.', {
       status: 502,
-      hint: `Do not sign a new authorization for this order yet. If your authorization's nonce is still unused on-chain when it expires, nothing was charged and the job is closed with no mark; if it was used, the transfer is on the operator's record and is reconciled with the job.`,
+      hint: SETTLE_UNKNOWN_HINT,
     })
   }
   const catalogued = bazaarOutcome(res.headers?.get('extension-responses'))
@@ -320,12 +345,26 @@ async function settleAtFacilitator(env: Env, requirements: RequirementsV2, resou
   } catch {
     /* fall through to the error below */
   }
-  if (!res.ok || !parsed.success || !parsed.transaction) {
-    log.warn({ status: res.status, reason: parsed.errorReason, body: text.slice(0, 300) }, 'x402 settle refused')
-    throw errors.state('x402_settle_failed', `The facilitator did not broadcast the payment: ${parsed.errorReason ?? `HTTP ${res.status}`}.`, 'Nothing was charged. Check the wallet holds enough USDC and that the authorization has not expired, then request fresh terms and try again.')
+  if (res.ok && parsed.success && typeof parsed.transaction === 'string' && parsed.transaction) return parsed.transaction
+  // ADR-80 review: an answer that names a transaction was broadcast, whatever else it says (the reference facilitator
+  // answers `success: false, errorReason: "settlement_pending"` WITH the hash when only its wait for the receipt failed)
+  if (typeof parsed.transaction === 'string' && /^0x[0-9a-fA-F]{64}$/.test(parsed.transaction)) {
+    log.warn({ status: res.status, reason: parsed.errorReason, transaction: parsed.transaction }, 'x402 settle: broadcast, but not confirmed by the facilitator')
+    return parsed.transaction
   }
-  return parsed.transaction
+  // Only a refusal from the checks BEFORE a broadcast means that nothing moved. A 5xx, an answer we cannot read, or a
+  // failure without a known pre-broadcast reason may have come after it: those are "unknown", never "nothing was charged".
+  const reason = typeof parsed.errorReason === 'string' ? parsed.errorReason : ''
+  const refusedBeforeBroadcast = res.status < 500 && parsed.success === false && /^(invalid_|insufficient_funds|expired|not_yet_valid|nonce)/i.test(reason)
+  if (!refusedBeforeBroadcast) {
+    log.error({ status: res.status, reason, body: text.slice(0, 300) }, 'x402 settle: outcome unknown')
+    throw new ApiError('payment_error', 'x402_settle_unknown', `The facilitator's answer does not say whether your payment was submitted (${reason || `HTTP ${res.status}`}).`, { status: 502, hint: SETTLE_UNKNOWN_HINT })
+  }
+  log.warn({ status: res.status, reason, body: text.slice(0, 300) }, 'x402 settle refused')
+  throw errors.state('x402_settle_failed', `The facilitator refused the payment before submitting it: ${reason}.`, 'Nothing was charged. Check the wallet holds enough USDC and that the authorization has not expired, then request fresh terms and try again.')
 }
+
+const SETTLE_UNKNOWN_HINT = `Do not sign a new authorization for this order: it could pay a second time. If your authorization is still unused on-chain when it expires, nothing was charged and the job is closed with no mark. If it was used, the platform finds the transfer on-chain and records it on the job, and the result is yours - read it with this wallet's account key.`
 
 /**
  * The facilitator has broadcast the transfer, but a block still has to arrive before the platform's own on-chain
@@ -438,6 +477,8 @@ export async function x402Index(base: string, env: Env) {
       output_schema: listing.outputSchema ?? null,
       example_input: listing.exampleInput ?? null,
       turnaround_seconds: listing.turnaroundSeconds,
+      // ADR-80: how long the paid request may stay open; a client that gives up sooner is not charged and gets nothing
+      answer_within_seconds: X402_ANSWER_WITHIN_SECONDS,
     })),
     generated_at: new Date().toISOString(),
   }
@@ -623,7 +664,7 @@ export function x402Routes() {
         // own is somebody with work in hand asking what it costs.
         if (Object.keys(input).length > 0 && canonicalJson(input) !== canonicalJson(listing.exampleInput ?? null)) recordX402('terms_own_input', c.req.header('user-agent'), Date.now(), env)
         const error =
-          `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing.` +
+          `Pay ${formatUsdc(price)} and retry with the PAYMENT-SIGNATURE header (x402 v2; X-PAYMENT is accepted for v1). The work is done before the payment is submitted, so a failed delivery costs you nothing - and keep the paid request open: use a read timeout of at least ${X402_ANSWER_WITHIN_SECONDS} s. A client that hangs up first is not charged, and gets nothing.` +
           // ADR-77: a price that is higher than the listing's headline number has to say why in the same breath.
           (unitsFromRule ? ` This amount is for ${units} × ${listing.unitName ?? 'unit'}, counted from the input you sent (${unitBasisSentence(listing.unitBasis, listing.unitName)}). Sending a smaller input costs less; ordering fewer units than it needs would only be declined by the seller.` : '') +
           // ADR-79: a terms request with no body is how a catalogue asks, and it still gets its 402 - but a buyer
@@ -646,8 +687,13 @@ export function x402Routes() {
       let jobId: string | null = null
       let transaction: string | null = null
       const ua = c.req.header('user-agent')
-      /** ADR-80: true once the buyer's connection closed before its answer was written (node-server aborts the signal) */
-      const hungUp = () => c.req.raw.signal?.aborted === true
+      /**
+       * ADR-80: true once the buyer's connection closed before its answer was written. Two witnesses: the request's
+       * abort signal (node-server aborts it on a premature close; any middleware that rebuilds the request must pass it
+       * on - tolerateNulls once did not) and the Node response itself, which no middleware can replace.
+       */
+      const outgoing = (c.env as { outgoing?: { destroyed?: boolean; writableFinished?: boolean } } | undefined)?.outgoing
+      const hungUp = () => c.req.raw.signal?.aborted === true || (outgoing?.destroyed === true && outgoing.writableFinished !== true)
       try {
       assertOrderableInput(input, listing)
       const payment = parsePaymentHeader(header)
@@ -694,7 +740,7 @@ export function x402Routes() {
         throw errors.state(
           'x402_authorization_in_use',
           `This authorization is already paying for a purchase that is still running${use ? ` (job ${use.job_id})` : ''}.`,
-          'Its result comes in the answer to that first request. Do not sign a new authorization for the same order: it would pay a second time.',
+          `If you are still holding that first request, its answer carries the result. If you gave up on it, it is not charged; send this same authorization again once it has ended, with a read timeout of at least ${X402_ANSWER_WITHIN_SECONDS} s. Do not sign a new one for the same order: it would pay a second time.`,
         )
       }
       // ADR-80 review: claimed BEFORE the first await. Checked before the chain reads and set after them, two copies
@@ -702,17 +748,27 @@ export function x402Routes() {
       x402AuthorizationsRunning.add(authKey)
       let reserved = false
       try {
+        // ADR-80 review: what we know about this authorization is read BEFORE the chain. When the node lagged or failed,
+        // a retry of an authorization that had already paid used to be treated as a new purchase: the work ran twice,
+        // the facilitator refused, and the buyer heard "nothing was charged" - the very answer the change was for.
+        const known = await authorizationUse(env, auth.from, auth.nonce)
+        const knownPending = known ? await pendingBroadcastFor(known.job_id) : null
+        if (known?.transaction) {
+          throw new ApiError('state_error', 'x402_authorization_used', `This authorization has already paid for job ${known.job_id} (transaction ${known.transaction}). This request charged nothing more.`, {
+            hint: `Do not sign a new authorization for the same order: it would pay a second time. The result belongs to the account of the paying wallet; read it with that account's key at GET ${base()}/v1/jobs/${known.job_id}. If the answer that carried the key never reached you, the key is issued again with this wallet's next purchase here.`,
+            details: { job_id: known.job_id, transaction: known.transaction },
+          })
+        }
+        if (knownPending) {
+          throw new ApiError('state_error', 'x402_authorization_pending', `The settlement of this authorization for job ${known!.job_id} has an unknown outcome and is being resolved.`, {
+            hint: SETTLE_UNKNOWN_HINT,
+            details: { job_id: known!.job_id },
+          })
+        }
         const [held, used] = await Promise.all([usdcBalance(env, auth.from, nowMs, 0), authorizationUsed(env, auth.from, auth.nonce)])
         if (used) {
-          // ADR-80: an authorization that paid for a purchase here is answered as exactly that. Until 0.5.25 a client
-          // that timed out and retried heard "Nothing was charged ... sign a new authorization" and paid twice.
-          const use = await authorizationUse(env, auth.from, auth.nonce)
-          if (use) {
-            throw new ApiError('state_error', 'x402_authorization_used', `This authorization has already paid for job ${use.job_id}${use.transaction ? ` (transaction ${use.transaction})` : ''}. This request charged nothing more.`, {
-              hint: `Do not sign a new authorization for the same order: it would pay a second time. The result belongs to the account of the paying wallet; read it with that account's key at GET ${base()}/v1/jobs/${use.job_id}. If the answer that carried the key never reached you, the key is issued again with this wallet's next purchase here.`,
-              details: { job_id: use.job_id, ...(use.transaction ? { transaction: use.transaction } : {}) },
-            })
-          }
+          // A use recorded here was answered above, before the chain was asked (ADR-80). Used on-chain without one:
+          // it paid something that is not a purchase here.
           throw errors.state('x402_authorization_used', 'This authorization has already been used on-chain, and not for a purchase here.', 'This request charged nothing. Sign a new authorization with a fresh nonce.')
         }
         const committed = x402ValueRunning.get(payerKey) ?? 0
@@ -771,7 +827,7 @@ export function x402Routes() {
         if (hungUp()) {
           await abandonUnsettledPurchase(job.id, 'platform: the x402 buyer closed its connection before the payment was submitted; its authorization was never used', ['delivered'])
           recordX402('client_gone', ua, Date.now(), env)
-          throw errors.state('x402_client_gone', 'The buyer closed its connection before the payment was submitted.', 'Nothing was charged: your authorization was never submitted. The work runs before the payment, so allow at least 120 seconds for the answer, then order again with a fresh authorization.')
+          throw errors.state('x402_client_gone', 'The buyer closed its connection before the payment was submitted.', `Nothing was charged: your authorization was never submitted. The work runs before the payment, so use a read timeout of at least ${X402_ANSWER_WITHIN_SECONDS} s, then send the same authorization again (it is unused) or a fresh one.`)
         }
 
         try {
@@ -781,6 +837,10 @@ export function x402Routes() {
             // Whether it broadcast is unknown: the sealed delivery stays, and the sweep asks the chain once the
             // authorization's window has closed (reconcileX402Broadcasts).
             await savePendingBroadcast({ env, job_id: job.id, buyer_agent_id: buyer.id, transaction: null, amount: price, payer: auth.from, nonce: auth.nonce, valid_before: Number(auth.validBefore), listing_id: listing.id, at: new Date().toISOString(), attempts: 0 })
+            // the sealed delivery must still be there when the chain has answered: in the sandbox a job expires unpaid
+            // after 15 minutes, which is as long as the authorization's own window (ADR-80 review)
+            const keepUntil = Number(auth.validBefore) * 1000 + 30 * 60_000
+            await db().update(jobs).set({ paymentDeadlineAt: keepUntil, updatedAt: Date.now() }).where(and(eq(jobs.id, job.id), eq(jobs.status, 'delivered'), sql`${jobs.paymentDeadlineAt} < ${keepUntil}`))
           } else {
             // Refused, so never broadcast: this delivery can never be paid for. Closed now with no mark on either side
             // instead of expiring 72 h later as the buyer's unpaid mark (ADR-80 review).
@@ -795,7 +855,8 @@ export function x402Routes() {
         let recorded = true
         try {
           const paid = await payUntilMined(env, buyer, job.id, transaction)
-          await dropPendingBroadcast(job.id)
+          // tidying must not turn a paid and recorded purchase into an error (ADR-80 review); the sweep drops it too
+          await dropPendingBroadcast(job.id).catch((err) => log.warn({ err, job: job.id }, 'x402: could not drop the pending broadcast'))
           output = paid.job.output
           // The buyer is holding the result in this very response, so leaving the job open for a review window it
           // will never come back for would only make the seller wait. Accepting closes it and writes both records.

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, like, lt, lte, or, sql, type SQL } from 'drizzle-orm'
-import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
+import { checkAgainstSchemaIsolated, isSchemaObject } from '../../lib/json-schema.js'
 import { db } from '../../db/client.js'
 import { agentReputation, agents, jobs, listings, reviews, settlements, type Env, type ListingStats, type PaymentTiming, type PricingModel } from '../../db/schema.js'
 import { OUTSIDER_PRICE_FLOOR } from '../meta/stats.js'
@@ -144,10 +144,16 @@ function assertContent(...texts: (string | null | undefined)[]): string[] {
 /**
  * A published example must be orderable: when both input_schema and example_input are given, the example has to
  * pass the schema (an unusable example is what the first outside agent tripped over). Broken schemas never block.
+ * ADR-80: the seller wrote both the schema and the example, so the check runs in its own thread with a time and heap
+ * budget - a `pattern` written to hang it used to hold the whole API. A schema too expensive to check against its own
+ * example is refused: nobody could ever be held to it.
  */
-function assertExampleMatchesSchema(schema: unknown, example: unknown): void {
+async function assertExampleMatchesSchema(schema: unknown, example: unknown): Promise<void> {
   if (example === undefined || example === null || !isSchemaObject(schema)) return
-  const check = checkAgainstSchema(schema, example)
+  const check = await checkAgainstSchemaIsolated(schema, example)
+  if (check.result === 'unverifiable') {
+    throw errors.validation(`input_schema could not be checked against example_input: ${check.errors[0]}.`, 'input_schema', 'Simplify the schema: a pattern that takes seconds on your own example would take as long on every order. Keep patterns short and without nested repetition.')
+  }
   if (check.result === 'fail') {
     throw errors.validation(`example_input does not satisfy input_schema: ${check.errors.slice(0, 3).join('; ')}.`, 'example_input', 'Buyers copy example_input into their orders (how_to_order.body_example), so it must be a valid input for this listing. Fix the example or the schema.', { errors: check.errors })
   }
@@ -167,7 +173,7 @@ async function createListingLocked(env: Env, seller: Agent, input: CreateListing
   if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
   await assertUpfrontAllowed(seller, env, payment)
   const warnings = assertContent(input.title, input.description)
-  assertExampleMatchesSchema(input.input_schema, input.example_input)
+  await assertExampleMatchesSchema(input.input_schema, input.example_input)
   const now = Date.now()
   const row: typeof listings.$inferInsert = {
     id: newId('listing'),
@@ -240,7 +246,7 @@ async function updateListingLocked(env: Env, seller: Agent, id: string, patch: U
   }
   if (patch.category !== undefined) set.category = patch.category.trim().toLowerCase().slice(0, 48)
   if (patch.tags !== undefined) set.tags = normTags(patch.tags)
-  if (patch.input_schema !== undefined || patch.example_input !== undefined) assertExampleMatchesSchema(patch.input_schema !== undefined ? patch.input_schema : l.inputSchema, patch.example_input !== undefined ? patch.example_input : l.exampleInput)
+  if (patch.input_schema !== undefined || patch.example_input !== undefined) await assertExampleMatchesSchema(patch.input_schema !== undefined ? patch.input_schema : l.inputSchema, patch.example_input !== undefined ? patch.example_input : l.exampleInput)
   if (patch.input_schema !== undefined) set.inputSchema = patch.input_schema
   if (patch.output_schema !== undefined) set.outputSchema = patch.output_schema
   if (patch.example_input !== undefined) set.exampleInput = patch.example_input

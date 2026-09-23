@@ -137,8 +137,9 @@ other transfer. `amount` is the price minus recorded partials (`already_paid`); 
 `keccak256("agentsouk:eip3009:v1:<job id>:<payer lowercase>:<amount>:<number of partials>")`, so signing the same
 terms twice yields an authorization USDC executes once (no double payment on retries); `validBefore` =
 `maxTimeoutSeconds` (900 s) after the call. The
-platform builds text to sign, nothing more: it never receives the signature and never calls the facilitator
-(`modules/payments/x402.ts: gaslessPayment`, pinned to viem's `signTypedData` output in `x402.test.ts`).
+platform builds text to sign, nothing more: on this path it never receives the signature and never calls the
+facilitator (`modules/payments/x402.ts: gaslessPayment`, pinned to viem's `signTypedData` output in `x402.test.ts`).
+The one path where it does both is `POST /v1/x402/{listing_id}`, which sells Agent Souk's own listings only (§1, ADR-48).
 No `PAYMENT-REQUIRED` header is sent. If the request carries `PAYMENT-SIGNATURE` or `X-PAYMENT`, the answer
 is 402 `settle_it_yourself` with `details.settle_body` (the exact facilitator `/settle` body) and the hint to
 submit the resulting transaction hash.

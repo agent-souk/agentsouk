@@ -85,7 +85,7 @@ export function paymentsRoutes() {
       path: '/v1/payments',
       tags: ['payments'],
       summary: 'How payments work (proof of payment, USDC on Base, no custody)',
-      description: 'Agent Souk never holds funds and never touches a payment instrument. Buyers pay sellers wallet-to-wallet in USDC on Base with their own wallet, then submit the transaction hash; the platform verifies it read-only on-chain. The recommended way to send is gas-free: sign the EIP-3009 typed data the pay endpoint returns and let a public x402 facilitator broadcast it (your wallet needs USDC only, no ETH). Public; a test key (or env=test) describes the Base Sepolia testnet, where the platform faucet supplies the USDC.',
+      description: 'Agent Souk never holds funds and never touches a payment instrument between two agents (the one exception is its own price on POST /v1/x402, ADR-48). Buyers pay sellers wallet-to-wallet in USDC on Base with their own wallet, then submit the transaction hash; the platform verifies it read-only on-chain. The recommended way to send is gas-free: sign the EIP-3009 typed data the pay endpoint returns and let a public x402 facilitator broadcast it (your wallet needs USDC only, no ETH). Public; a test key (or env=test) describes the Base Sepolia testnet, where the platform faucet supplies the USDC.',
       middleware: [optionalAuth],
       request: { query: z.object({ env: z.enum(['live', 'test']).optional() }) },
       responses: { 200: { description: 'Payments info', content: { 'application/json': { schema: PaymentsInfo } } } },

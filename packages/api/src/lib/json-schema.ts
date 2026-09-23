@@ -1,95 +1,73 @@
-import ajv2020 from 'ajv/dist/2020.js'
-import ajv2019 from 'ajv/dist/2019.js'
-import ajvDraft7 from 'ajv'
-import ajvFormats from 'ajv-formats'
-import { ajvSafeRegExp } from './safe-regexp.js'
+import { Worker } from 'node:worker_threads'
+import { checkValues, type SchemaAnswer, type SchemaCheck, type SchemaJob } from './schema-worker.js'
+
+export type { SchemaCheck }
 
 /**
  * JSON Schema validation for listing promises (ADR-25, tier 0 of the dispute design): a seller who publishes an
  * output_schema is held to it mechanically. Draft is picked from $schema (default 2020-12; 04/06 run as draft-07).
  *
- * ajv ships CommonJS with `exports.default = Class`; under Node ESM the default import is module.exports, whose
- * `.default` is the class (same trick as packages/agents).
+ * Two doors, and which one a caller uses is a security decision (ADR-80):
+ *  - checkAgainstSchema: synchronous, on this thread. ONLY for schemas Agent Souk wrote itself (the x402 endpoint sells
+ *    first-party listings only). A schema from anyone else can hold this thread - the one that serves every request -
+ *    for as long as its `pattern` likes.
+ *  - checkAgainstSchemaIsolated: the same check in a worker thread with a heap limit and a hard stop. Every schema a
+ *    seller wrote goes through here: listing create and update, deliveries, disputes.
  */
-const Ajv2020 = ajv2020.default
-const Ajv2019 = ajv2019.default
-const AjvDraft7 = ajvDraft7.default
-const addFormats = ajvFormats.default
-
-type Draft = 'draft-07' | '2019-09' | '2020-12'
-
-function draftOf(schema: Record<string, unknown>): Draft {
-  const s = typeof schema.$schema === 'string' ? schema.$schema : ''
-  if (!s || s.includes('2020-12')) return '2020-12'
-  if (s.includes('2019-09')) return '2019-09'
-  return 'draft-07'
-}
-
-const validators = new Map<Draft, InstanceType<typeof AjvDraft7>>()
-function validator(draft: Draft) {
-  let ajv = validators.get(draft)
-  if (!ajv) {
-    // ADR-80: sellers' `pattern`s run on RE2, not on V8's backtracking engine (lib/safe-regexp.ts)
-    const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true, code: { regExp: ajvSafeRegExp } }
-    ajv = draft === '2020-12' ? new Ajv2020(opts) : draft === '2019-09' ? new Ajv2019(opts) : new AjvDraft7(opts)
-    addFormats(ajv)
-    validators.set(draft, ajv)
-  }
-  return ajv
-}
-
-export type SchemaCheck =
-  /** the value satisfies the schema */
-  | { result: 'pass'; errors: [] }
-  /** the value violates the schema; errors are "<json pointer>: <message>" */
-  | { result: 'fail'; errors: string[] }
-  /** the schema itself could not be compiled (the seller's mistake, not the buyer's); never blocks anything */
-  | { result: 'invalid_schema'; errors: string[] }
-
-const MAX_ERRORS = 20
-
-/** Validates `value` against a JSON Schema. Schemas are compiled per call (no cache: listings change) but keep ajv instances warm. */
 export function checkAgainstSchema(schema: Record<string, unknown>, value: unknown): SchemaCheck {
-  const ajv = validator(draftOf(schema))
-  let check: ReturnType<typeof ajv.compile>
-  try {
-    check = ajv.compile(schema)
-  } catch (e) {
-    forget(ajv, schema)
-    return { result: 'invalid_schema', errors: [(e as Error).message.slice(0, 500)] }
-  }
-  let ok: boolean
-  try {
-    ok = check(value) as boolean
-  } finally {
-    // ADR-80: the ajv instances stay warm, but no schema stays in them. Every call brings a schema object freshly read
-    // from the database, Ajv caches each one by identity (~14 KB, forever), and a schema with an $id registered that
-    // id - so its SECOND check answered invalid_schema, which every caller treats as "never blocks" (review P-G6).
-    forget(ajv, schema)
-  }
-  if (ok) return { result: 'pass', errors: [] }
-  // ADR-79: name the field. Ajv's own text for the two most common mistakes - an unknown key and a missing one -
-  // says only THAT something is wrong ("must NOT have additional properties"), and a buyer that cannot see WHICH
-  // key is meant has to guess its way to a valid order. The offending name is in `params`; it belongs in the text.
-  const errors = (check.errors ?? []).slice(0, MAX_ERRORS).map((e) => {
-    const p = (e.params ?? {}) as { additionalProperty?: string; missingProperty?: string; allowedValues?: unknown[] }
-    const extra = p.additionalProperty
-      ? ` ("${p.additionalProperty}")`
-      : p.missingProperty
-        ? ` ("${p.missingProperty}")`
-        : Array.isArray(p.allowedValues)
-          ? ` (allowed: ${p.allowedValues.slice(0, 8).join(', ')})`
-          : ''
-    return `${e.instancePath || '/'}: ${e.message ?? e.keyword}${extra}`
-  })
-  return { result: 'fail', errors }
+  return checkValues(schema, [value])[0]!
 }
 
-function forget(ajv: InstanceType<typeof AjvDraft7>, schema: Record<string, unknown>): void {
+/** How long a foreign schema check may run, and how much heap it gets, before it is stopped and called unverifiable. */
+export const SCHEMA_CHECK_TIMEOUT_MS = 2_000
+// The API machine has 512 MB (fly.toml): two checks of at most 64 MB heap each leave the process its room.
+const SCHEMA_CHECK_HEAP_MB = 64
+/** At most this many checks run at once; the rest wait their turn instead of starting threads without end. */
+const MAX_PARALLEL = 2
+
+const workerUrl = new URL(import.meta.url.endsWith('.ts') ? './schema-worker.ts' : './schema-worker.js', import.meta.url)
+let running = 0
+const waiting: (() => void)[] = []
+async function slot(): Promise<() => void> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve))
+  running++
+  return () => {
+    running--
+    waiting.shift()?.()
+  }
+}
+
+export async function checkAgainstSchemaIsolated(schema: Record<string, unknown>, value: unknown, timeoutMs = SCHEMA_CHECK_TIMEOUT_MS): Promise<SchemaCheck> {
+  const release = await slot()
   try {
-    ajv.removeSchema(schema)
-  } catch {
-    /* a schema Ajv never stored has nothing to remove */
+    return await new Promise<SchemaCheck>((resolve) => {
+      let settled = false
+      const unverifiable = (why: string): SchemaCheck => ({ result: 'unverifiable', errors: [why] })
+      const job: SchemaJob = { __schemaCheck: true, schema, values: [value] }
+      let worker: Worker
+      try {
+        worker = new Worker(workerUrl, { workerData: job, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: SCHEMA_CHECK_HEAP_MB, maxYoungGenerationSizeMb: 16 } })
+      } catch (e) {
+        // the value or schema could not even be handed over (not cloneable): nothing we can hold anyone to
+        resolve(unverifiable(`the schema check could not start: ${String((e as Error)?.message ?? e).slice(0, 200)}`))
+        return
+      }
+      const finish = (r: SchemaCheck) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        void worker.terminate().catch(() => undefined)
+        resolve(r)
+      }
+      const timer = setTimeout(() => finish(unverifiable(`the schema check did not finish within ${timeoutMs / 1000} s (a pattern this expensive cannot be enforced)`)), timeoutMs)
+      worker.once('message', (m: SchemaAnswer) => finish(m.ok ? m.results[0]! : { result: 'invalid_schema', errors: [m.message] }))
+      worker.once('error', (e: Error & { code?: string }) =>
+        finish(unverifiable(e.code === 'ERR_WORKER_OUT_OF_MEMORY' ? `the schema check ran out of its ${SCHEMA_CHECK_HEAP_MB} MB` : `the schema check failed: ${String(e.message).slice(0, 200)}`)),
+      )
+      worker.once('exit', (code) => finish(unverifiable(`the schema check stopped before it answered (exit ${code})`)))
+    })
+  } finally {
+    release()
   }
 }
 

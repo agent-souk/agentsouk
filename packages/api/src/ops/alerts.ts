@@ -579,23 +579,27 @@ export async function raiseX402Purchase(input: { env: Env; jobId: string; listin
  * UTC and the only trace was a day counter. One row per wallet and hour, kept up to date with the latest attempt,
  * so a client retrying in a loop is one line and not sixty.
  */
-export async function raiseX402Failure(input: { env: Env; payer: string | null; listingTitle: string; code: string; status: number; message: string; jobId: string | null }, now = Date.now()): Promise<string | null> {
+export async function raiseX402Failure(input: { env: Env; payer: string | null; listingTitle: string; code: string; status: number; message: string; jobId: string | null; transaction?: string | null }, now = Date.now()): Promise<string | null> {
+  // ADR-80: after the facilitator broadcast (a transaction exists) or when its answer was lost, money may have moved
+  const moneyMayHaveMoved = !!input.transaction || input.code === 'x402_settle_unknown' || input.code === 'x402_payment_not_recorded'
   const who = input.payer ? input.payer.toLowerCase() : 'unknown-wallet'
   return raise(
     {
       env: input.env,
       tier: input.env === 'live' ? 'notable' : 'quiet',
       key: `x402-failed:${input.env}:${who}:${Math.floor(now / 3_600_000)}`,
-      title: `x402: a purchase failed (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})`,
+      title: moneyMayHaveMoved ? `x402: MONEY MAY HAVE MOVED, not recorded (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})` : `x402: a purchase failed (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})`,
       body: [
         `A wallet signed a payment for this listing and got HTTP ${input.status} ${input.code}: ${input.message.slice(0, 400)}`,
-        'Nothing was charged. A wallet that tried to pay and could not is the most valuable line in this channel: the reason is what to fix.',
+        moneyMayHaveMoved
+          ? `The payment was or may have been broadcast${input.transaction ? ` (transaction ${input.transaction})` : ''}; the sweep x402-broadcasts keeps reconciling it with the job. Check GET /v1/admin/overview -> x402_pending_broadcasts until it is gone.`
+          : 'Nothing was charged. A wallet that tried to pay and could not is the most valuable line in this channel: the reason is what to fix.',
         '',
         `payer: ${input.payer ?? 'unknown (the payment header could not be read)'}`,
         input.jobId ? `job: ${base()}/v1/jobs/${input.jobId}` : 'job: none was created',
         `all failed attempts: ${base()}/v1/admin/overview -> x402_failures`,
       ].join('\n'),
-      data: { env: input.env, code: input.code, status: input.status, payers: input.payer ? [input.payer.toLowerCase()] : [], job_id: input.jobId, via: 'x402' },
+      data: { env: input.env, code: input.code, status: input.status, payers: input.payer ? [input.payer.toLowerCase()] : [], job_id: input.jobId, transaction: input.transaction ?? null, via: 'x402' },
     },
     now,
     { upgrade: true },

@@ -323,19 +323,37 @@ describe('url-diff service (ADR-73)', () => {
 
 /**
  * ADR-80: the glob was safe from exponential blow-up and still polynomial - k stars over a line of n characters cost
- * about n^(k+1) in V8. Three stars over 2,000 characters took 54 s; the same removal on RE2 is one pass.
+ * about n^(k+1) in V8 (three stars over 2,000 characters: 54 s), and on a linear regex engine five globs over 512 KB
+ * still took 14 s. The removal is now an indexOf walk; these tests go through normalise(), the path the service takes.
  */
-describe('removeGlob (ADR-80)', () => {
-  it('removes what globToRegExp matched, in linear time', () => {
+describe('ignore globs on hostile pages (ADR-80)', () => {
+  it('applies five wildcard globs to 512 KB of a page written to hang them in well under a second', () => {
     const line = 'a'.repeat(1700) + 'b'.repeat(1700) + 'c'.repeat(1700)
+    const body = (line + '\n').repeat(Math.ceil(512_000 / (line.length + 1))).slice(0, 512_000)
     const t = Date.now()
-    expect(removeGlob(line, 'a*b*c*d')).toBe(line)
+    normalise(body, 'text/plain', { ignore: ['a*b*c*d', 'a*a*a*a*x', '*b*b*b*y', 'c*c*c*c*z', 'a*b*c*b*a'] })
     expect(Date.now() - t).toBeLessThan(1000)
   })
 
-  it('matches exactly what the regex matched on ordinary input', () => {
+  it('removes exactly what the regex removed, on thousands of random patterns and lines', () => {
+    let seed = 42
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed % n
+    }
+    const pick = (alphabet: string, max: number, min = 0) => Array.from({ length: min + rnd(max - min + 1) }, () => alphabet[rnd(alphabet.length)]).join('')
+    for (let i = 0; i < 5000; i++) {
+      const pattern = pick('ab*.', 6, 1)
+      const text = pick('ab.\n', 40)
+      expect(removeGlob(text, pattern), JSON.stringify({ pattern, text })).toBe(text.replace(globToRegExp(pattern), ''))
+    }
+  })
+
+  it('matches the regex on ordinary input, and refuses a pattern with a line break before accepting the job', async () => {
     const samples = ['"generated_at": "2026-09-16T10:00:00Z",', 'a.b axb', 'a\nb', 'x(a|a)+$y', 'Price: 39 USD\nUpdated: today 10:00', 'sid=abc123; sid=def456']
-    const patterns = ['"generated_at": "*"', 'a.b', 'a*b', '(a|a)+$', 'Updated: *', 'sid=*;', '*']
-    for (const s of samples) for (const p of patterns) expect(removeGlob(s, p)).toBe(s.replace(globToRegExp(p), ''))
+    const patterns = ['"generated_at": "*"', 'a.b', 'a*b', '(a|a)+$', 'Updated: *', 'sid=*;', '*', '**', 'a**b']
+    for (const t of samples) for (const p of patterns) expect(removeGlob(t, p)).toBe(t.replace(globToRegExp(p), ''))
+    const svc = urlDiff({ hostFetchesPerMinute: 10_000, store: fakeStore().store, env: 'test', fetchImpl: fakeFetch({}).impl })
+    expect(await svc.validate({ url: `${HOST}/p`, ignore: ['a\n*'] }, ctx)).toMatch(/line break/)
   })
 })

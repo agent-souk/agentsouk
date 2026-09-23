@@ -101,18 +101,29 @@ const MAX_STRING = 128
  * contract answers that is not a well-formed string is null - the buyer chooses the contract, and a contract
  * built to answer nonsense must not take the job down with it.
  */
+/**
+ * ADR-80 review (RX-13): trailing NULs are cut with a loop, not with /\0+$/ - on a string of NULs that ends in anything
+ * else that pattern restarts at every NUL and runs quadratically, and the contract (chosen by the buyer) decides what
+ * it answers. Only the bytes the MAX_STRING characters can need are decoded at all.
+ */
+function stripTrailingNul(s: string): string {
+  let end = s.length
+  while (end > 0 && s.charCodeAt(end - 1) === 0) end--
+  return s.slice(0, end)
+}
+
 export function decodeString(data: string): string | null {
   try {
     const hex = data.replace(/^0x/, '')
     if (!hex || !/^[0-9a-fA-F]+$/.test(hex)) return null
     const bytes = (h: string) => Buffer.from(h, 'hex')
-    if (hex.length === 64) return bytes(hex).toString('utf8').replace(/\0+$/g, '').trim().slice(0, MAX_STRING) || null
+    if (hex.length === 64) return stripTrailingNul(bytes(hex).toString('utf8')).trim().slice(0, MAX_STRING) || null
     if (hex.length < 128) return null
     const offset = Number(BigInt('0x' + hex.slice(0, 64))) * 2
     if (!Number.isSafeInteger(offset) || offset + 64 > hex.length) return null
     const len = Number(BigInt('0x' + hex.slice(offset, offset + 64))) * 2
     if (!Number.isSafeInteger(len) || len < 0 || offset + 64 + len > hex.length) return null
-    const s = bytes(hex.slice(offset + 64, offset + 64 + len)).toString('utf8').replace(/\0+$/g, '').trim()
+    const s = stripTrailingNul(bytes(hex.slice(offset + 64, offset + 64 + Math.min(len, MAX_STRING * 8))).toString('utf8')).trim()
     return s ? s.slice(0, MAX_STRING) : null
   } catch {
     return null

@@ -4,7 +4,7 @@ import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE, type ImageInput } from 
 import { safeFetch } from '../ssrf.js'
 import { parseLooseJson } from './extract-structured.js'
 import type { ServiceDef } from './types.js'
-import { validateDocuments } from './validate-json.js'
+import { validateDocuments, validateDocumentsIsolated } from './validate-json.js'
 import { safeRegExp } from '../safe-regexp.js'
 
 /**
@@ -324,6 +324,9 @@ export function graft(schema: Record<string, unknown>): Record<string, unknown> 
  * Pruning stops wherever the schema is not plainly readable here ($ref, anyOf/oneOf/allOf, no `properties`): that
  * subtree is delivered as validated, which is what the buyer's own schema asked for.
  */
+/** ADR-80: the longest patternProperties pattern, and the longest key, that pruneToSchema will match at all. */
+const MAX_KEY_PATTERN = 256
+
 export function pruneToSchema(schema: Record<string, unknown>, value: unknown): any {
   const extrasAllowed = schema.additionalProperties === true || (typeof schema.additionalProperties === 'object' && schema.additionalProperties !== null)
   if (Array.isArray(value)) {
@@ -335,8 +338,11 @@ export function pruneToSchema(schema: Record<string, unknown>, value: unknown): 
   if (!props || typeof props !== 'object' || schema.$ref || schema.anyOf || schema.oneOf || schema.allOf) return value
   const properties = props as Record<string, Record<string, unknown>>
   const patterns = Object.keys((schema.patternProperties ?? {}) as Record<string, unknown>).flatMap((p) => {
+    // ADR-80: the buyer's pattern, run on RE2 over keys the buyer's image steers (src/safe-regexp.ts). RE2 is linear
+    // in the input but its program grows with the pattern (a 30 KB pattern cost 3 s and 228 MB), so only short
+    // patterns are compiled; a key they would have allowed is dropped, which is the cautious side.
+    if (p.length > MAX_KEY_PATTERN) return []
     try {
-      // ADR-80: the buyer's pattern, run on RE2 - over keys the buyer's image steers (src/safe-regexp.ts)
       return [safeRegExp(p)]
     } catch {
       return []
@@ -346,7 +352,7 @@ export function pruneToSchema(schema: Record<string, unknown>, value: unknown): 
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     const sub = properties[k]
     if (sub) out[k] = pruneToSchema(sub, v)
-    else if (extrasAllowed || patterns.some((r) => r.test(k))) out[k] = v
+    else if (extrasAllowed || (k.length <= MAX_KEY_PATTERN && patterns.some((r) => r.test(k)))) out[k] = v
   }
   return out
 }
@@ -523,7 +529,8 @@ export function extractImage(llm: Llm, opts: ExtractImageOptions = {}): ServiceD
       let schemaValid: boolean | null = null
       if (schema) {
         if (!o.data || typeof o.data !== 'object' || Array.isArray(o.data)) throw new LlmDeclined('the model did not return the data object; retry the job')
-        const check = validateDocuments(schema, [o.data])
+        // ADR-80: the buyer's schema over output the buyer's image steers - in its own thread, with a budget
+        const check = await validateDocumentsIsolated(schema, [o.data])
         const errors = check.results[0]?.errors ?? []
         if (check.schema_error || errors.length) throw new LlmDeclined(`the extraction did not conform to the schema: ${check.schema_error ?? errors.slice(0, 5).map((e) => `${e.path} ${e.message}`).join('; ')}`)
         data = pruneToSchema(schema, o.data as Record<string, unknown>)

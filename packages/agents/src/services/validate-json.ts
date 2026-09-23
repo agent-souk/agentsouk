@@ -1,52 +1,72 @@
-import ajv2020 from 'ajv/dist/2020.js'
-import ajv2019 from 'ajv/dist/2019.js'
-import ajvDraft7 from 'ajv'
-import ajvFormats from 'ajv-formats'
-import { ajvSafeRegExp } from '../safe-regexp.js'
+import { Worker } from 'node:worker_threads'
 import type { ServiceDef } from './types.js'
+import { validateWith, type SchemaAnswer, type SchemaJob, type Validation } from './schema-worker.js'
 
-// ajv ships CommonJS with `exports.default = Class`; under Node ESM the default import is module.exports, whose
-// `.default` is the class. Going through `.default` is what both the runtime and TypeScript (NodeNext) agree on.
-const Ajv2020 = ajv2020.default
-const Ajv2019 = ajv2019.default
-const AjvDraft7 = ajvDraft7.default
-const addFormats = ajvFormats.default
+export type { ValidationResult } from './schema-worker.js'
 
-type Draft = 'draft-07' | '2019-09' | '2020-12'
-
-/** Pick the validator from $schema; no $schema means the current draft (2020-12). Older drafts (04/06) run as draft-07. */
-function draftOf(schema: Record<string, unknown>): Draft {
-  const s = typeof schema.$schema === 'string' ? schema.$schema : ''
-  if (!s || s.includes('2020-12')) return '2020-12'
-  if (s.includes('2019-09')) return '2019-09'
-  return 'draft-07'
+/**
+ * Validation on this thread, with a fresh Ajv. ONLY for schemas Agent Souk wrote itself (exploit-chain's own output
+ * schema, the desk's bounty specs): a schema from a buyer or a seller goes through validateDocumentsIsolated, because
+ * its `pattern` can hold this thread for as long as it likes (ADR-80).
+ */
+export function validateDocuments(schema: Record<string, unknown>, documents: unknown[]): Validation {
+  return validateWith(schema, documents)
 }
 
-function validator(draft: Draft) {
-  // ADR-80: the buyer's `pattern`s run on RE2, never on V8's backtracking engine (src/safe-regexp.ts)
-  const opts = { allErrors: true, strict: false, allowUnionTypes: true, validateFormats: true, code: { regExp: ajvSafeRegExp } }
-  const ajv = draft === '2020-12' ? new Ajv2020(opts) : draft === '2019-09' ? new Ajv2019(opts) : new AjvDraft7(opts)
-  addFormats(ajv)
-  return ajv
-}
-
-export type ValidationResult = { index: number; valid: boolean; errors: { path: string; keyword: string; message: string; params: unknown }[] }
-
-export function validateDocuments(schema: Record<string, unknown>, documents: unknown[]): { draft: Draft; results: ValidationResult[]; schema_error: string | null } {
-  const draft = draftOf(schema)
-  const ajv = validator(draft)
-  let check: ReturnType<typeof ajv.compile>
-  try {
-    check = ajv.compile(schema)
-  } catch (e) {
-    return { draft, results: [], schema_error: (e as Error).message.slice(0, 500) }
+/** ADR-80: the budget of one isolated validation. Past it the thread is stopped and the schema is called too expensive. */
+export const SCHEMA_TIMEOUT_MS = 5_000
+// The agents machine has 512 MB and also runs the PDF worker: two checks of at most 96 MB heap each.
+const SCHEMA_HEAP_MB = 96
+const MAX_PARALLEL = 2
+const workerUrl = new URL(import.meta.url.endsWith('.ts') ? './schema-worker.ts' : './schema-worker.js', import.meta.url)
+let running = 0
+const waiting: (() => void)[] = []
+async function slot(): Promise<() => void> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve))
+  running++
+  return () => {
+    running--
+    waiting.shift()?.()
   }
-  const results = documents.map((doc, index) => {
-    const valid = check(doc) as boolean
-    const errors = (check.errors ?? []).slice(0, 100).map((e) => ({ path: e.instancePath || '/', keyword: e.keyword, message: e.message ?? '', params: e.params }))
-    return { index, valid, errors }
-  })
-  return { draft, results, schema_error: null }
+}
+
+/** The schema did not finish within its budget: the job is cancelled (nothing is charged), never answered wrongly. */
+export class SchemaTooExpensive extends Error {}
+
+/**
+ * The same validation in a worker thread with a heap limit and a hard stop. Throws SchemaTooExpensive when the
+ * schema overruns its time or memory - the caller cancels instead of delivering an answer it could not compute.
+ */
+export async function validateDocumentsIsolated(schema: Record<string, unknown>, documents: unknown[], timeoutMs = SCHEMA_TIMEOUT_MS): Promise<Validation> {
+  const release = await slot()
+  try {
+    return await new Promise<Validation>((resolve, reject) => {
+      let settled = false
+      const job: SchemaJob = { __validate: true, schema, documents }
+      let worker: Worker
+      try {
+        worker = new Worker(workerUrl, { workerData: job, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: SCHEMA_HEAP_MB, maxYoungGenerationSizeMb: 16 } })
+      } catch (e) {
+        reject(new SchemaTooExpensive(`the schema check could not start: ${String((e as Error)?.message ?? e).slice(0, 200)}`))
+        return
+      }
+      const finish = (f: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        void worker.terminate().catch(() => undefined)
+        f()
+      }
+      const timer = setTimeout(() => finish(() => reject(new SchemaTooExpensive(`validating against this schema did not finish within ${timeoutMs / 1000} s; a pattern that expensive is refused, and nothing is charged`))), timeoutMs)
+      worker.once('message', (m: SchemaAnswer) => finish(() => (m.ok ? resolve(m.validation) : reject(new Error(`the schema check failed: ${m.message}`)))))
+      worker.once('error', (e: Error & { code?: string }) =>
+        finish(() => reject(new SchemaTooExpensive(e.code === 'ERR_WORKER_OUT_OF_MEMORY' ? `validating against this schema needed more than ${SCHEMA_HEAP_MB} MB; refused, and nothing is charged` : `the schema check failed: ${String(e.message).slice(0, 200)}`))),
+      )
+      worker.once('exit', (code) => finish(() => reject(new SchemaTooExpensive(`the schema check stopped before it answered (exit ${code})`))))
+    })
+  } finally {
+    release()
+  }
 }
 
 const MAX_DOCS = 100
@@ -94,7 +114,8 @@ export const validateJson: ServiceDef = {
   async run(input) {
     const schema = input.schema as Record<string, unknown>
     const docs = (Array.isArray(input.documents) ? input.documents : [input.data]) as unknown[]
-    const r = validateDocuments(schema, docs)
+    // ADR-80: the buyer's schema over the buyer's documents - in its own thread, with a time and heap budget
+    const r = await validateDocumentsIsolated(schema, docs)
     const allValid = r.schema_error == null && r.results.every((x) => x.valid)
     const invalid = r.results.filter((x) => !x.valid).length
     return {

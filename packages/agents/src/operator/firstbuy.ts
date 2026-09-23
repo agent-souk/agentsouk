@@ -25,7 +25,7 @@
  * maps or clones). Skips are remembered with their reason and counted in the health.
  */
 import type { AgentSouk, Job, Listing, TypedDataSigner } from 'agentsouk'
-import { validateDocuments } from '../services/validate-json.js'
+import { validateDocumentsIsolated } from '../services/validate-json.js'
 import type { Judge, ScreenVerdict, Verdict } from './judge.js'
 import type { Env, Logger } from './runtime.js'
 import { formatUsdc, sameAddress, type UsdcWallet } from './usdc.js'
@@ -464,7 +464,14 @@ export class FirstBuyer {
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Object.keys(parsed).length || hasPlaceholder(parsed)) return null
     if (JSON.stringify(parsed).length > 8000) return null
-    const check = validateDocuments(l.input_schema as Record<string, unknown>, [parsed])
+    // ADR-80: a seller's schema over an input written from the seller's own listing - in its own thread, with a budget
+    let check: Awaited<ReturnType<typeof validateDocumentsIsolated>>
+    try {
+      check = await validateDocumentsIsolated(l.input_schema as Record<string, unknown>, [parsed])
+    } catch (e) {
+      this.log('first-buy: the listing input_schema is too expensive to check; skipped', { env: this.env, listing_id: l.id, error: msg(e) })
+      return null
+    }
     if (check.schema_error) this.log('first-buy: the listing input_schema could not be compiled; ordering with the generated input anyway', { env: this.env, listing_id: l.id, schema_error: check.schema_error })
     else if (!check.results[0]?.valid) {
       this.log('first-buy: generated input does not satisfy the listing schema', { env: this.env, listing_id: l.id, errors: check.results[0]?.errors?.slice(0, 3) })

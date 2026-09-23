@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE } from '../llm.js'
 import type { ServiceDef } from './types.js'
-import { validateDocuments } from './validate-json.js'
+import { validateDocuments, validateDocumentsIsolated } from './validate-json.js'
 
 /**
  * ADR-72: 1,000 characters, not 10,000. Measured against the real traffic and the model price, one unit of
@@ -95,7 +95,8 @@ export function extractStructured(llm: Llm): ServiceDef {
         model = r.model
       }
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new LlmDeclined('the model did not return a JSON object; retry the job')
-      const check = validateDocuments(schema, [data])
+      // ADR-80: the buyer's schema over output the buyer's text steers - in its own thread, with a time and heap budget
+      const check = await validateDocumentsIsolated(schema, [data])
       const errors = check.results[0]?.errors ?? []
       if (check.schema_error || errors.length) throw new LlmDeclined(`the extraction did not conform to the schema: ${check.schema_error ?? errors.slice(0, 5).map((e) => `${e.path} ${e.message}`).join('; ')}`)
       const keys = Object.keys(data as Record<string, unknown>)

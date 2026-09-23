@@ -1,16 +1,18 @@
 /**
  * Minimal HTML → text conversion without a DOM dependency. Good enough for articles, docs and product pages.
  *
- * Every tag pattern here bounds its attribute scan (`[^>]{0,400}` instead of `[^>]*`): against a page that contains
- * no `>` at all, the unbounded form restarts at every position and runs quadratically - 156 KB of "<p" took 18.6 s
- * on one core, and the fetch cap allows far more than that. Nothing here may depend on the goodwill of the page it
- * reads (ADR-73).
+ * Nothing here may depend on the goodwill of the page it reads, and the history of this file is the history of that
+ * sentence. ADR-73 found regular expressions that restarted a scan to the end of the page at every opener (156 KB of
+ * "<p" took 18.6 s) and bounded their attribute scans. The review of 2026-09-23 found four more of the same kind
+ * (`<meta\s+[^>]*`, `<html[^>]*`, `<a\s+[^>]*`, the comment `<!--[\s\S]*?-->`: 12-15 s for 200 KB, S-DOS-2), and the
+ * review of ADR-80 showed that bounding was not enough: a bounded pattern still rescans its window at every `<`, so
+ * 2 MB of "<a " (extract-web's fetch cap) cost 18 s, and a cap of 400 attribute characters lost the `lang` of every
+ * Wikipedia page (RX-11, RX-12).
  *
- * ADR-80: ADR-73 bounded the tag scans and missed the rest. The adversarial review of 2026-09-23 measured four more
- * patterns of the same kind - `<meta\s+[^>]*`, `<html[^>]*`, `<a\s+[^>]*` and the comment `<!--[\s\S]*?-->` - at
- * 12-15 s for 200 KB (S-DOS-2); the unclosed `<title>` and `<main>` lookups were quadratic the same way. Now every
- * attribute scan is bounded, every lazy content scan either has a length cap or is a linear indexOf walk, and a test
- * feeds each of them 200 KB of the input that used to hang them.
+ * So the page is read ONCE, as tags: `tags()` walks it with indexOf and keeps the position of the next `>` until it
+ * has been passed, which makes the walk linear whatever the page contains. Everything else - title, lang, meta
+ * description, links, the main/article choice, the text - is read from that list, and every attribute pattern runs
+ * inside one tag of at most 4 KB. A test feeds each former trap 2 MB of the input that used to hang it.
  */
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', reg: '®', hellip: '…', mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', euro: '€', pound: '£', yen: '¥' }
@@ -25,55 +27,54 @@ export function decodeEntities(s: string): string {
   })
 }
 
-/**
- * Tags whose CONTENT never belongs in readable text. They used to be removed with one regular expression whose
- * lazy `[\s\S]*?` restarted at every opener: a page of unclosed `<script` tags took 9.3 s at 342 KB and minutes at
- * the 2 MB extract-web allows - a free way to stop this machine, because x402 settles only after a delivery that
- * then never comes (measured in the adversarial run of ADR-73). The scanner below makes one pass.
- */
-const DROP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'head', 'nav', 'footer', 'aside'])
-const ANY_TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]{0,400}>/g
+/** A `<` whose `>` is further away than this is text, not a tag. */
+const MAX_TAG = 4096
+/** Markup without a tag name (`<!doctype …>`, `< b >`) is stripped only when this short, as the old `<[^>]{1,400}>` did. */
+const MAX_BARE_MARKUP = 400
+/** How many anchors the link walk looks at before it stops looking. */
+const MAX_ANCHORS = 2000
 
-/** Removes each dropped element with its content in a single linear pass; an opener that is never closed keeps its text instead of swallowing the rest of the document. */
-export function dropBlocks(html: string): string {
-  let out = ''
-  let last = 0
-  let depth = 0
-  let open = ''
-  let openAt = 0
-  ANY_TAG.lastIndex = 0
-  for (let m = ANY_TAG.exec(html); m; m = ANY_TAG.exec(html)) {
-    const name = m[2].toLowerCase()
-    if (!DROP_TAGS.has(name)) continue
-    if (m[1] !== '/') {
-      if (depth === 0) {
-        open = name
-        openAt = m.index
-        depth = 1
-      } else if (name === open) depth++
-    } else if (depth > 0 && name === open) {
-      depth--
-      if (depth === 0) {
-        out += html.slice(last, openAt) + ' '
-        last = m.index + m[0].length
+/** One tag: [start, end] are the positions of its `<` and `>`; `name` is lowercase, '' for markup without a name. */
+export type Tag = { start: number; end: number; name: string; closing: boolean; attrs: string }
+
+/** Sticky: read at the `<` itself, never scanning ahead. */
+const TAG_NAME = /(\/?)([a-zA-Z][a-zA-Z0-9]*)\b/y
+
+/**
+ * Every tag of the page, in one linear pass. The next `>` is looked up only once it has been passed, the name is read
+ * in place, and text is cut out only for a real tag, after which the walk jumps past it - so no character is looked
+ * at more than a bounded number of times, whatever the page contains.
+ */
+export function tags(html: string): Tag[] {
+  const out: Tag[] = []
+  let gt = -1
+  for (let i = html.indexOf('<'); i >= 0; ) {
+    if (gt <= i) {
+      gt = html.indexOf('>', i + 1)
+      if (gt < 0) break
+    }
+    const inner = gt - i - 1
+    let next = i + 1
+    if (inner >= 1 && inner <= MAX_TAG) {
+      TAG_NAME.lastIndex = i + 1
+      const m = TAG_NAME.exec(html)
+      if (m && m.index === i + 1 && TAG_NAME.lastIndex <= gt) {
+        out.push({ start: i, end: gt, name: m[2]!.toLowerCase(), closing: m[1] === '/', attrs: html.slice(TAG_NAME.lastIndex, gt) })
+        next = gt + 1
+      } else if (inner <= MAX_BARE_MARKUP) {
+        out.push({ start: i, end: gt, name: '', closing: false, attrs: html.slice(i + 1, gt) })
+        next = gt + 1
       }
     }
+    i = html.indexOf('<', next)
   }
-  return out + html.slice(last)
+  return out
 }
-/** A block start opens a new paragraph; a block end ends a line; list items and table rows end lines only. */
-const OPEN_BLOCK = /<(p|div|section|article|main|header|h[1-6]|ul|ol|table|blockquote|pre|figure|figcaption|address|form|fieldset)\b[^>]{0,400}>/gi
-const CLOSE_BLOCK = /<\/(p|div|section|article|main|header|h[1-6]|li|ul|ol|tr|table|blockquote|pre|dt|dd|figure|figcaption|address|form|fieldset)\s{0,20}>/gi
-const LINE_BREAK = /<(br|hr)\b[^>]{0,400}>/gi
 
-export type Extracted = { title: string | null; description: string | null; text: string; links: { href: string; text: string }[]; lang: string | null }
-
-function meta(html: string, name: string): string | null {
-  const re = new RegExp(`<meta\\s{1,20}[^>]{0,400}?(?:name|property)=["']${name}["'][^>]{0,400}>`, 'i')
-  const m = html.match(re)
-  if (!m) return null
-  const c = m[0].match(/content=["']([^"']*)["']/i)
-  return c ? decodeEntities(c[1]).trim() || null : null
+/** The value of one attribute inside a tag's attribute text (at most MAX_TAG characters, so any pattern is cheap). */
+function attr(attrs: string, name: string): string | null {
+  const m = new RegExp(`(?:^|[\\s"'/])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, 'i').exec(attrs)
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : null
 }
 
 /** Removes `<!-- ... -->` comments in one pass; an opener that is never closed keeps the rest of the page, as the regex did. */
@@ -91,49 +92,104 @@ export function dropComments(html: string): string {
   return out + html.slice(from)
 }
 
-/**
- * The first `<main>` or `<article>` that is closed, with its content - what `/<(main|article)\b[^>]{0,400}>([\s\S]*?)<\/\1\s*>/i`
- * found, without restarting a scan to the end of the page at every unclosed opener. A name whose closing tag cannot
- * be found after one opener cannot be found after any later one, so it is given up after one look.
- */
-function firstClosedBlock(html: string): string | null {
-  const opener = /<(main|article)\b[^>]{0,400}>/gi
-  const lower = html.toLowerCase()
-  const gone = new Set<string>()
-  for (let m = opener.exec(html); m; m = opener.exec(html)) {
-    const name = m[1].toLowerCase()
-    if (gone.has(name)) continue
-    const start = m.index + m[0].length
-    // sticky: tests only at `at`, never scans ahead - a page of `</main` without `>` stays one pass
-    const closer = new RegExp(`</${name}\\s{0,20}>`, 'y')
-    let end = -1
-    for (let at = lower.indexOf(`</${name}`, start); at >= 0; at = lower.indexOf(`</${name}`, at + 2)) {
-      closer.lastIndex = at
-      if (closer.test(lower)) {
-        end = at
-        break
+/** Tags whose CONTENT never belongs in readable text. */
+const DROP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'head', 'nav', 'footer', 'aside'])
+
+/** Removes each dropped element with its content; an opener that is never closed keeps its text instead of swallowing the rest of the document. */
+export function dropBlocks(html: string, list: Tag[] = tags(html)): string {
+  let out = ''
+  let last = 0
+  let depth = 0
+  let open = ''
+  let openAt = 0
+  for (const t of list) {
+    if (!DROP_TAGS.has(t.name)) continue
+    if (!t.closing) {
+      if (depth === 0) {
+        open = t.name
+        openAt = t.start
+        depth = 1
+      } else if (t.name === open) depth++
+    } else if (depth > 0 && t.name === open) {
+      depth--
+      if (depth === 0) {
+        out += html.slice(last, openAt) + ' '
+        last = t.end + 1
       }
     }
-    if (end < 0) {
-      gone.add(name)
-      if (gone.size === 2) return null
-      continue
-    }
-    return html.slice(start, end)
   }
-  return null
+  return out + html.slice(last)
 }
 
+/** For each tag, the index of the next closing tag of `name` after it (walked forward once, never rescanned). */
+function nextClosing(list: Tag[], from: number, name: string, cursor: { at: number }): Tag | null {
+  if (cursor.at < from) cursor.at = from
+  while (cursor.at < list.length && !(list[cursor.at]!.closing && list[cursor.at]!.name === name)) cursor.at++
+  return cursor.at < list.length ? list[cursor.at]! : null
+}
+
+/** A block start opens a new paragraph; a block end ends a line; list items and table rows end lines only. */
+const OPEN_BLOCK = new Set(['p', 'div', 'section', 'article', 'main', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'pre', 'figure', 'figcaption', 'address', 'form', 'fieldset'])
+const CLOSE_BLOCK = new Set(['p', 'div', 'section', 'article', 'main', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'ul', 'ol', 'tr', 'table', 'blockquote', 'pre', 'dt', 'dd', 'figure', 'figcaption', 'address', 'form', 'fieldset'])
+
+/** The readable text of a fragment: tags become line breaks or spaces, entities are decoded, whitespace is tidied. */
+function textOf(html: string): string {
+  let out = ''
+  let from = 0
+  for (const t of tags(html)) {
+    out += html.slice(from, t.start)
+    if (t.name === 'br' || t.name === 'hr') out += '\n'
+    else if (t.name && !t.closing && OPEN_BLOCK.has(t.name)) out += '\n'
+    else if (t.name && t.closing && CLOSE_BLOCK.has(t.name)) out += '\n'
+    else out += ' '
+    from = t.end + 1
+  }
+  return out + html.slice(from)
+}
+
+export type Extracted = { title: string | null; description: string | null; text: string; links: { href: string; text: string }[]; lang: string | null }
+
 export function htmlToText(html: string, baseUrl?: string, maxLinks = 50): Extracted {
-  const title = html.match(/<title[^>]{0,400}>([\s\S]{0,2000}?)<\/title>/i)
-  const lang = html.match(/<html[^>]{0,400}?\blang=["']([^"']{1,40})["']/i)
-  const description = meta(html, 'description') ?? meta(html, 'og:description')
-  const stripped = dropBlocks(dropComments(html))
+  const page = dropComments(html)
+  const all = tags(page)
+
+  const titleOpen = all.findIndex((t) => t.name === 'title' && !t.closing)
+  const titleClose = titleOpen >= 0 ? nextClosing(all, titleOpen + 1, 'title', { at: 0 }) : null
+  const title = titleOpen >= 0 && titleClose ? decodeEntities(page.slice(all[titleOpen]!.end + 1, titleClose.start)).replace(/\s+/g, ' ').trim() || null : null
+
+  const htmlTag = all.find((t) => t.name === 'html' && !t.closing)
+  const langValue = htmlTag ? attr(htmlTag.attrs, 'lang') : null
+  const lang = langValue && /^[A-Za-z0-9-]{1,40}$/.test(langValue.trim()) ? langValue.trim() : null
+
+  const metaContent = (name: string): string | null => {
+    for (const t of all) {
+      if (t.name !== 'meta' || t.closing) continue
+      const key = attr(t.attrs, 'name') ?? attr(t.attrs, 'property')
+      if (key?.toLowerCase() !== name) continue
+      const c = attr(t.attrs, 'content')
+      return c ? decodeEntities(c).trim() || null : null
+    }
+    return null
+  }
+  const description = metaContent('description') ?? metaContent('og:description')
+
+  const stripped = dropBlocks(page, all)
+  const inBody = tags(stripped)
+
   const links: { href: string; text: string }[] = []
   const seen = new Set<string>()
-  for (const m of stripped.matchAll(/<a\s{1,20}[^>]{0,400}?href=["']([^"'#][^"']{0,2000})["'][^>]{0,400}>([\s\S]{0,2000}?)<\/a>/gi)) {
-    if (links.length >= maxLinks) break
-    let href = decodeEntities(m[1]).trim()
+  const closerA = { at: 0 }
+  // a page of 200,000 identical anchors is a page, not 200,000 links: the walk looks at a bounded number of them
+  let anchorsSeen = 0
+  for (let k = 0; k < inBody.length && links.length < maxLinks && anchorsSeen < MAX_ANCHORS; k++) {
+    const t = inBody[k]!
+    if (t.name !== 'a' || t.closing) continue
+    anchorsSeen++
+    const raw = attr(t.attrs, 'href')
+    if (!raw || raw.startsWith('#')) continue
+    const close = nextClosing(inBody, k + 1, 'a', closerA)
+    if (!close) break
+    let href = decodeEntities(raw).trim()
     if (/^(javascript|mailto|tel|data):/i.test(href)) continue
     try {
       href = baseUrl ? new URL(href, baseUrl).toString() : href
@@ -142,17 +198,27 @@ export function htmlToText(html: string, baseUrl?: string, maxLinks = 50): Extra
     }
     if (seen.has(href)) continue
     seen.add(href)
-    links.push({ href, text: decodeEntities(m[2].replace(/<[^>]{1,400}>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 120) })
+    links.push({ href, text: decodeEntities(textOf(stripped.slice(t.end + 1, Math.min(close.start, t.end + 1 + 4000)))).replace(/\s+/g, ' ').trim().slice(0, 120) })
   }
+
+  // the first <main> or <article> that is closed, if it carries the content
   let body = stripped
-  const main = firstClosedBlock(body)
-  if (main != null && main.replace(/<[^>]{1,400}>/g, '').trim().length > 400) body = main
-  body = body.replace(OPEN_BLOCK, '\n').replace(CLOSE_BLOCK, '\n').replace(LINE_BREAK, '\n').replace(/<[^>]{1,400}>/g, ' ')
-  const text = decodeEntities(body)
+  const closers = { main: { at: 0 }, article: { at: 0 } }
+  for (let k = 0; k < inBody.length; k++) {
+    const t = inBody[k]!
+    if (t.closing || (t.name !== 'main' && t.name !== 'article')) continue
+    const close = nextClosing(inBody, k + 1, t.name, closers[t.name])
+    if (!close) continue
+    const inner = stripped.slice(t.end + 1, close.start)
+    if (textOf(inner).trim().length > 400) body = inner
+    break
+  }
+
+  const text = decodeEntities(textOf(body))
     .replace(/\r/g, '')
     .replace(/[ \t\f\v]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  return { title: title ? decodeEntities(title[1]).replace(/\s+/g, ' ').trim() || null : null, description, text, links, lang: lang ? lang[1] : null }
+  return { title, description, text, links, lang }
 }

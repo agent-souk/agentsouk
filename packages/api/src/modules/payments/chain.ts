@@ -284,6 +284,30 @@ export async function authorizationUsed(env: Env, from: string, nonce: string): 
   }
 }
 
+/** keccak256("AuthorizationUsed(address,bytes32)"): USDC (FiatToken) logs it for every EIP-3009 authorization it executes. */
+export const AUTHORIZATION_USED_TOPIC = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5'
+
+/**
+ * ADR-80: the transaction that executed an EIP-3009 authorization, found by its AuthorizationUsed log - for the one
+ * case where the facilitator's answer, which names the transaction, was lost. Read-only; walks back from the head in
+ * chunks the public nodes accept, at most `maxBlocks`. Null when it is not there or the node does not answer.
+ */
+export async function findAuthorizationTransaction(env: Env, from: string, nonce: string, maxBlocks = 20_000, chunk = 2_000): Promise<string | null> {
+  try {
+    const head = Number(hexToBigInt(await rpc<string>(env, 'eth_blockNumber', []), 'block number'))
+    const topics = [AUTHORIZATION_USED_TOPIC, '0x' + from.toLowerCase().replace(/^0x/, '').padStart(64, '0'), nonce.toLowerCase()]
+    for (let to = head; to >= 0 && to > head - maxBlocks; to -= chunk) {
+      const fromBlock = Math.max(0, to - chunk + 1)
+      const logs = await rpc<{ transactionHash?: unknown }[]>(env, 'eth_getLogs', [{ address: chainFor(env).usdc, topics, fromBlock: '0x' + fromBlock.toString(16), toBlock: '0x' + to.toString(16) }])
+      const hit = Array.isArray(logs) ? logs.find((l) => isTxHash(l?.transactionHash)) : undefined
+      if (hit) return String(hit.transactionHash).toLowerCase()
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /** Test hook: forget cached balances. */
 export function _resetBalanceCache() {
   balanceCache.clear()

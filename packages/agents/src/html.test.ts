@@ -32,29 +32,32 @@ describe('htmlToText', () => {
 })
 
 /**
- * ADR-80: every pattern that reads a page, fed 200 KB of the input that used to hang it. The review of 2026-09-23
- * measured 12-15 s for the first four on this machine class; one Node thread serves all thirteen services, so each
- * of these was a free way to stop them (x402 bills only after a delivery that then never comes).
+ * ADR-80: every former trap, fed 2 MB - extract-web's fetch cap - of the input that used to hang it. The review of
+ * 2026-09-23 measured 12-15 s for 200 KB of the first four; bounded regexes still took 18 s at 2 MB (review of
+ * ADR-80, RX-12). One Node thread serves all thirteen services, so each of these was a free way to stop them.
  */
 describe('htmlToText against pages written to hang it (ADR-80)', () => {
-  const N = 200_000
+  const N = 2_000_000
+  const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N)
   const cases: [string, string][] = [
-    ['unclosed <meta', '<meta '.repeat(N / 6)],
-    ['unclosed <html', '<html '.repeat(N / 6)],
-    ['unclosed <a', '<a '.repeat(N / 3)],
-    ['unclosed <a href', ('<a href="' + 'x'.repeat(1990)).repeat(N / 2000)],
-    ['unclosed comments', '<!--'.repeat(N / 4)],
-    ['unclosed <title>', '<title>'.repeat(N / 7)],
-    ['unclosed <main>', '<main>'.repeat(N / 6) + '<article>'.repeat(N / 9)],
-    ['closers without >', '<main>x' + '</main'.repeat(N / 6)],
-    ['<br without >', '<br '.repeat(N / 4)],
-    ['</p and a sea of spaces', '</p'.repeat(1000) + ' '.repeat(N)],
+    ['unclosed <meta', fill('<meta ')],
+    ['unclosed <html', fill('<html ')],
+    ['unclosed <a', fill('<a ')],
+    ['<a href without a closing quote', fill('<a href="' + 'x'.repeat(1990))],
+    ['unclosed comments', fill('<!--')],
+    ['unclosed <title>', fill('<title>')],
+    ['unclosed <main> and <article>', fill('<main>').slice(0, N / 2) + fill('<article>').slice(0, N / 2)],
+    ['closers without >', '<main>x' + fill('</main')],
+    ['<br without >', fill('<br ')],
+    ['a sea of < with a > every 4,000 characters', fill('<'.repeat(3999) + '>')],
+    ['200,000 identical anchors', fill('<a href="/x">x</a>')],
+    ['anchors that are never closed', fill('<a href="/x">')],
   ]
   for (const [name, page] of cases) {
-    it(`reads 200 KB of ${name} in well under a second`, () => {
+    it(`reads 2 MB of ${name} in well under a second`, () => {
       const t = Date.now()
       htmlToText(page, 'https://example.com/')
-      expect(Date.now() - t).toBeLessThan(1000)
+      expect(Date.now() - t).toBeLessThan(1500)
     })
   }
 
@@ -68,5 +71,22 @@ describe('htmlToText against pages written to hang it (ADR-80)', () => {
     expect(r.text).not.toContain('Menü')
     expect(r.text).toContain('Preisliste')
     expect(r.links).toEqual([{ href: 'https://example.com/kontakt', text: 'Kontakt' }])
+  })
+
+  it('reads a Wikipedia-style <html> tag with a long class list, and a link with long attributes before href (RX-11)', () => {
+    const cls = 'client-nojs vector-feature-language-in-header-enabled '.repeat(12)
+    const page = `<html class="${cls}" lang="tr" dir="ltr"><body><p>x</p><a class="${'mw-link '.repeat(80)}" title="t" href="/wiki/Ankara">Ankara</a></body></html>`
+    const r = htmlToText(page, 'https://tr.wikipedia.org/')
+    expect(r.lang).toBe('tr')
+    expect(r.links).toEqual([{ href: 'https://tr.wikipedia.org/wiki/Ankara', text: 'Ankara' }])
+  })
+
+  it('keeps positions straight on text whose lowercase form is longer (İ, RX-10)', () => {
+    const para = 'İstanbul İzmir İnegöl İskenderun. '.repeat(40)
+    const page = `<html><body><p>Vorspann</p><main><p>${para}</p></main><p>Nachspann</p></body></html>`
+    const r = htmlToText(page)
+    expect(r.text.startsWith('İstanbul')).toBe(true)
+    expect(r.text).not.toContain('Nachspann')
+    expect(r.text).not.toContain('<')
   })
 })

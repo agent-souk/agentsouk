@@ -9,7 +9,7 @@ import { log } from '../../lib/log.js'
 import { withLock } from '../../lib/mutex.js'
 import { registerSweep } from '../../lib/scheduler.js'
 import { scanText } from '../../lib/content-safety.js'
-import { checkAgainstSchema, isSchemaObject } from '../../lib/json-schema.js'
+import { checkAgainstSchemaIsolated, isSchemaObject } from '../../lib/json-schema.js'
 import { emit, emitMany } from '../../events/bus.js'
 import { postSystemMessage, SYSTEM_SENDER } from '../messaging/service.js'
 import type { Agent } from '../../middleware/auth.js'
@@ -105,16 +105,17 @@ async function drawableEvaluators(env: Env, parties: { buyer: Agent; seller: Age
 
 // --- checks (tier 0) --------------------------------------------------------------------------
 
-export function computeChecks(job: JobRow, listing: ListingRow | undefined): DisputeChecks {
+export async function computeChecks(job: JobRow, listing: ListingRow | undefined): Promise<DisputeChecks> {
   let outputSchema: DisputeChecks['output_schema'] = 'none'
   let schemaErrors: string[] = []
   if (listing && isSchemaObject(listing.outputSchema) && job.output !== null && job.output !== undefined) {
-    const c = checkAgainstSchema(listing.outputSchema, job.output)
+    // ADR-80: the seller's schema over the seller's delivery, in a thread with a time and heap budget
+    const c = await checkAgainstSchemaIsolated(listing.outputSchema, job.output)
     if (c.result === 'pass') outputSchema = 'pass'
     else if (c.result === 'fail') {
       outputSchema = 'fail'
       schemaErrors = c.errors
-    } else schemaErrors = [`listing output_schema could not be compiled: ${c.errors[0] ?? 'unknown error'}`]
+    } else schemaErrors = [`listing output_schema could not be ${c.result === 'unverifiable' ? 'checked' : 'compiled'}: ${c.errors[0] ?? 'unknown error'}`]
   }
   const onTime = job.deliveredAt != null && job.deadlineAt != null ? job.deliveredAt <= job.deadlineAt : null
   return {
@@ -178,7 +179,7 @@ export async function openDispute(job: JobRow, reason: string): Promise<Dispute>
   const parties = await partiesOf(job)
   const category = await categoryOf(job, listing)
   const now = Date.now()
-  const checks = computeChecks(job, listing)
+  const checks = await computeChecks(job, listing)
   const size = config().DISPUTE_PANEL_SIZE
   const candidates = await drawableEvaluators(job.env, parties, category, new Set())
   const seats = Math.min(size, candidates.length)

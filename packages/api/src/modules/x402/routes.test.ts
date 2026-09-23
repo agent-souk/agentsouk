@@ -11,6 +11,10 @@ import { privateKeyToAddress } from '../payments/evm-signature.js'
 import { transferAuthorizationDigest } from '../payments/x402.js'
 import { _setSettleFetchForTests, _setX402DeliveryWaitForTests, _setX402MinedWaitForTests, reconcileX402Broadcasts, X402_RECONCILE_AFTER_MS } from './routes.js'
 import { pendingX402Broadcasts, recentX402Failures } from './failures.js'
+import { AUTHORIZATION_USED_TOPIC } from '../payments/chain.js'
+import { serve } from '@hono/node-server'
+import { request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { _setAlertFetchForTests } from '../../ops/alerts.js'
 import { _setConfigForTests } from '../../config.js'
 import { Ajv2020 } from 'ajv/dist/2020.js'
@@ -63,9 +67,13 @@ function deliverWhenOrdered(seller: TestAgent, listingId: string, output: unknow
 const pkOf = (digit: string) => '0x' + ('0' + digit).repeat(32)
 const addr = (pk: string) => privateKeyToAddress(pk)
 
+/** A fresh EIP-3009 nonce per authorization, as every real client makes one: USDC executes a nonce once, and so does the endpoint's own record (ADR-80). */
+let nonceCounter = 0
+const freshNonce = () => '0x' + (++nonceCounter).toString(16).padStart(64, '0')
+
 /** The x402 payment payload a buyer builds after reading the 402, base64 as the header carries it - signed by `pk`. */
 const paymentHeader = (pk: string, to: string, value: number, validForSeconds = 900, opts: { from?: string; signWith?: string; validAfter?: number; nonce?: string } = {}) => {
-  const authorization = { from: opts.from ?? addr(pk), to, value: String(value), validAfter: String(opts.validAfter ?? 0), validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: opts.nonce ?? '0x' + '11'.repeat(32) }
+  const authorization = { from: opts.from ?? addr(pk), to, value: String(value), validAfter: String(opts.validAfter ?? 0), validBefore: String(Math.floor(Date.now() / 1000) + validForSeconds), nonce: opts.nonce ?? freshNonce() }
   const sig = secp256k1.sign(transferAuthorizationDigest('test', authorization), hexToBytes((opts.signWith ?? pk).slice(2)), { prehash: false, format: 'recovered', lowS: true })
   const signature = '0x' + bytesToHex(concatBytes(sig.slice(1, 65), Uint8Array.of(27 + sig[0]!)))
   return Buffer.from(JSON.stringify({ x402Version: 2, scheme: 'exact', payload: { signature, authorization } })).toString('base64')
@@ -1237,5 +1245,169 @@ describe('x402: a paying buyer is never charged for nothing (ADR-80)', () => {
     const { listingId } = await firstPartySeller()
     const r = await app.request(`/v1/x402/${listingId}`, { method: 'OPTIONS', headers: { origin: 'https://example.org', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,payment-signature,access-control-expose-headers' } })
     expect(r.headers.get('access-control-allow-headers')).toContain('access-control-expose-headers')
+  })
+})
+
+/**
+ * ADR-80, second round: what the adversarial review of the first repair found (PAID-1..9, TD-1, PUB-1/7/8). Each case
+ * is the concrete failure a refuter reproduced.
+ */
+describe('x402 after the review of ADR-80', () => {
+  afterEach(() => _setX402MinedWaitForTests(null))
+
+  async function waitFor<T>(read: () => Promise<T | null | undefined>, ms = 8000): Promise<T> {
+    const until = Date.now() + ms
+    for (;;) {
+      const v = await read()
+      if (v) return v
+      if (Date.now() > until) throw new Error('timed out waiting')
+      await new Promise((r) => setTimeout(r, 25))
+    }
+  }
+  const openJobOf = (listingId: string) => waitFor(() => db().query.jobs.findFirst({ where: and(eq(jobs.listingId, listingId), eq(jobs.status, 'open')) }))
+  const padAddress = (a: string) => '0x' + a.toLowerCase().replace(/^0x/, '').padStart(64, '0')
+
+  it('answers a retried, already paid authorization from its own record while the chain node is down (PAID-2)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('a')
+    const wallet = addr(pk)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(wallet, seller.wallet_address!, PRICE) }) }))
+    const header = paymentHeader(pk, seller.wallet_address!, PRICE)
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const first = await buy(listingId, header)
+    await runtime.done
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+    chain.down = true // mainnet.base.org answers 429: authorizationUsed() cannot say
+    const retry = await buy(listingId, header)
+    chain.down = false
+    expect(retry.status).toBe(409)
+    expect(retry.body.error.code).toBe('x402_authorization_used')
+    expect(retry.body.error.details).toMatchObject({ job_id: first.body.job_id, transaction: first.body.paid.transaction })
+    expect(await db().select().from(jobs).where(eq(jobs.listingId, listingId))).toHaveLength(1) // no second job, no second run of the work
+  })
+
+  it('takes a facilitator answer that names a transaction as a broadcast, even when it says success: false (PAID-4)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('b')
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: false, errorReason: 'settlement_pending', transaction: chain.pay(addr(pk), seller.wallet_address!, PRICE) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    await runtime.done
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.paid.transaction).toMatch(/^0x[0-9a-f]{64}$/)
+  })
+
+  it('calls a facilitator 5xx "unknown", not "nothing was charged", and keeps the sealed job from expiring meanwhile (PAID-4, PAID-9)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('c')
+    _setSettleFetchForTests(async () => ({ ok: false, status: 502, text: async () => '<html>Bad gateway</html>' }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    const jobId = await runtime.done
+    expect(r.status).toBe(502)
+    expect(r.body.error.code).toBe('x402_settle_unknown')
+    expect(JSON.stringify(r.body)).not.toContain('Nothing was charged')
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!
+    expect(job.status).toBe('delivered')
+    const [p] = await pendingX402Broadcasts()
+    expect(job.paymentDeadlineAt!).toBeGreaterThanOrEqual(p!.valid_before * 1000 + 30 * 60_000)
+  })
+
+  it('finds the transaction of a lost answer in the AuthorizationUsed log and records it on the job (PAID-3)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('d')
+    const wallet = addr(pk)
+    const nonce = '0x' + 'd3'.repeat(32)
+    let tx = ''
+    _setSettleFetchForTests(async () => {
+      // the facilitator broadcast, and then its answer was lost on the way back
+      tx = chain.pay(wallet, seller.wallet_address!, PRICE, { logs: [{ address: chain.usdc, topics: [AUTHORIZATION_USED_TOPIC, padAddress(wallet), nonce] }] })
+      chain.usedAuthorizations.add(`${wallet.toLowerCase()}:${nonce}`)
+      throw new TypeError('fetch failed: other side closed')
+    })
+    const header = paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce })
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, header)
+    const jobId = await runtime.done
+    expect(r.body.error.code).toBe('x402_settle_unknown')
+
+    // a retry meanwhile is told the outcome is being resolved - not a second purchase
+    const retry = await buy(listingId, header)
+    expect(retry.status).toBe(409)
+    expect(retry.body.error.code).toBe('x402_authorization_pending')
+
+    const [p] = await pendingX402Broadcasts()
+    const after = (p!.valid_before + 120) * 1000
+    await reconcileX402Broadcasts(after) // used on-chain: the log names the transaction
+    expect((await pendingX402Broadcasts())[0]!.transaction).toBe(tx)
+    await reconcileX402Broadcasts(after + 1000) // now recorded as the buyer's own POST /pay would
+    expect(await pendingX402Broadcasts()).toHaveLength(0)
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!
+    expect(job.paidAt).not.toBeNull()
+    expect(job.unpaid).toBe(false)
+  })
+
+  it('does not charge a buyer that hung up, through the real server, when its body carried a null field (PAID-1, TD-1)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('e')
+    let settleCalls = 0
+    _setSettleFetchForTests(async () => {
+      settleCalls += 1
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(addr(pk), seller.wallet_address!, PRICE) }) }
+    })
+    const server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' })
+    try {
+      await new Promise<void>((resolve) => (server.listening ? resolve() : server.once('listening', () => resolve())))
+      const port = (server.address() as AddressInfo).port
+      // what a Python client sends for an optional field it left unset: tolerateNulls rebuilds the request
+      const body = JSON.stringify({ text: 'Hello', source_language: null })
+      const req = httpRequest({ host: '127.0.0.1', port, path: `/v1/x402/${listingId}?env=test`, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-payment': paymentHeader(pk, seller.wallet_address!, PRICE) } })
+      req.on('error', () => undefined)
+      req.end(body)
+      const job = await openJobOf(listingId)
+      req.destroy() // httpx's 5 s read timeout
+      await new Promise((r) => setTimeout(r, 100))
+      await call(app, 'POST', `/v1/jobs/${job.id}/accept`, { key: seller.api_keys.test, body: {} })
+      await call(app, 'POST', `/v1/jobs/${job.id}/deliver`, { key: seller.api_keys.test, body: { output: { text: 'Hallo' } } })
+      const closed = await waitFor(async () => {
+        const j = await db().query.jobs.findFirst({ where: eq(jobs.id, job.id) })
+        return j && j.status !== 'delivered' && j.status !== 'in_progress' && j.status !== 'open' ? j : null
+      })
+      expect(settleCalls).toBe(0)
+      expect(closed.status).toBe('cancelled')
+      expect(closed.unpaid).toBe(false)
+    } finally {
+      server.close()
+    }
+  })
+
+  it('names the read timeout where a buyer reads before paying: in every 402 and in the index (PAID-5)', async () => {
+    const { listingId } = await firstPartySeller()
+    const r = await buy(listingId)
+    expect(String(r.body.error)).toContain('at least 240 s')
+    const v2 = JSON.parse(Buffer.from(r.headers.get('payment-required')!, 'base64').toString('utf8'))
+    expect(String(v2.error)).toContain('at least 240 s')
+    const index = await call(app, 'GET', '/v1/x402?env=test')
+    expect(index.body.services.find((s: { listing_id: string }) => s.listing_id === listingId).answer_within_seconds).toBe(240)
+  })
+
+  it('tells the operator that money may have moved when the failure came after the broadcast (PUB-8)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('f')
+    _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: 'https://ntfy.sh/agentsouk-x402-test', OPERATOR_ALERT_MIN_TIER: 'quiet' })
+    _setAlertFetchForTests(async () => ({ status: 200, text: async () => 'ok' }))
+    try {
+      _setSettleFetchForTests(async () => ({ ok: false, status: 503, text: async () => 'upstream down' }))
+      const runtime = deliverWhenOrdered(seller, listingId)
+      await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+      await runtime.done
+      const alert = await waitFor(async () => (await db().query.operatorAlerts.findMany()).find((a) => a.key.startsWith('x402-failed:')) ?? null)
+      expect(alert.title).toContain('MONEY MAY HAVE MOVED')
+      expect(alert.body).not.toContain('Nothing was charged')
+      expect(alert.body).toContain('x402_pending_broadcasts')
+    } finally {
+      _setAlertFetchForTests(null)
+      _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: undefined, OPERATOR_ALERT_MIN_TIER: 'notable' })
+    }
   })
 })

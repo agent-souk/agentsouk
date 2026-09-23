@@ -35,7 +35,8 @@ export const tolerateNulls: MiddlewareHandler<{ Variables: { rawBodyText?: strin
       if (changed) {
         const headers = new Headers(c.req.raw.headers)
         headers.delete('content-length')
-        c.req.raw = new Request(c.req.raw.url, { method, headers, body: JSON.stringify(body) })
+        // the signal travels with the copy: without it a handler could no longer tell that its client hung up (ADR-80)
+        c.req.raw = new Request(c.req.raw.url, { method, headers, body: JSON.stringify(body), signal: c.req.raw.signal })
         c.req.bodyCache = {}
       }
     }

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { RE2JS } from 're2js'
 import { htmlToText } from '../html.js'
 import { assertPublicUrl, safeFetch, UnsafeUrlError } from '../ssrf.js'
 import type { JobContext, RunResult, ServiceDef } from './types.js'
@@ -138,12 +137,64 @@ function globSource(pattern: string): string {
 /**
  * ADR-80: the glob above still hung the process - not exponentially, but polynomially. Every `*` is a `[^\n]*` that
  * V8 backtracks through, so k stars over a line of n characters cost about n^(k+1): three stars over 2,000
- * characters of a page the buyer controls took 54 s, 5,000 characters about 35 minutes (review 2026-09-23, S-DOS-1).
- * The same expression, run by RE2, matches the same text in one linear pass. So the glob is still built here, and
- * applied by the engine that cannot backtrack.
+ * characters of a page the buyer controls took 54 s (review 2026-09-23, S-DOS-1). A linear regex engine (re2js) was
+ * no answer either: five globs without a match over 512 KB still took 14 s (review of ADR-80, RX-7).
+ *
+ * So no regular expression at all. The glob is literal pieces joined by stars, and what `globToRegExp` matched can be
+ * found with indexOf: on each line, the match starts at the first place the first piece fits with all the others
+ * after it, and - every star being greedy - ends at the LAST occurrence of the last piece (or at the end of the line
+ * for a trailing star). A start that cannot be completed cannot be completed from any later start either, so each
+ * line is walked a bounded number of times. Same result as `text.replace(globToRegExp(pattern), '')`; a test checks
+ * that on thousands of random patterns.
  */
 export function removeGlob(text: string, pattern: string): string {
-  return RE2JS.compile(globSource(pattern)).matcher(text).replaceAll('')
+  // a glob matches within one line; validate() refuses a pattern with a line break, so none reaches this point
+  if (pattern.includes('\n')) return text
+  const pieces = pattern.split('*')
+  if (pieces.length === 1) return text.split(pattern).join('')
+  return text
+    .split('\n')
+    .map((line) => removeGlobInLine(line, pieces))
+    .join('\n')
+}
+
+function removeGlobInLine(line: string, pieces: string[]): string {
+  const first = pieces[0]!
+  const last = pieces[pieces.length - 1]!
+  const middle = pieces.slice(1, -1).filter((m) => m !== '')
+  let out = ''
+  let from = 0
+  while (from <= line.length) {
+    const start = line.indexOf(first, from)
+    if (start < 0) break
+    let pos = start + first.length
+    let fits = true
+    for (const m of middle) {
+      const at = line.indexOf(m, pos)
+      if (at < 0) {
+        fits = false
+        break
+      }
+      pos = at + m.length
+    }
+    if (!fits) break
+    let end: number
+    if (last === '') end = line.length
+    else {
+      const at = line.lastIndexOf(last)
+      if (at < pos) break
+      end = at + last.length
+    }
+    out += line.slice(from, start)
+    if (end === start) {
+      // an empty match (a pattern of stars only, at the end of the line): keep the character and move on, as replace does
+      if (start < line.length) out += line[start]
+      from = start + 1
+      continue
+    }
+    from = end
+  }
+  return from < line.length ? out + line.slice(from) : out
 }
 
 
@@ -312,6 +363,7 @@ function checkInput(input: Record<string, unknown>): string | null {
     if (!Array.isArray(input.ignore) || input.ignore.length > MAX_IGNORE) return `ignore must be an array of at most ${MAX_IGNORE} patterns`
     for (const pattern of input.ignore) {
       if (typeof pattern !== 'string' || !pattern || pattern.length > 200) return 'each ignore pattern must be a string of at most 200 characters'
+      if (pattern.includes('\n')) return 'an ignore pattern matches within one line, so it cannot contain a line break'
       const stars = (pattern.match(/\*/g) ?? []).length
       if (stars > MAX_IGNORE_WILDCARDS) return `ignore pattern ${JSON.stringify(pattern)} has ${stars} wildcards; at most ${MAX_IGNORE_WILDCARDS} are allowed`
     }

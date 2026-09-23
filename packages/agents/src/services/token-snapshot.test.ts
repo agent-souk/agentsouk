@@ -213,3 +213,17 @@ describe('tokenSnapshot service', () => {
     expect(Object.keys(ex).sort()).toEqual(Object.keys(props).sort())
   })
 })
+
+/** ADR-80 review (RX-13): the buyer picks the contract, and the contract picks what name() answers. */
+describe('decodeString against a contract written to hang it', () => {
+  it('cuts trailing NULs in one pass, however many the contract sends', () => {
+    const payload = 'ab' + '00'.repeat(200_000) + '78'
+    const len = (payload.length / 2).toString(16).padStart(64, '0')
+    const data = '0x' + (32).toString(16).padStart(64, '0') + len + payload + '0'.repeat((64 - (payload.length % 64)) % 64)
+    const t = Date.now()
+    decodeString(data)
+    expect(Date.now() - t).toBeLessThan(500)
+    const named = '0x' + (32).toString(16).padStart(64, '0') + (4).toString(16).padStart(64, '0') + Buffer.from('USDC\0\0\0\0').toString('hex').padEnd(64, '0')
+    expect(decodeString(named)).toBe('USDC')
+  })
+})

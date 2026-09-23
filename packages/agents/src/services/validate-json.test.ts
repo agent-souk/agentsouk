@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateDocuments, validateJson } from './validate-json.js'
+import { SchemaTooExpensive, validateDocuments, validateDocumentsIsolated, validateJson } from './validate-json.js'
 
 describe('validateDocuments', () => {
   it('validates with formats and reports every error with a path', () => {
@@ -39,42 +39,39 @@ describe('validateJson service', () => {
   })
 })
 
-/** ADR-80: the buyer's `pattern` runs on RE2. `^(a+)+$` against 30 characters took 8.7 s in V8, and 40 would take hours. */
-describe('validateDocuments against a pattern written to hang it (ADR-80)', () => {
-  it('answers a catastrophic pattern at once, with the right verdict', () => {
-    const schema = { type: 'object', properties: { s: { type: 'string', pattern: '^(a+)+$' } } }
+/**
+ * ADR-80: the buyer's schema runs in its own thread with a time and heap budget. `^(a+)+$` against 30 characters took
+ * 8.7 s on this process's one thread, and 40 would take hours; a linear engine (re2js) traded that for seconds and
+ * hundreds of megabytes. Now the thread is stopped at its budget and the job is cancelled, so nothing is charged.
+ */
+describe('validate-json against a schema written to hang it (ADR-80)', () => {
+  const evil = { type: 'object', properties: { s: { type: 'string', pattern: '^(a+)+$' } } }
+
+  it('stops a catastrophic pattern at its budget while this thread keeps serving', async () => {
+    let ticks = 0
+    const beat = setInterval(() => ticks++, 50)
     const t = Date.now()
-    const r = validateDocuments(schema, [{ s: 'a'.repeat(5000) + '!' }, { s: 'a'.repeat(5000) }])
-    expect(Date.now() - t).toBeLessThan(1000)
-    expect(r.schema_error).toBeNull()
-    expect(r.results.map((x) => x.valid)).toEqual([false, true])
+    await expect(validateDocumentsIsolated(evil, [{ s: 'a'.repeat(40) + '!' }], 1000)).rejects.toBeInstanceOf(SchemaTooExpensive)
+    clearInterval(beat)
+    expect(Date.now() - t).toBeLessThan(5000)
+    expect(ticks).toBeGreaterThan(5)
   })
 
-  it('runs patternProperties on the same engine', () => {
-    const schema = { type: 'object', patternProperties: { '^(a|a)+$': { type: 'number' } } }
-    const t = Date.now()
-    const r = validateDocuments(schema, [{ ['a'.repeat(3000) + '!']: 'not a number' }])
-    expect(Date.now() - t).toBeLessThan(1000)
-    expect(r.results[0]!.valid).toBe(true) // the key does not match, so the string value is not checked
+  it('cancels the job instead of answering: the service throws, and the runner cancels before any charge', async () => {
+    await expect(validateJson.run({ schema: evil, data: { s: 'a'.repeat(40) + '!' } }, { units: 1 })).rejects.toBeInstanceOf(SchemaTooExpensive)
   })
 
-  it('keeps ordinary patterns working, searched anywhere as JSON Schema says', () => {
-    const schema = { type: 'object', properties: { zip: { type: 'string', pattern: '\\d{5}' }, id: { type: 'string', pattern: '^[A-Z]{3}-\\d+$' } } }
-    const r = validateDocuments(schema, [{ zip: 'D-12345', id: 'ABC-42' }, { zip: '1234', id: 'abc-42' }])
-    expect(r.results.map((x) => x.valid)).toEqual([true, false])
-    expect(r.results[1]!.errors.map((e) => e.path).sort()).toEqual(['/id', '/zip'])
+  it('gives the same answer as the in-thread check for ordinary schemas, with full ECMA-262 patterns', async () => {
+    const schema = { type: 'object', properties: { zip: { type: 'string', pattern: '\\d{5}' }, id: { type: 'string', pattern: '^[A-Z]{3}-\\d+$' }, a: { type: 'string', pattern: '^\\u0041{1,2000}$' }, n: { type: 'string', pattern: '^\\p{Lu}(?=\\p{Ll})' } } }
+    const docs = [{ zip: 'D-12345', id: 'ABC-42', a: 'AA', n: 'Äb' }, { zip: '1234', id: 'abc-42', a: 'B', n: 'ab' }]
+    const isolated = await validateDocumentsIsolated(schema, docs)
+    expect(isolated).toEqual(validateDocuments(schema, docs))
+    expect(isolated.results.map((x) => x.valid)).toEqual([true, false])
+    expect(isolated.results[1]!.errors.map((e) => e.path).sort()).toEqual(['/a', '/id', '/n', '/zip'])
   })
 
-  it('reads ECMA-262 pattern syntax the way JSON Schema writes it (unicode escapes, named groups)', () => {
-    const schema = { type: 'object', properties: { a: { type: 'string', pattern: '^\\u0041+$' }, y: { type: 'string', pattern: '^(?<year>\\d{4})-' } } }
-    const r = validateDocuments(schema, [{ a: 'AAA', y: '2026-09' }, { a: 'B', y: '26-09' }])
-    expect(r.schema_error).toBeNull()
-    expect(r.results.map((x) => x.valid)).toEqual([true, false])
-  })
-
-  it('reports a pattern RE2 cannot run (lookahead, backreference) as a schema that does not compile', () => {
-    const r = validateDocuments({ type: 'string', pattern: '^(?=a)a$' }, ['a'])
-    expect(r.schema_error).toBeTruthy()
-    expect(r.results).toEqual([])
+  it('reports a schema that does not compile as schema_error, in the thread too', async () => {
+    const r = await validateDocumentsIsolated({ type: 'object', properties: { a: { type: 'nonsense' } } }, [{}])
+    expect(r.schema_error).toMatch(/type|schema/i)
   })
 })
