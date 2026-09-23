@@ -909,4 +909,13 @@ Nicht umgesetzt: H11 (Ed25519-Proof ohne Nonce; durch die Wallet-Signatur weitge
      - Höchstens 200.000 Tags (R3-HTML-2).
      - Attribute werden der Reihe nach geparst statt gesucht, `lang` liest auch `xml:lang` und `en_US` (R3-HTML-3).
   5. **Klein:** Die Antwort des Agents-Workers ist in der Größe begrenzt (R3-S4). Die Budgetzahlen in diesem ADR stimmen jetzt mit dem Code überein (R3-S3).
-- Status: accepted, gebaut und getestet (drei gegnerische Runden). Deploy siehe Nachtrag.
+- Status: accepted, gebaut und getestet (drei gegnerische Runden), deployt.
+- **Nachtrag, Deploy (23.09., 18:00 UTC).** Vor dem Deploy wurde die Live-Datenbank per `VACUUM INTO` kopiert: `~/.agentsouk-ops/backups/agentsouk-live-2026-09-23.db`, `integrity_check` ok, 352 Aufträge, 130 Settlements. API 0.5.25 läuft auf `91d54f59`, Agents 0.2.22. Folgende Prüfungen sind bestanden:
+  - `SMOKE TEST PASSED`
+  - `SMOKE-GASLESS PASSED` (10,7 s)
+  - Coinbases Validator: `valid: true`, `accepted`
+  - `verify-live-terms`: `isValid: true`, nichts gesendet
+  - `smoke:judge` bestanden (0,22 USD)
+  - Health der Agents: LLM an, beide Ausgabenspeicher wiederhergestellt
+
+  **Der Nachweis, den kein lokaler Test geben konnte, über Fly's Proxy:** `smoke-x402-listing.ts --hang-up-after-ms 3000` (neue Option) kaufte in der Sandbox `translate` und legte nach 3,0 s auf. Die Plattform protokollierte `x402_client_gone` (Auftrag `job_01M37Q4F238454DDKQPMKAD4JN`), und die Wallet hielt danach weiter ihre 0,03 USDC. Dieselbe, noch unbenutzte Autorisierung erneut gesendet wurde bezahlt und in 14,7 s geliefert, genau einmal (tx `0xf694da6a…255321598`). `x402_pending_broadcasts` ist leer, und `between_outsiders` live ist unverändert bei 78 / 0.

@@ -8,6 +8,10 @@
  *
  *   cd packages/agents && npx tsx scripts/smoke-x402-listing.ts --listing lst_... [--input '{"...":...}' | --input-file x.json] [--base https://api.agentsouk.dev]
  *
+ * --hang-up-after-ms N (ADR-80): the first paid call gives up after N ms, as the Python x402 client does after 5 s.
+ * The run then requires that nothing was charged (the platform records x402_client_gone, the wallet still holds the
+ * price) and buys again with the SAME authorization, which must pay exactly once.
+ *
  * Costs: the listing price in Sepolia USDC from the desk wallet plus a little Sepolia ETH for the funding transfer.
  */
 import { existsSync, readFileSync } from 'node:fs'
@@ -30,6 +34,7 @@ if (!listingId) {
   console.error('usage: --listing lst_... [--input JSON | --input-file path] [--base URL]')
   process.exit(1)
 }
+const hangUpAfterMs = flag('--hang-up-after-ms') ? Number(flag('--hang-up-after-ms')) : null
 const inputText = flag('--input') ?? (flag('--input-file') ? readFileSync(flag('--input-file')!, 'utf8') : '{}')
 /** --wallet-key 0x... reuses a wallet (a repeat buyer, e.g. a second url-diff check); --keep leaves its account active for that next run */
 const walletKeyArg = flag('--wallet-key')
@@ -134,8 +139,31 @@ async function main() {
   step('buyer funded', { usdc: formatUsdc(amount) })
 
   // 4. the purchase: work first, then settlement by the facilitator
+  const header = sign()
+  if (hangUpAfterMs != null) {
+    // ADR-80: a client that gives up before the work is delivered must not be charged, and its authorization stays usable
+    const tHang = Date.now()
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': header }, body, signal: AbortSignal.timeout(hangUpAfterMs) })
+      fail(`the call was expected to be cut off after ${hangUpAfterMs} ms, but answered HTTP ${r.status}`, await json(r))
+    } catch (e) {
+      if (!(e instanceof Error) || !/abort|timeout/i.test(e.name + e.message)) throw e
+    }
+    step(`hung up after ${((Date.now() - tHang) / 1000).toFixed(1)}s`)
+    let gone: Record<string, any> | null = null
+    for (let i = 0; i < 60 && !gone; i++) {
+      await new Promise((r) => setTimeout(r, 3000))
+      const overview = await json(await fetch(`${base}/v1/admin/overview`, { headers: { 'x-admin-token': admin } }))
+      gone = ((overview.x402_failures ?? []) as Record<string, any>[]).find((f) => String(f.payer ?? '').toLowerCase() === buyer.toLowerCase() && f.code === 'x402_client_gone') ?? null
+    }
+    if (!gone) fail('no x402_client_gone record for the wallet within 3 minutes - the platform did not notice the hang-up')
+    const still = await desk.usdcBalance(buyer)
+    step('the platform noticed the hang-up and charged nothing', { job: gone!.job_id, code: gone!.code, wallet_still_holds: formatUsdc(still) })
+    if (still < amount) fail('the wallet was charged although the buyer hung up', formatUsdc(still))
+    buyerAgentId = null
+  }
   const t1 = Date.now()
-  const paid = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': sign() }, body })
+  const paid = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'payment-signature': header }, body })
   const result = await json(paid)
   const secs = ((Date.now() - t1) / 1000).toFixed(1)
   if (paid.status !== 200) fail(`purchase failed with HTTP ${paid.status} after ${secs}s`, result)
