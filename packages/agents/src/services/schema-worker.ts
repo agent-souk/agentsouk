@@ -50,7 +50,12 @@ export function validateWith(schema: Record<string, unknown>, documents: unknown
   }
   const results = documents.map((doc, index) => {
     const valid = check(doc) as boolean
-    const errors = (check.errors ?? []).slice(0, 100).map((e) => ({ path: e.instancePath || '/', keyword: e.keyword, message: e.message ?? '', params: e.params }))
+    // ADR-80 (R3-S4): the answer crosses into the main thread, so it is bounded here - a long pattern repeated in
+    // every message of every document would otherwise arrive thousands of times over
+    const errors = (check.errors ?? []).slice(0, 100).map((e) => {
+      const params = JSON.stringify(e.params ?? {})
+      return { path: (e.instancePath || '/').slice(0, 300), keyword: e.keyword, message: (e.message ?? '').slice(0, 300), params: params.length <= 300 ? e.params : { truncated: true } }
+    })
     return { index, valid, errors }
   })
   return { draft, results, schema_error: null }

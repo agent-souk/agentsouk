@@ -287,20 +287,36 @@ export async function authorizationUsed(env: Env, from: string, nonce: string): 
 /** keccak256("AuthorizationUsed(address,bytes32)"): USDC (FiatToken) logs it for every EIP-3009 authorization it executes. */
 export const AUTHORIZATION_USED_TOPIC = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5'
 
+/** keccak256("AuthorizationCanceled(address,bytes32)"): the buyer cancelled the authorization; no money moved. */
+export const AUTHORIZATION_CANCELED_TOPIC = '0x1cdd46ff242716cdaa72d159d339a485b3438398348d68f09d7c8c0a59353d81'
+
 /**
- * ADR-80: the transaction that executed an EIP-3009 authorization, found by its AuthorizationUsed log - for the one
- * case where the facilitator's answer, which names the transaction, was lost. Read-only; walks back from the head in
- * chunks the public nodes accept, at most `maxBlocks`. Null when it is not there or the node does not answer.
+ * ADR-80: what became of an EIP-3009 authorization whose facilitator answer was lost - the transaction that executed
+ * it (AuthorizationUsed) or the one that cancelled it (AuthorizationCanceled; USDC's authorizationState reads "used"
+ * for both). Read-only; walks back from the head in chunks the public node accepts (Base Sepolia refuses more than
+ * 1,000 blocks per call, and a refusal halves the chunk), at most `maxBlocks`. Null when nothing is found or the node
+ * does not answer.
  */
-export async function findAuthorizationTransaction(env: Env, from: string, nonce: string, maxBlocks = 20_000, chunk = 2_000): Promise<string | null> {
+export async function findAuthorizationEvent(env: Env, from: string, nonce: string, maxBlocks = 20_000): Promise<{ event: 'used' | 'canceled'; transaction: string } | null> {
   try {
     const head = Number(hexToBigInt(await rpc<string>(env, 'eth_blockNumber', []), 'block number'))
-    const topics = [AUTHORIZATION_USED_TOPIC, '0x' + from.toLowerCase().replace(/^0x/, '').padStart(64, '0'), nonce.toLowerCase()]
-    for (let to = head; to >= 0 && to > head - maxBlocks; to -= chunk) {
+    const topics = [[AUTHORIZATION_USED_TOPIC, AUTHORIZATION_CANCELED_TOPIC], '0x' + from.toLowerCase().replace(/^0x/, '').padStart(64, '0'), nonce.toLowerCase()]
+    let chunk = env === 'live' ? 2_000 : 1_000
+    for (let to = head; to >= 0 && to > head - maxBlocks; ) {
       const fromBlock = Math.max(0, to - chunk + 1)
-      const logs = await rpc<{ transactionHash?: unknown }[]>(env, 'eth_getLogs', [{ address: chainFor(env).usdc, topics, fromBlock: '0x' + fromBlock.toString(16), toBlock: '0x' + to.toString(16) }])
-      const hit = Array.isArray(logs) ? logs.find((l) => isTxHash(l?.transactionHash)) : undefined
-      if (hit) return String(hit.transactionHash).toLowerCase()
+      let logs: { transactionHash?: unknown; topics?: unknown }[]
+      try {
+        logs = await rpc<typeof logs>(env, 'eth_getLogs', [{ address: chainFor(env).usdc, topics, fromBlock: '0x' + fromBlock.toString(16), toBlock: '0x' + to.toString(16) }])
+      } catch (e) {
+        if (chunk > 100) {
+          chunk = Math.floor(chunk / 2) // a range limit or a busy node: ask for less
+          continue
+        }
+        throw e
+      }
+      const hit = Array.isArray(logs) ? logs.find((l) => isTxHash(l?.transactionHash) && Array.isArray(l?.topics)) : undefined
+      if (hit) return { event: String((hit.topics as unknown[])[0]).toLowerCase() === AUTHORIZATION_CANCELED_TOPIC ? 'canceled' : 'used', transaction: String(hit.transactionHash).toLowerCase() }
+      to = fromBlock - 1
     }
     return null
   } catch {

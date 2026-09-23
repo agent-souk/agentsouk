@@ -11,7 +11,7 @@ import { privateKeyToAddress } from '../payments/evm-signature.js'
 import { transferAuthorizationDigest } from '../payments/x402.js'
 import { _setSettleFetchForTests, _setX402DeliveryWaitForTests, _setX402MinedWaitForTests, reconcileX402Broadcasts, X402_RECONCILE_AFTER_MS } from './routes.js'
 import { pendingX402Broadcasts, recentX402Failures } from './failures.js'
-import { AUTHORIZATION_USED_TOPIC } from '../payments/chain.js'
+import { AUTHORIZATION_CANCELED_TOPIC, AUTHORIZATION_USED_TOPIC } from '../payments/chain.js'
 import { serve } from '@hono/node-server'
 import { request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -1384,11 +1384,11 @@ describe('x402 after the review of ADR-80', () => {
   it('names the read timeout where a buyer reads before paying: in every 402 and in the index (PAID-5)', async () => {
     const { listingId } = await firstPartySeller()
     const r = await buy(listingId)
-    expect(String(r.body.error)).toContain('at least 240 s')
+    expect(String(r.body.error)).toContain('at least 300 s')
     const v2 = JSON.parse(Buffer.from(r.headers.get('payment-required')!, 'base64').toString('utf8'))
-    expect(String(v2.error)).toContain('at least 240 s')
+    expect(String(v2.error)).toContain('at least 300 s')
     const index = await call(app, 'GET', '/v1/x402?env=test')
-    expect(index.body.services.find((s: { listing_id: string }) => s.listing_id === listingId).answer_within_seconds).toBe(240)
+    expect(index.body.services.find((s: { listing_id: string }) => s.listing_id === listingId).answer_within_seconds).toBe(300)
   })
 
   it('tells the operator that money may have moved when the failure came after the broadcast (PUB-8)', async () => {
@@ -1401,7 +1401,7 @@ describe('x402 after the review of ADR-80', () => {
       const runtime = deliverWhenOrdered(seller, listingId)
       await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
       await runtime.done
-      const alert = await waitFor(async () => (await db().query.operatorAlerts.findMany()).find((a) => a.key.startsWith('x402-failed:')) ?? null)
+      const alert = await waitFor(async () => (await db().query.operatorAlerts.findMany()).find((a) => a.key.startsWith('x402-money:')) ?? null)
       expect(alert.title).toContain('MONEY MAY HAVE MOVED')
       expect(alert.body).not.toContain('Nothing was charged')
       expect(alert.body).toContain('x402_pending_broadcasts')
@@ -1409,5 +1409,117 @@ describe('x402 after the review of ADR-80', () => {
       _setAlertFetchForTests(null)
       _setConfigForTests({ OPERATOR_ALERT_WEBHOOK_URL: undefined, OPERATOR_ALERT_MIN_TIER: 'notable' })
     }
+  })
+})
+
+/** ADR-80, third review round: the settlement outcomes the second repair still read wrongly (R3-2..R3-9). */
+describe('x402 after the third review round', () => {
+  const padAddress = (a: string) => '0x' + a.toLowerCase().replace(/^0x/, '').padStart(64, '0')
+
+  it('reads the reference facilitator\'s catch-all transaction_failed as unknown, never as "nothing was charged" (R3-2)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    _setSettleFetchForTests(async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ success: false, errorReason: 'invalid_exact_evm_transaction_failed', transaction: '' }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pkOf('1'), seller.wallet_address!, PRICE))
+    const jobId = await runtime.done
+    expect(r.body.error.code).toBe('x402_settle_unknown')
+    expect((await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!.status).toBe('delivered')
+  })
+
+  it('treats a named transaction that reverted as a refusal: nothing charged, no mark, the authorization reusable (R3-3)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('2')
+    const nonce = '0x' + '2e'.repeat(32)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: false, errorReason: 'settlement_pending', transaction: chain.pay(addr(pk), seller.wallet_address!, PRICE, { status: '0x0' }) }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce }))
+    const jobId = await runtime.done
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('x402_settle_failed')
+    expect(r.body.error.hint).toContain('Nothing was charged')
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!
+    expect(job.status).toBe('cancelled')
+    expect(job.unpaid).toBe(false)
+    expect(await pendingX402Broadcasts()).toHaveLength(0)
+    // the unused authorization may be sent again: a clean second purchase
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: chain.pay(addr(pk), seller.wallet_address!, PRICE) }) }))
+    const again = deliverWhenOrdered(seller, listingId)
+    const second = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce }))
+    await again.done
+    expect(second.status, JSON.stringify(second.body)).toBe(200)
+  })
+
+  it('resolves a settlement the process lost track of: our record without a transaction, used on-chain (R3-4, R3-8)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('3')
+    const wallet = addr(pk)
+    const nonce = '0x' + '3f'.repeat(32)
+    let tx = ''
+    _setSettleFetchForTests(async () => {
+      tx = chain.pay(wallet, seller.wallet_address!, PRICE, { logs: [{ address: chain.usdc, topics: [AUTHORIZATION_USED_TOPIC, padAddress(wallet), nonce] }] })
+      chain.usedAuthorizations.add(`${wallet.toLowerCase()}:${nonce}`)
+      throw new TypeError('socket hang up')
+    })
+    const header = paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce })
+    const runtime = deliverWhenOrdered(seller, listingId)
+    await buy(listingId, header)
+    const jobId = await runtime.done
+    // the process stops here in the real case: the pending entry is gone with it
+    await db().delete(platformState).where(eq(platformState.key, `x402/broadcast/${jobId}`))
+    const retry = await buy(listingId, header)
+    expect(retry.status).toBe(409)
+    expect(retry.body.error.code).toBe('x402_authorization_pending')
+    expect(retry.body.error.details.job_id).toBe(jobId)
+    // "used" is final at once: the sweep does not wait for the authorization to expire
+    await reconcileX402Broadcasts(Date.now())
+    expect((await pendingX402Broadcasts())[0]!.transaction).toBe(tx)
+    await reconcileX402Broadcasts(Date.now())
+    expect((await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!.paidAt).not.toBeNull()
+  })
+
+  it('closes the job with no mark when the lost authorization was cancelled on-chain, not used (R3-7)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('4')
+    const wallet = addr(pk)
+    const nonce = '0x' + '4a'.repeat(32)
+    _setSettleFetchForTests(async () => {
+      chain.pay(wallet, wallet, 0, { logs: [{ address: chain.usdc, topics: [AUTHORIZATION_CANCELED_TOPIC, padAddress(wallet), nonce] }] })
+      chain.usedAuthorizations.add(`${wallet.toLowerCase()}:${nonce}`) // authorizationState reads "used" for a cancel too
+      throw new TypeError('socket hang up')
+    })
+    const runtime = deliverWhenOrdered(seller, listingId)
+    await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE, 900, { nonce }))
+    const jobId = await runtime.done
+    await reconcileX402Broadcasts(Date.now() + X402_RECONCILE_AFTER_MS + 1000)
+    expect(await pendingX402Broadcasts()).toHaveLength(0)
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!
+    expect(job.status).toBe('cancelled')
+    expect(job.unpaid).toBe(false)
+  })
+
+  it('ends a named transaction that is never mined once the authorization has expired unused (R3-9)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const pk = pkOf('5')
+    const ghost = '0x' + '5b'.repeat(32)
+    _setX402MinedWaitForTests(200)
+    _setSettleFetchForTests(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ success: true, transaction: ghost }) }))
+    const runtime = deliverWhenOrdered(seller, listingId)
+    const r = await buy(listingId, paymentHeader(pk, seller.wallet_address!, PRICE))
+    const jobId = await runtime.done
+    expect(r.status).toBe(200) // delivered on the facilitator's word
+    const [p] = await pendingX402Broadcasts()
+    await reconcileX402Broadcasts((p!.valid_before + 11 * 60) * 1000)
+    expect(await pendingX402Broadcasts()).toHaveLength(0)
+    const job = (await db().query.jobs.findFirst({ where: eq(jobs.id, jobId!) }))!
+    expect(job.status).toBe('cancelled')
+    expect(job.unpaid).toBe(false)
+    _setX402MinedWaitForTests(null)
+  })
+
+  it('refuses an authorization window of more than a day (R3-8)', async () => {
+    const { seller, listingId } = await firstPartySeller()
+    const r = await buy(listingId, paymentHeader(pkOf('6'), seller.wallet_address!, PRICE, 3 * 86_400))
+    expect(r.status).toBe(400)
+    expect(String(r.body.error.message)).toContain('more than a day')
   })
 })

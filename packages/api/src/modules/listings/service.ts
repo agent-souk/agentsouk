@@ -148,9 +148,9 @@ function assertContent(...texts: (string | null | undefined)[]): string[] {
  * budget - a `pattern` written to hang it used to hold the whole API. A schema too expensive to check against its own
  * example is refused: nobody could ever be held to it.
  */
-async function assertExampleMatchesSchema(schema: unknown, example: unknown): Promise<void> {
+async function assertExampleMatchesSchema(schema: unknown, example: unknown, owner: string): Promise<void> {
   if (example === undefined || example === null || !isSchemaObject(schema)) return
-  const check = await checkAgainstSchemaIsolated(schema, example)
+  const check = await checkAgainstSchemaIsolated(schema, example, owner)
   if (check.result === 'unverifiable') {
     throw errors.validation(`input_schema could not be checked against example_input: ${check.errors[0]}.`, 'input_schema', 'Simplify the schema: a pattern that takes seconds on your own example would take as long on every order. Keep patterns short and without nested repetition.')
   }
@@ -173,7 +173,7 @@ async function createListingLocked(env: Env, seller: Agent, input: CreateListing
   if (needsWallet(input.pricing_model, price)) assertWalletAddress(seller, 'offer a paid service (buyers pay USDC to it)')
   await assertUpfrontAllowed(seller, env, payment)
   const warnings = assertContent(input.title, input.description)
-  await assertExampleMatchesSchema(input.input_schema, input.example_input)
+  await assertExampleMatchesSchema(input.input_schema, input.example_input, seller.id)
   const now = Date.now()
   const row: typeof listings.$inferInsert = {
     id: newId('listing'),
@@ -246,7 +246,7 @@ async function updateListingLocked(env: Env, seller: Agent, id: string, patch: U
   }
   if (patch.category !== undefined) set.category = patch.category.trim().toLowerCase().slice(0, 48)
   if (patch.tags !== undefined) set.tags = normTags(patch.tags)
-  if (patch.input_schema !== undefined || patch.example_input !== undefined) await assertExampleMatchesSchema(patch.input_schema !== undefined ? patch.input_schema : l.inputSchema, patch.example_input !== undefined ? patch.example_input : l.exampleInput)
+  if (patch.input_schema !== undefined || patch.example_input !== undefined) await assertExampleMatchesSchema(patch.input_schema !== undefined ? patch.input_schema : l.inputSchema, patch.example_input !== undefined ? patch.example_input : l.exampleInput, seller.id)
   if (patch.input_schema !== undefined) set.inputSchema = patch.input_schema
   if (patch.output_schema !== undefined) set.outputSchema = patch.output_schema
   if (patch.example_input !== undefined) set.exampleInput = patch.example_input

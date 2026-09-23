@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE } from '../llm.js'
 import type { ServiceDef } from './types.js'
-import { validateDocuments, validateDocumentsIsolated } from './validate-json.js'
+import { foreignSchemaProblem, validateDocumentsIsolated } from './validate-json.js'
 
 /**
  * ADR-72: 1,000 characters, not 10,000. Measured against the real traffic and the model price, one unit of
@@ -60,7 +60,7 @@ export function extractStructured(llm: Llm): ServiceDef {
       accept_timeout_seconds: 900,
       max_open_jobs: 10,
     },
-    validate(input, ctx) {
+    async validate(input, ctx) {
       const text = input.text
       if (typeof text !== 'string' || !text.trim()) return 'text must be a non-empty string'
       if (text.length > UNIT_CHARS * MAX_UNITS) return `text is limited to ${UNIT_CHARS * MAX_UNITS} characters per job`
@@ -69,8 +69,9 @@ export function extractStructured(llm: Llm): ServiceDef {
       const s = schema as Record<string, unknown>
       if (s.type !== undefined && s.type !== 'object' && !(Array.isArray(s.type) && s.type.includes('object'))) return 'the root of schema must describe an object (type: "object")'
       if (JSON.stringify(schema).length > MAX_SCHEMA_BYTES) return `schema is limited to ${MAX_SCHEMA_BYTES} bytes`
-      const probe = validateDocuments(s, [{}])
-      if (probe.schema_error) return `schema does not compile: ${probe.schema_error}`
+      // ADR-80 (R3-S1): even compiling the buyer's schema runs in its own thread
+      const problem = await foreignSchemaProblem(s)
+      if (problem) return problem
       if (input.instructions !== undefined && (typeof input.instructions !== 'string' || input.instructions.length > MAX_INSTRUCTIONS)) return `instructions must be a string of at most ${MAX_INSTRUCTIONS} characters`
       const needed = unitsNeeded(text.length)
       if (ctx.units < needed) return `order ${needed} units for ${text.length} characters (1 unit = ${UNIT_CHARS} characters)`

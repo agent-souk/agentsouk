@@ -93,13 +93,13 @@ export class FakeChain {
             const asset = t.asset ?? this.usdc
             if (f.address && asset.toLowerCase() !== String(f.address).toLowerCase()) return
             const log = [TRANSFER_TOPIC, pad(t.from), pad(t.to)]
-            if (topics.some((want, k) => want != null && String(want).toLowerCase() !== log[k])) return
+            if (topics.some((want, k) => want != null && !(Array.isArray(want) ? want.map((w) => String(w).toLowerCase()) : [String(want).toLowerCase()]).includes(log[k]!))) return
             out.push({ address: asset, topics: log, data: '0x' + BigInt(t.value).toString(16).padStart(64, '0'), blockNumber: '0x' + tx.block.toString(16), transactionHash: hash, logIndex: '0x' + i.toString(16), removed: false })
           })
           for (const [i, l] of (tx.logs ?? []).entries()) {
             if (f.address && l.address.toLowerCase() !== String(f.address).toLowerCase()) continue
             const lower = l.topics.map((t) => t.toLowerCase())
-            if (topics.some((want, k) => want != null && String(want).toLowerCase() !== lower[k])) continue
+            if (topics.some((want, k) => want != null && !(Array.isArray(want) ? want.map((w) => String(w).toLowerCase()) : [String(want).toLowerCase()]).includes(lower[k]!))) continue
             out.push({ address: l.address, topics: l.topics, data: l.data ?? '0x', blockNumber: '0x' + tx.block.toString(16), transactionHash: hash, logIndex: '0x' + (tx.transfers.length + i).toString(16), removed: false })
           }
         }

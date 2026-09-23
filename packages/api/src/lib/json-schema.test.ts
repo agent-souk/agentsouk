@@ -15,7 +15,7 @@ describe('schema checks for schemas somebody else wrote (ADR-80)', () => {
     const t = Date.now()
     let ticks = 0
     const beat = setInterval(() => ticks++, 50)
-    const r = await checkAgainstSchemaIsolated(evil, { s: 'a'.repeat(40) + '!' }, 1000)
+    const r = await checkAgainstSchemaIsolated(evil, { s: 'a'.repeat(40) + '!' }, 'owner-1', 1000)
     clearInterval(beat)
     expect(r.result).toBe('unverifiable')
     expect(Date.now() - t).toBeLessThan(5000)
@@ -25,22 +25,33 @@ describe('schema checks for schemas somebody else wrote (ADR-80)', () => {
   it('gives the same verdicts as the in-thread check for ordinary schemas, with full ECMA-262 pattern syntax', async () => {
     const schema = { type: 'object', required: ['zip'], properties: { zip: { type: 'string', pattern: '^\\d{5}$' }, name: { type: 'string', pattern: '^\\p{Lu}\\p{Ll}+$' }, a: { type: 'string', pattern: '^\\u0041{1,2000}$' } } }
     for (const v of [{ zip: '12345', name: 'Ärger', a: 'AA' }, { zip: 'ABC', name: 'x', a: 'B' }, {}]) {
-      expect(await checkAgainstSchemaIsolated(schema, v)).toEqual(checkAgainstSchema(schema, v))
+      expect(await checkAgainstSchemaIsolated(schema, v, 'owner-2')).toEqual(checkAgainstSchema(schema, v))
     }
-    expect((await checkAgainstSchemaIsolated(schema, { zip: 'ABC' })).errors[0]).toContain('/zip')
+    expect((await checkAgainstSchemaIsolated(schema, { zip: 'ABC' }, 'owner-2')).errors[0]).toContain('/zip')
   })
 
   it('keeps no state between checks: an $id - even the meta-schema\'s own - cannot switch later checks off', async () => {
     const meta = { $id: 'https://json-schema.org/draft/2020-12/schema', type: 'object', required: ['x'] }
-    await checkAgainstSchemaIsolated(meta, {})
+    await checkAgainstSchemaIsolated(meta, {}, 'owner-3')
     checkAgainstSchema(meta, {})
     const normal = { type: 'object', required: ['total'] }
     expect(checkAgainstSchema(normal, {}).result).toBe('fail')
-    expect((await checkAgainstSchemaIsolated(normal, {})).result).toBe('fail')
+    expect((await checkAgainstSchemaIsolated(normal, {}, 'owner-3')).result).toBe('fail')
     const withId = () => ({ $id: 'https://example.com/invoice.json', type: 'object', required: ['total'] })
     expect(checkAgainstSchema(withId(), {}).result).toBe('fail')
     expect(checkAgainstSchema(withId(), {}).result).toBe('fail')
     expect(checkAgainstSchema(withId(), { total: 1 }).result).toBe('pass')
+  })
+
+  it('lets one owner hold at most two checks at once, and answers the third with 429 instead of a queue (R3-S2)', async () => {
+    const slow = () => checkAgainstSchemaIsolated(evil, { s: 'a'.repeat(40) + '!' }, 'greedy-seller', 800)
+    const [a, b, c] = await Promise.allSettled([slow(), slow(), slow()])
+    expect(a.status).toBe('fulfilled')
+    expect(b.status).toBe('fulfilled')
+    expect(c.status).toBe('rejected')
+    expect(((c as PromiseRejectedResult).reason as { code?: string }).code).toBe('schema_check_busy')
+    // someone else is not held up by it
+    expect((await checkAgainstSchemaIsolated({ type: 'object', required: ['x'] }, {}, 'honest-seller')).result).toBe('fail')
   })
 
   it('refuses a listing whose schema cannot be checked against its own example in time, without stopping the API', async () => {

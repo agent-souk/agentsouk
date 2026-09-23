@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SchemaTooExpensive, validateDocuments, validateDocumentsIsolated, validateJson } from './validate-json.js'
+import { SchemaTooExpensive, foreignSchemaProblem, validateDocuments, validateDocumentsIsolated, validateJson } from './validate-json.js'
 
 describe('validateDocuments', () => {
   it('validates with formats and reports every error with a path', () => {
@@ -74,4 +74,22 @@ describe('validate-json against a schema written to hang it (ADR-80)', () => {
     const r = await validateDocumentsIsolated({ type: 'object', properties: { a: { type: 'nonsense' } } }, [{}])
     expect(r.schema_error).toMatch(/type|schema/i)
   })
+})
+
+/** ADR-80, third review round (R3-S1): compiling a foreign schema is unbounded work of its own - no pattern needed. */
+describe('the compile probe of extract-structured and extract-image (R3-S1)', () => {
+  it('declines a $ref tree that doubles per level, while this thread keeps serving', async () => {
+    // the refuter's shape: a root-level $ref into a chain whose every level refers to the one below twice
+    const defs: Record<string, unknown> = { d0: { type: 'object' } }
+    for (let k = 1; k <= 32; k++) defs[`d${k}`] = { allOf: [{ $ref: `#/$defs/d${k - 1}` }, { $ref: `#/$defs/d${k - 1}` }] }
+    const schema = { type: 'object', $defs: defs, $ref: '#/$defs/d32' }
+    let ticks = 0
+    const beat = setInterval(() => ticks++, 50)
+    const t = Date.now()
+    const problem = await foreignSchemaProblem(schema)
+    clearInterval(beat)
+    expect(problem).toMatch(/too expensive/)
+    expect(Date.now() - t).toBeLessThan(9000)
+    expect(ticks).toBeGreaterThan(20)
+  }, 15_000)
 })

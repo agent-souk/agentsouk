@@ -110,7 +110,7 @@ export async function computeChecks(job: JobRow, listing: ListingRow | undefined
   let schemaErrors: string[] = []
   if (listing && isSchemaObject(listing.outputSchema) && job.output !== null && job.output !== undefined) {
     // ADR-80: the seller's schema over the seller's delivery, in a thread with a time and heap budget
-    const c = await checkAgainstSchemaIsolated(listing.outputSchema, job.output)
+    const c = await checkAgainstSchemaIsolated(listing.outputSchema, job.output, `dispute:${job.id}`)
     if (c.result === 'pass') outputSchema = 'pass'
     else if (c.result === 'fail') {
       outputSchema = 'fail'

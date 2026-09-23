@@ -69,6 +69,21 @@ export async function validateDocumentsIsolated(schema: Record<string, unknown>,
   }
 }
 
+/**
+ * ADR-80, third review round (R3-S1): compiling a schema somebody else wrote is itself unbounded work - a `$ref` tree
+ * that doubles per level held this thread 7-12 s at 2 KB without a single pattern, and practically forever at the
+ * 20 KB the services allow. So even the "does it compile" probe before accepting a job runs isolated. Returns the
+ * reason to decline, or null.
+ */
+export async function foreignSchemaProblem(schema: Record<string, unknown>): Promise<string | null> {
+  try {
+    const r = await validateDocumentsIsolated(schema, [{}])
+    return r.schema_error ? `schema does not compile: ${r.schema_error}` : null
+  } catch (e) {
+    return e instanceof SchemaTooExpensive ? `schema is too expensive to check: ${e.message}` : `schema could not be checked: ${(e as Error).message ?? String(e)}`
+  }
+}
+
 const MAX_DOCS = 100
 const MAX_BYTES = 512 * 1024
 

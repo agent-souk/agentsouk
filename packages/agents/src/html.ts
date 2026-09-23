@@ -33,6 +33,10 @@ const MAX_TAG = 4096
 const MAX_BARE_MARKUP = 400
 /** How many anchors the link walk looks at before it stops looking. */
 const MAX_ANCHORS = 2000
+/** How many tags a page may have before the rest is read as text (2 MB of tiny tags was 112 MB of tag objects, R3-HTML-2). */
+const MAX_TAGS = 200_000
+/** Elements whose content is raw text to a browser: a `<` inside them never starts a tag (R3-HTML-1). */
+const RAW_TEXT = new Set(['script', 'style', 'textarea', 'title'])
 
 /** One tag: [start, end] are the positions of its `<` and `>`; `name` is lowercase, '' for markup without a name. */
 export type Tag = { start: number; end: number; name: string; closing: boolean; attrs: string }
@@ -47,8 +51,9 @@ const TAG_NAME = /(\/?)([a-zA-Z][a-zA-Z0-9]*)\b/y
  */
 export function tags(html: string): Tag[] {
   const out: Tag[] = []
+  const unclosed = new Set<string>()
   let gt = -1
-  for (let i = html.indexOf('<'); i >= 0; ) {
+  for (let i = html.indexOf('<'); i >= 0 && out.length < MAX_TAGS; ) {
     if (gt <= i) {
       gt = html.indexOf('>', i + 1)
       if (gt < 0) break
@@ -59,8 +64,24 @@ export function tags(html: string): Tag[] {
       TAG_NAME.lastIndex = i + 1
       const m = TAG_NAME.exec(html)
       if (m && m.index === i + 1 && TAG_NAME.lastIndex <= gt) {
-        out.push({ start: i, end: gt, name: m[2]!.toLowerCase(), closing: m[1] === '/', attrs: html.slice(TAG_NAME.lastIndex, gt) })
+        const name = m[2]!.toLowerCase()
+        const closing = m[1] === '/'
+        out.push({ start: i, end: gt, name, closing, attrs: html.slice(TAG_NAME.lastIndex, gt) })
         next = gt + 1
+        if (!closing && RAW_TEXT.has(name) && !unclosed.has(name)) {
+          // Raw text, as a browser reads it: the content runs to the matching closer, whatever `<` it contains - an
+          // `if (a < b)` inside a script used to swallow the `</script>` and leak the whole script into the text. One
+          // forward search per raw element, and the walk resumes behind it. A name with no closer further on has none
+          // after any later opener either: remembered, so a page of unclosed <title> is not searched to its end again
+          // and again, and its markup is read as tags, as before.
+          const closer = new RegExp(`</${name}(?=[\\s/>])`, 'gi')
+          closer.lastIndex = gt + 1
+          const c = closer.exec(html)
+          if (c) {
+            next = c.index
+            if (gt < c.index) gt = -1 // the next '>' has to be found again, behind the raw text
+          } else unclosed.add(name)
+        }
       } else if (inner <= MAX_BARE_MARKUP) {
         out.push({ start: i, end: gt, name: '', closing: false, attrs: html.slice(i + 1, gt) })
         next = gt + 1
@@ -71,10 +92,30 @@ export function tags(html: string): Tag[] {
   return out
 }
 
-/** The value of one attribute inside a tag's attribute text (at most MAX_TAG characters, so any pattern is cheap). */
+/** One attribute, read in place: a name, then optionally `=` and a quoted or bare value. */
+const ATTR = /\s*([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y
+
+/**
+ * The attributes of one tag (at most MAX_TAG characters), parsed one after the other - a search for `href=` found it
+ * inside the value of another attribute too (R3-HTML-3). The first occurrence of a name wins, as in a browser.
+ */
+function attrsOf(attrs: string): Map<string, string> {
+  const out = new Map<string, string>()
+  for (let i = 0; i < attrs.length; ) {
+    ATTR.lastIndex = i
+    const m = ATTR.exec(attrs)
+    if (!m || ATTR.lastIndex === i) {
+      i++
+      continue
+    }
+    const name = m[1]!.toLowerCase()
+    if (!out.has(name)) out.set(name, m[2] ?? m[3] ?? m[4] ?? '')
+    i = ATTR.lastIndex
+  }
+  return out
+}
 function attr(attrs: string, name: string): string | null {
-  const m = new RegExp(`(?:^|[\\s"'/])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, 'i').exec(attrs)
-  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : null
+  return attrsOf(attrs).get(name) ?? null
 }
 
 /** Removes `<!-- ... -->` comments in one pass; an opener that is never closed keeps the rest of the page, as the regex did. */
@@ -158,15 +199,17 @@ export function htmlToText(html: string, baseUrl?: string, maxLinks = 50): Extra
   const title = titleOpen >= 0 && titleClose ? decodeEntities(page.slice(all[titleOpen]!.end + 1, titleClose.start)).replace(/\s+/g, ' ').trim() || null : null
 
   const htmlTag = all.find((t) => t.name === 'html' && !t.closing)
-  const langValue = htmlTag ? attr(htmlTag.attrs, 'lang') : null
-  const lang = langValue && /^[A-Za-z0-9-]{1,40}$/.test(langValue.trim()) ? langValue.trim() : null
+  const htmlAttrs = htmlTag ? attrsOf(htmlTag.attrs) : null
+  const langValue = (htmlAttrs?.get('lang') || htmlAttrs?.get('xml:lang') || '').trim().replace(/_/g, '-')
+  const lang = /^[A-Za-z0-9-]{1,40}$/.test(langValue) ? langValue : null
 
   const metaContent = (name: string): string | null => {
     for (const t of all) {
       if (t.name !== 'meta' || t.closing) continue
-      const key = attr(t.attrs, 'name') ?? attr(t.attrs, 'property')
+      const a = attrsOf(t.attrs)
+      const key = a.get('name') ?? a.get('property')
       if (key?.toLowerCase() !== name) continue
-      const c = attr(t.attrs, 'content')
+      const c = a.get('content') ?? null
       return c ? decodeEntities(c).trim() || null : null
     }
     return null

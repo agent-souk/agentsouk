@@ -90,3 +90,30 @@ describe('htmlToText against pages written to hang it (ADR-80)', () => {
     expect(r.text).not.toContain('<')
   })
 })
+
+/** ADR-80, third review round: what the tokenizer still read differently from a browser (R3-HTML-1..3). */
+describe('htmlToText reads like a browser where it matters (R3-HTML)', () => {
+  it('reads <script> and <style> as raw text: a < inside them swallows nothing', () => {
+    const page = '<html><body><p>Vorher</p><script>if (a<b && c>d) { x = "<p>" }</script><style>a<b{color:red}</style><p>Nachher</p></body></html>'
+    const r = htmlToText(page)
+    expect(r.text).toContain('Vorher')
+    expect(r.text).toContain('Nachher')
+    expect(r.text).not.toContain('color')
+    expect(r.text).not.toContain('x =')
+  })
+
+  it('keeps reading tags after an opener that is never closed, and stays linear doing it', () => {
+    const r = htmlToText('<title>kaputt<p>Absatz eins</p><p>Absatz zwei</p>')
+    expect(r.text).toContain('Absatz eins')
+    expect(r.text).not.toContain('<p>')
+    const t = Date.now()
+    htmlToText('<title>'.repeat(280_000) + '<script>'.repeat(20_000))
+    expect(Date.now() - t).toBeLessThan(1500)
+  })
+
+  it('parses attributes one after another: href inside another value is not a link; lang from xml:lang and en_US', () => {
+    const r = htmlToText('<html xml:lang="en_US"><body><a data-note="see href=/wrong" href="/right">x</a></body></html>', 'https://example.com/')
+    expect(r.links).toEqual([{ href: 'https://example.com/right', text: 'x' }])
+    expect(r.lang).toBe('en-US')
+  })
+})

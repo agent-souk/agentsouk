@@ -586,8 +586,9 @@ export async function raiseX402Failure(input: { env: Env; payer: string | null; 
   return raise(
     {
       env: input.env,
-      tier: input.env === 'live' ? 'notable' : 'quiet',
-      key: `x402-failed:${input.env}:${who}:${Math.floor(now / 3_600_000)}`,
+      tier: moneyMayHaveMoved ? (input.env === 'live' ? 'urgent' : 'notable') : input.env === 'live' ? 'notable' : 'quiet',
+      // a money alert has a key of its own: a harmless retry in the same hour must not overwrite it with "nothing was charged"
+      key: moneyMayHaveMoved ? `x402-money:${input.env}:${input.jobId ?? who}` : `x402-failed:${input.env}:${who}:${Math.floor(now / 3_600_000)}`,
       title: moneyMayHaveMoved ? `x402: MONEY MAY HAVE MOVED, not recorded (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})` : `x402: a purchase failed (${input.code}) - "${input.listingTitle.slice(0, 60)}" (${input.env})`,
       body: [
         `A wallet signed a payment for this listing and got HTTP ${input.status} ${input.code}: ${input.message.slice(0, 400)}`,

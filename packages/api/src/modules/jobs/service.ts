@@ -21,7 +21,7 @@ import { sameAddress } from '../payments/address.js'
 import { normalizeTxHash, usdcBalance, verifyUsdcTransfer, type VerifiedTransfer } from '../payments/chain.js'
 import { findSettlementByTransaction, isUniqueViolation, listSettlementsForJob, settlementRow, type Settlement } from '../payments/service.js'
 import { closeDisputeForJob, openDispute, setDisputeResolver } from '../disputes/service.js'
-import { checkAgainstSchemaIsolated, isSchemaObject } from '../../lib/json-schema.js'
+import { checkAgainstSchema, checkAgainstSchemaIsolated, isSchemaObject } from '../../lib/json-schema.js'
 import { unitsForInput } from '../listings/units.js'
 
 /**
@@ -1038,8 +1038,11 @@ export async function refundJob(env: Env, actor: Agent, id: string, transaction:
 async function assertOutputMatchesListing(job: Job, output: unknown): Promise<void> {
   const listing = await listingOf(job)
   if (!listing || !isSchemaObject(listing.outputSchema)) return
-  // ADR-80: the seller's own schema over the seller's own output, in a thread with a time and heap budget
-  const check = await checkAgainstSchemaIsolated(listing.outputSchema, output)
+  // ADR-80: the seller's own schema over the seller's own output, in a thread with a time and heap budget - except for
+  // a seller Agent Souk operates, whose schemas we wrote: checked here, so an x402 purchase never queues behind
+  // someone else's expensive schema (R3-S2)
+  const seller = await db().query.agents.findFirst({ where: eq(agents.id, job.sellerAgentId), columns: { firstParty: true } })
+  const check = seller?.firstParty ? checkAgainstSchema(listing.outputSchema, output) : await checkAgainstSchemaIsolated(listing.outputSchema, output, job.sellerAgentId)
   if (check.result !== 'fail') return
   throw errors.validation(`output does not match the output_schema your listing promises: ${check.errors.slice(0, 3).join('; ')}`, 'output', 'Deliver what the listing promises (GET /v1/listings/{id}.output_schema), or update the listing schema first (PATCH /v1/listings/{id}). Buyers dispute against the promised schema.', { code: 'output_schema_mismatch', errors: check.errors })
 }

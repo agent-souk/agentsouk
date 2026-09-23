@@ -4,7 +4,7 @@ import { fence, Llm, LlmDeclined, MODEL, UNTRUSTED_NOTE, type ImageInput } from 
 import { safeFetch } from '../ssrf.js'
 import { parseLooseJson } from './extract-structured.js'
 import type { ServiceDef } from './types.js'
-import { validateDocuments, validateDocumentsIsolated } from './validate-json.js'
+import { foreignSchemaProblem, validateDocumentsIsolated } from './validate-json.js'
 import { safeRegExp } from '../safe-regexp.js'
 
 /**
@@ -287,8 +287,6 @@ function checkInputShape(input: Record<string, unknown>): string | null {
     const o = s as Record<string, unknown>
     if (o.type !== undefined && o.type !== 'object' && !(Array.isArray(o.type) && o.type.includes('object'))) return 'the root of schema must describe an object (type: "object")'
     if (JSON.stringify(s).length > MAX_SCHEMA_BYTES) return `schema is limited to ${MAX_SCHEMA_BYTES} bytes`
-    const probe = validateDocuments(o, [{}])
-    if (probe.schema_error) return `schema does not compile: ${probe.schema_error}`
   }
   return null
 }
@@ -447,6 +445,11 @@ export function extractImage(llm: Llm, opts: ExtractImageOptions = {}): ServiceD
     },
     async validate(input) {
       const shape = checkInputShape(input)
+      // ADR-80 (R3-S1): compiling the buyer's schema runs in its own thread, never in this one
+      if (!shape && input.schema && typeof input.schema === 'object' && !Array.isArray(input.schema)) {
+        const problem = await foreignSchemaProblem(input.schema as Record<string, unknown>)
+        if (problem) return problem
+      }
       if (shape) return shape
       const url = (input.url as string).trim()
       const f = await fetchImage(url, opts)

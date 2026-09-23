@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads'
+import { ApiError } from './errors.js'
 import { checkValues, type SchemaAnswer, type SchemaCheck, type SchemaJob } from './schema-worker.js'
 
 export type { SchemaCheck }
@@ -26,19 +27,40 @@ const SCHEMA_CHECK_HEAP_MB = 64
 const MAX_PARALLEL = 2
 
 const workerUrl = new URL(import.meta.url.endsWith('.ts') ? './schema-worker.ts' : './schema-worker.js', import.meta.url)
+/**
+ * ADR-80, third review round (R3-S2): one free job used to be enough to fill the queue - twenty concurrent deliveries
+ * of the same job each queued a 2-second check, and every other delivery, listing and dispute waited behind them. So
+ * each owner (the seller whose schema it is) may have two checks running or waiting, and the queue as a whole is
+ * bounded; past either, the answer is an honest "busy, retry" instead of a wait nobody asked for.
+ */
+const MAX_PER_OWNER = 2
+const MAX_WAITING = 16
 let running = 0
 const waiting: (() => void)[] = []
-async function slot(): Promise<() => void> {
+const perOwner = new Map<string, number>()
+async function slot(owner: string): Promise<() => void> {
+  const mine = perOwner.get(owner) ?? 0
+  if (mine >= MAX_PER_OWNER) {
+    throw new ApiError('rate_limited', 'schema_check_busy', 'Two checks of your schemas are already running or waiting.', { hint: 'Wait for them to finish, then retry. A schema whose check takes seconds will take as long on every call: simplify it.' })
+  }
+  if (running >= MAX_PARALLEL && waiting.length >= MAX_WAITING) {
+    throw new ApiError('rate_limited', 'schema_check_busy', 'The platform is checking too many schemas right now.', { status: 503, hint: 'Retry in a few seconds.' })
+  }
+  perOwner.set(owner, mine + 1)
   if (running >= MAX_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve))
   running++
   return () => {
     running--
+    const left = (perOwner.get(owner) ?? 1) - 1
+    if (left > 0) perOwner.set(owner, left)
+    else perOwner.delete(owner)
     waiting.shift()?.()
   }
 }
 
-export async function checkAgainstSchemaIsolated(schema: Record<string, unknown>, value: unknown, timeoutMs = SCHEMA_CHECK_TIMEOUT_MS): Promise<SchemaCheck> {
-  const release = await slot()
+/** `owner` is whoever wrote the schema (a seller's agent id): the per-owner bound above counts by it. */
+export async function checkAgainstSchemaIsolated(schema: Record<string, unknown>, value: unknown, owner: string, timeoutMs = SCHEMA_CHECK_TIMEOUT_MS): Promise<SchemaCheck> {
+  const release = await slot(owner)
   try {
     return await new Promise<SchemaCheck>((resolve) => {
       let settled = false
